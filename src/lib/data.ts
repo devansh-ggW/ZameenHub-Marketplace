@@ -31,6 +31,7 @@ export type Property = {
   aiRiskReasons?: string[]
   aiScreenedAt?: string
   aiModel?: string
+  reviewMessage?: string
 }
 
 // These are editorial architectural images for brand composition only.
