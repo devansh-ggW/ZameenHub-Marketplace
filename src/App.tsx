@@ -5,6 +5,7 @@ import { AccountPage } from './account-pages'
 import { AuthPage, VerifyEmailPage, ActivateAccountPage, ForgotPasswordPage, ResetPasswordPage } from './auth-pages'
 import { InfoPage } from './legal-pages'
 import { ListingPage } from './listing-page'
+import { EditListingPage } from './edit-listing-page'
 import { SiteFooter, SiteHeader } from './site-chrome'
 import { CookieNotice } from './cookie-notice'
 import { ReportQueuePage } from './report-queue'
@@ -23,6 +24,7 @@ export default function App() {
     <Route path="/profile" element={<AccountPage kind="profile" />} />
     <Route path="/saved" element={<AccountPage kind="saved" />} />
     <Route path="/list-property" element={<ListingPage />} />
+    <Route path="/edit-listing/:id" element={<EditListingPage />} />
     <Route path="/my-listings" element={<AccountPage kind="my-listings" />} />
     <Route path="/review-queue" element={<AccountPage kind="review-queue" />} />
     <Route path="/report-queue" element={<ReportQueuePage />} />
