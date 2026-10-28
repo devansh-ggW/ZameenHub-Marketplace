@@ -692,6 +692,27 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
       return ok({status,priorStatus,auditRecorded:true,highRiskOverride:status==='published'&&adminRiskOverride})
     }
+    if(path==='/api/inquiries'&&method==='POST') {
+      if(!await authLimit(request,db,'inquiry-submit',8))return fail('Too many inquiry submissions. Please wait and try again.',429)
+      const input=await body(request);if(!input)return fail('Invalid inquiry request.')
+      const propertyId=clean(input.propertyId,80)
+      const email=normalizeEmail(clean(input.email,254))
+      const message=clean(input.message,2000)
+      if(!propertyId||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||message.trim().length<12||message.length>2000)return fail('Enter a valid email and a message of at least 12 characters.')
+      if(!await limited(db,'inquiry-email:'+email,8,60))return fail('Too many inquiries from this email address. Please wait before trying again.',429)
+      if(!await limited(db,'inquiry-email-property:'+email+':'+propertyId,2,60))return fail('You have already sent a recent inquiry about this property. Please wait before sending another.',429)
+      const property=await db.prepare("SELECT p.id,p.owner_id,p.title,p.slug,p.city,u.email AS owner_email FROM properties p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.status='published'").bind(propertyId).first<{id:string;owner_id:string;title:string;slug:string;city:string;owner_email:string}>()
+      if(!property)return fail('Property not found or no longer available.',404)
+      const sender=await getUser(request,env)
+      if(sender?.id===property.owner_id)return fail('You cannot send an inquiry to your own listing.',403)
+      const reference=uuid()
+      await db.prepare("INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at) VALUES(?,?,?,?,?,'new',?)").bind(reference,property.id,sender?.id||null,email,message,nowIso()).run()
+      const listingUrl=`${(env.APP_URL||url.origin).replace(/\/$/,'')}/properties/${encodeURIComponent(property.slug)}`
+      const mailTitle='New inquiry about your property'
+      const mailBody=`Property: ${property.title}\nCity: ${property.city}\nFrom: ${email}\n\nMessage:\n${message}\n\nReference: ${reference}`
+      const notificationSent=await sendEmail(env,property.owner_email,`New ZameenHub inquiry: ${property.title}`,emailHtml(mailTitle,mailBody,listingUrl,'View property'),emailText(mailTitle,mailBody,listingUrl,'View property'))
+      return ok({reference,notificationSent},201)
+    }
     if(path==='/api/support'&&method==='POST') {
       if(!await authLimit(request,db,'support',8))return fail('Too many requests. Please wait and try again.',429)
       const input=await body(request),email=normalizeEmail(clean(input?.email,254)),message=clean(input?.message,4000)
