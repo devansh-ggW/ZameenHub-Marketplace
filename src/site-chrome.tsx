@@ -53,6 +53,6 @@ export function SiteFooter() {
     <div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. Published listings reflect marketplace review status; buyers and renters should independently verify information before a transaction.</p><p><strong>Customer support</strong><br /><a href="mailto:dewifystores@gmail.com">dewifystores@gmail.com</a></p></div>
     <div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div>
     <div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact support</Link><br /><Link to="/help">Help centre</Link></div>
-    <div><h4>Legal</h4><Link to="/privacy">Privacy policy</Link><br /><Link to="/terms">Terms and conditions</Link></div>
+    <div><h4>Legal</h4><Link to="/privacy">Privacy policy</Link><br /><Link to="/cookies">Cookie policy</Link><br /><Link to="/terms">Terms and conditions</Link></div>
   </div><div className="container footer-bottom"><span>© {new Date().getFullYear()} ZameenHub</span><span>Discover responsibly. Verify independently.</span></div></footer>
 }
