@@ -76,12 +76,12 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     const result = mode === 'signup'
       ? await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next }) })
       : mfaRequired
-        ? await apiRequest<{ user?: { id: string } }>('/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
+        ? await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
         : await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
     if (mode === 'signup') setNotice(result.data.message || 'Check your email for the verification link. If you already have an account, sign in or use password recovery.')
-    else if (!mfaRequired && 'mfaRequired' in result.data && result.data.mfaRequired) { setMfaRequired(true); setPassword(''); setNotice('Enter the six-digit code from your authenticator app, or use one unused recovery code.'); }
+    else if (!mfaRequired && result.data.mfaRequired) { setMfaRequired(true); setPassword(''); setNotice('Enter the six-digit code from your authenticator app, or use one unused recovery code.'); }
     else navigate(next, { replace: true })
   }
 
