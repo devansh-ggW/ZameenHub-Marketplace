@@ -17,7 +17,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm audit --prod
+      - run: pnpm audit
       - run: python3 scripts/check-migrations.py
       - run: node --experimental-strip-types scripts/test-totp.mjs
       - run: pnpm build
