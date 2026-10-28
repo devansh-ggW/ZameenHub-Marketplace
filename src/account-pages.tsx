@@ -41,13 +41,22 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   }
   useEffect(() => { void load() }, [kind, location.pathname])
 
-  async function review(id: string, status: 'published' | 'rejected') {
+  async function review(item: Property, status: 'published' | 'rejected') {
+    const id = item.id
+    let overrideRisk = false, reviewNote = ''
+    if (status === 'published' && (item.aiRiskLevel === 'high' || (item.aiRiskScore ?? 0) >= 65)) {
+      if (user?.role !== 'admin') { setError('High-risk listings can only be approved by an administrator after extra evidence checks.'); return }
+      const note = window.prompt('HIGH-RISK LISTING. Verify the evidence outside this AI score first. Record at least 20 characters explaining why this listing is safe to publish:')
+      if (note === null) return
+      if (note.trim().length < 20) { setError('Approval cancelled. Record at least 20 characters of review notes to override a high-risk flag.'); return }
+      overrideRisk = true; reviewNote = note.trim()
+    }
     setWorkingId(id); setNotice(''); setError('')
-    const result = await apiRequest<{ status: string }>(`/api/admin/properties/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) })
+    const result = await apiRequest<{ status: string; auditRecorded?: boolean }>(`/api/admin/properties/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status, overrideRisk, reviewNote }) })
     setWorkingId('')
     if (!result.ok) { setError(result.error); return }
-    setNotice(status === 'published' ? 'Listing approved and published.' : 'Listing rejected.')
-    setItems(current => current.filter(item => item.id !== id))
+    setNotice(status === 'published' ? 'Listing approved and published. The moderator decision was recorded.' : 'Listing rejected. The moderator decision was recorded.')
+    setItems(current => current.filter(currentItem => currentItem.id !== id))
   }
 
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
@@ -63,7 +72,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
           <p>{item.status === 'pending' ? 'Saved successfully. This listing is private and will not appear in public search until approved.' : item.status === 'published' ? 'This listing is approved and available in public property search.' : item.status === 'rejected' ? 'This listing was not approved. Contact support if you need help.' : item.status === 'archived' ? 'This listing is archived and is not shown in public search.' : 'Check back here for the latest review status.'}</p>
         </div>}
         {kind === 'review-queue' && <div className={`ai-risk-card ai-risk-${item.aiRiskLevel ?? 'unscored'}`}><strong>AI risk screen: {item.aiRiskLevel ?? 'not-screened'} · {item.aiRiskScore ?? 0}/100</strong><p>Risk scoring is a triage signal, not proof of fraud or ownership. Check the evidence before making a decision.</p>{item.aiRiskReasons?.length ? <ul>{item.aiRiskReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul> : <p>No specific text flags were returned.</p>}</div>}
-        {kind === 'review-queue' && <div className="review-actions"><button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item.id, 'published')}>Approve</button><button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item.id, 'rejected')}>Reject</button></div>}
+        {kind === 'review-queue' && <div className="review-actions"><button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item, 'published')}>Approve</button><button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item, 'rejected')}>Reject</button></div>}
       </div>)}</div>}
       {kind !== 'profile' && !error && items.length === 0 && <EmptyState title={kind === 'saved' ? 'Nothing saved yet.' : kind === 'my-listings' ? 'No submitted listings yet.' : 'Review queue is clear.'} copy={kind === 'saved' ? 'Use the heart control on a property to save it to your account.' : kind === 'my-listings' ? 'Listings you submit will appear here with their review status.' : 'Pending submissions will appear here when they are available.'} />}
     </>}
