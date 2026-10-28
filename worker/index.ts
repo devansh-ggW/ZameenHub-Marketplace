@@ -716,7 +716,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const listingUrl=`${(env.APP_URL||url.origin).replace(/\/$/,'')}/properties/${encodeURIComponent(property.slug)}`
       const mailTitle='New inquiry about your property'
       const mailBody=`Property: ${property.title}\nCity: ${property.city}\nFrom: ${email}\n\nMessage:\n${message}\n\nReference: ${reference}`
-      const notificationSent=await sendEmail(env,property.owner_email,`New ZameenHub inquiry: ${property.title}`,emailHtml(mailTitle,mailBody,listingUrl,'View property'),emailText(mailTitle,mailBody,listingUrl,'View property'))
+      const notificationSent=await sendEmail(env,property.owner_email,'New ZameenHub property inquiry',emailHtml(mailTitle,mailBody,listingUrl,'View property'),emailText(mailTitle,mailBody,listingUrl,'View property'))
       return ok({reference,notificationSent},201)
     }
     if(path==='/api/support'&&method==='POST') {
