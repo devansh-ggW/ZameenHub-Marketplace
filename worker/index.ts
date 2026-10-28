@@ -487,8 +487,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
       if(user?.password_hash&&user.email_verified) {
         const token=randomToken()
-        await db.prepare('DELETE FROM password_reset_tokens WHERE user_id=?').bind(user.id).run()
-        await db.prepare('INSERT INTO password_reset_tokens(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)').bind(uuid(),user.id,await digest(token),future(30)).run()
+        await db.batch([
+          db.prepare('DELETE FROM password_reset_tokens WHERE user_id=?').bind(user.id),
+          db.prepare('INSERT INTO password_reset_tokens(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)').bind(uuid(),user.id,await digest(token),future(30))
+        ])
         const link=`${env.APP_URL||url.origin}/reset-password?token=${encodeURIComponent(token)}`
         await sendEmail(env,email,'Reset your ZameenHub password',emailHtml('Reset your password','This one-time link expires in 30 minutes. If you did not request it, ignore this email.',link,'Reset password'),emailText('Reset your password','This one-time link expires in 30 minutes. If you did not request it, ignore this email.',link,'Reset password'))
       }
