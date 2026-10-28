@@ -74,6 +74,8 @@ def main() -> int:
                   VALUES('pending','owner','pending-home','Pending home','rent','Apartment','West','Nashik',20000,'A detailed description of another test property','pending','high',80)""")
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('other-property','other-owner','other-home','Other home','sale','Apartment','East','Nashik',3000000,'A detailed description of another owner property','published')""")
+    db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
+                  VALUES('snapshot-test','other-owner','snapshot-test-home','Snapshot test home','sale','Apartment','North','Nashik',1500000,'A detailed description of the snapshot test property','pending')""")
 
     db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
                   VALUES('report-1','published','reporter','suspected_fraud','Specific evidence for the report','open',?)""", (now,))
@@ -118,6 +120,25 @@ def main() -> int:
            "A material owner edit did not return the listing to pending")
     expect(db.execute("SELECT COUNT(*) FROM properties WHERE status='published' AND id='published'").fetchone()[0] == 0,
            "An edited listing remained publicly published")
+
+    # A listing can change while a reviewer is reading the queue. The exact
+    # snapshot guard must reject publishing the newer, unreviewed title.
+    snapshot = db.execute("SELECT * FROM properties WHERE id='snapshot-test' AND status='pending'").fetchone()
+    db.execute("UPDATE properties SET title=?,updated_at=? WHERE id='snapshot-test' AND status='pending'",
+               ("Owner changed this title", now, "snapshot-test"))
+    snapshot_publish = db.execute("""UPDATE properties SET status='published',updated_at=?
+        WHERE id=? AND status='pending' AND title=? AND location=? AND city=? AND price=? AND description=?
+        AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=?
+        AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=?
+        AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=?
+        AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=?""",
+        (now, "snapshot-test", snapshot["title"], snapshot["location"], snapshot["city"], snapshot["price"],
+         snapshot["description"], snapshot["property_type"], snapshot["purpose"], snapshot["bedrooms"],
+         snapshot["bathrooms"], snapshot["area"], snapshot["amenities_json"], snapshot["price_period"] or "",
+         snapshot["ai_risk_level"] or "not-screened", snapshot["ai_risk_score"] or 0,
+         snapshot["ai_risk_reasons_json"] or "[]", snapshot["ai_model"] or "not-screened",
+         snapshot["ai_screened_at"] or "", snapshot["updated_at"]))
+    expect(snapshot_publish.rowcount == 0, "Moderation published a changed listing that wasn't on the reviewer's screen")
 
     # Test the concurrent-edit risk guard and the exact conditional audit insert used by the Worker.
     blocked = db.execute("""UPDATE properties SET status='published', updated_at=?
