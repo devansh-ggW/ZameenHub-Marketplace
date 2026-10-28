@@ -26,11 +26,16 @@ This comparison uses the competitors' publicly reachable pages, not their privat
 | Photo upload / duplicate-photo screening | Not enabled in this deployment | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
 | Advanced map and filter experience | Basic filters; no map or locality autocomplete | Broader discovery experience | Broader project/locality discovery experience |
 | Account controls | Email authentication, optional TOTP MFA, recovery codes, delete-account flow | Mature marketplace account workflows | Mature marketplace account workflows |
+| Owner/agent workflow | My listings, edit/archive, private inquiry inbox; no buyer-seller chat, listing expiry, repost, lead feedback, or promoted-placement packages | Seller dashboard documents listing create/edit/delete/repost, filters, lead panel, chat/feedback, listing validity, profile editing, and promotional packages | Public search and builder/project pages; a complete current seller-dashboard audit was not available |
+| Listing media and project evidence | Listing photos are deliberately disabled until safe storage is configured; no project/floor-plan/video system | Seller help documents optional photo uploads and listing self-verification | Public project pages can display configurations, amenities, RERA/possession details when supplied; this is not proof those details have been independently validated |
 
 Public reference pages:
 - Housing.com main site: https://housing.com/
 - Housing.com seller portal: https://seller.housing.com/user-login?f=HOUSING.COM
 - Housing.com seller dashboard help (listing filters, lead panel, edit/delete/repost): https://housing.freshdesk.com/support/solutions/articles/4000200870-seller-dashboard-kya-hota-hai-
+- Housing.com help on posting a listing and optional photos/self-verification: https://support.housing.com/support/solutions/articles/4000200811-how-can-i-post-a-listing-on-housing-com-
+- Housing.com search workflow (cities, localities/projects/landmarks/developers, filters): https://support.housing.com/support/solutions/articles/4000200976-how-do-i-find-a-property-on-housing-com-
+- Housing.com seller portal features and listing plans: https://seller.housing.com/
 - 99acres builder/project catalogue example (RERA labels, possession dates and BHK where shown): https://builders.99acres.com/dream-developers-builders-bid-4990
 - Housing.com verification help article: https://support.housing.com/support/solutions/articles/4000200805-mere-listing-ko-kaise-verify-kiya-ja-sakta-hai-
 - Housing.com public terms/disclaimer: https://careers.housing.com/terms-of-use/
@@ -90,6 +95,26 @@ Public reference pages:
 8. **Add practical property tools.** EMI calculator, property-value research, rent receipt tools, and editorial guides are useful competitor gaps but need tested calculations and clear disclaimers; do not publish fabricated price estimates or market statistics.
 9. **Legal review is still a launch blocker.** The operator's legal identity, contact address, governing law/jurisdiction, data-retention periods, and complaint/grievance process must be completed and reviewed for the actual business and applicable Indian requirements. The policy text in the repo cannot invent these facts.
 10. **Run live end-to-end tests.** A static smoke check does not prove email delivery, MFA interoperability with common authenticator apps, D1 migration success, AI quota availability, multi-cookie handling, production deployment, or account-deletion behavior. Test with non-production accounts and a D1 backup first.
+
+## Prioritized product roadmap: add, change, or keep out
+
+### P0 — required before public launch
+- Apply and verify the production D1 migrations, configure Cloudflare secrets/bindings, verify the Resend sender domain, restore-test a backup, and complete end-to-end account/listing/moderation checks.
+- Complete real operator identity, address, governing jurisdiction, grievance/contact process, and retention disclosures with the responsible operator or a qualified local professional.
+- Make listing review evidence-based. Never describe a text-risk score or moderation approval as independent title/ownership verification.
+
+### P1 — next practical marketplace upgrades
+- Add safe image storage and delivery only after provisioning R2 and testing file size/type validation, unguessable object keys, content handling, deletion, and access controls.
+- Add owner/agent evidence review and clearly labelled RERA/project fields backed by records that can actually be checked; record what was checked and when.
+- Add locality autocomplete/map only with a suitable provider, permitted usage, privacy review and rate limits. Expand property-type filters (such as commercial or PG/co-living) only if those categories are genuinely supported by the listing schema and moderation workflow.
+
+### P2 — after inventory and operations justify them
+- Buyer-seller chat, saved-search alerts, listing expiry/repost, lead feedback, project/developer profiles, verified market guides, and optional promotional listings.
+- Price/rent trends or property valuation only when there is a traceable, licensed and current data source with transparent methodology and limitations.
+
+### Keep out of the product
+- Fake demo inventory presented as real, fabricated marketplace counts or lead promises, invented price estimates, placeholder “verified owner” badges, unsupported photo-upload claims, or decorative controls that do not perform the action they advertise.
+- Automated bans or automatic publication based only on AI scores, user reports, or duplicate-title signals.
 
 ## Production acceptance checklist
 
