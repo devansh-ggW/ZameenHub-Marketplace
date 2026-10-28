@@ -77,6 +77,13 @@ def main() -> int:
                   VALUES('pending','owner','pending-home','Pending home','rent','Apartment','West','Nashik',20000,'A detailed description of another test property','pending','high',80)""")
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('other-property','other-owner','other-home','Other home','sale','Apartment','East','Nashik',3000000,'A detailed description of another owner property','published')""")
+    db.execute("UPDATE properties SET amenities_json=? WHERE id='published'", ('["Parking","Lift"]',))
+    amenity_query = """SELECT p.id FROM properties p WHERE p.status='published'
+                       AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(p.amenities_json) THEN p.amenities_json ELSE '[]' END) AS item WHERE item.value=?)"""
+    expect([row["id"] for row in db.execute(amenity_query, ("Parking",))] == ["published"],
+           "Amenity filter did not return the listing with the selected amenity")
+    expect([row["id"] for row in db.execute(amenity_query, ("Swimming pool",))] == [],
+           "Amenity filter returned a listing without the selected amenity")
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('snapshot-test','other-owner','snapshot-test-home','Snapshot test home','sale','Apartment','North','Nashik',1500000,'A detailed description of the snapshot test property','pending')""")
 
