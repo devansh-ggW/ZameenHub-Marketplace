@@ -5,6 +5,7 @@ export type AppUser = {
   role: 'user' | 'moderator' | 'admin'
   emailVerified: boolean
   mfaEnabled: boolean
+  profileImageUrl: string
 }
 export type ApiResult<T> =
   | { ok: true; data: T; status: number }
