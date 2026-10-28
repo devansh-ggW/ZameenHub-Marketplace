@@ -63,9 +63,10 @@ async function sendEmail(env:Env,to:string,subject:string,html:string) {
   const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:`Bearer ${env.RESEND_API_KEY}`,'content-type':'application/json'},body:JSON.stringify({from:env.RESEND_FROM_EMAIL,to:[to],subject,html})})
   return response.ok
 }
+const escapeHtml=(value:string)=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
 function emailHtml(title:string,body:string,url:string,button:string) {
-  const safeUrl=url.replace(/&/g,'&amp;').replace(/"/g,'&quot;')
-  return `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#182230;line-height:1.65"><p style="font-weight:700">ZameenHub</p><h1 style="font-size:26px">${title}</h1><p>${body}</p><p style="margin:28px 0"><a href="${safeUrl}" style="background:#2864dc;color:#fff;text-decoration:none;padding:13px 18px;border-radius:3px;display:inline-block">${button}</a></p><p style="font-size:12px;color:#647184">If you did not request this, you can ignore this email. Never share this link with anyone.</p><p style="font-size:12px;color:#647184">Support: ${envSupportPlaceholder}</p></div>`.replace('${envSupportPlaceholder}','dewifystores@gmail.com')
+  const safeUrl=escapeHtml(url)
+  return `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#182230;line-height:1.65"><p style="font-weight:700">ZameenHub</p><h1 style="font-size:26px">${escapeHtml(title)}</h1><p style="white-space:pre-wrap">${escapeHtml(body)}</p><p style="margin:28px 0"><a href="${safeUrl}" style="background:#2864dc;color:#fff;text-decoration:none;padding:13px 18px;border-radius:3px;display:inline-block">${escapeHtml(button)}</a></p><p style="font-size:12px;color:#647184">If you did not request this, you can ignore this email. Never share this link with anyone.</p><p style="font-size:12px;color:#647184">Support: dewifystores@gmail.com</p></div>`
 }
 async function limited(db:D1Database,key:string,max=8,windowMinutes=15) {
   const keyHash=await digest(key), now=Date.now(), windowMs=windowMinutes*60_000
