@@ -237,8 +237,21 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-function propertyView(p:PropertyRow,images:string[]=[]) {
-  return {id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',image:images[0]||'',gallery:images,description:p.description,amenities:parseArray(p.amenities_json),status:p.status,verified:false,favorite:!!p.favorite,aiRiskLevel:p.ai_risk_level||'not-screened',aiRiskScore:Number(p.ai_risk_score)||0,aiRiskReasons:parseArray(p.ai_risk_reasons_json||'[]'),aiScreenedAt:p.ai_screened_at||undefined,aiModel:p.ai_model||'not-screened'}
+function propertyView(p:PropertyRow,images:string[]=[],includeRisk=false) {
+  return {
+    id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
+    propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
+    bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
+    image:images[0]||'',gallery:images,description:p.description,
+    amenities:parseArray(p.amenities_json),status:p.status,verified:false,favorite:!!p.favorite,
+    ...(includeRisk ? {
+      aiRiskLevel:p.ai_risk_level||'not-screened',
+      aiRiskScore:Number(p.ai_risk_score)||0,
+      aiRiskReasons:parseArray(p.ai_risk_reasons_json||'[]'),
+      aiScreenedAt:p.ai_screened_at||undefined,
+      aiModel:p.ai_model||'not-screened'
+    } : {})
+  }
 }
 function parseArray(s:string){try{const a=JSON.parse(s);return Array.isArray(a)?a.filter(x=>typeof x==='string').slice(0,50):[]}catch{return []}}
 async function propertyImages(db:D1Database,id:string) {
@@ -396,9 +409,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await verifyTotp(secret,code))return fail('That authenticator code is invalid. Check the code and try again.',400)
       const encrypted=pending.mfa_pending_secret_ciphertext
       const recoveryCodes=Array.from({length:10},()=>Array.from(bytes(12),b=>b.toString(16).padStart(2,'0')).join('').toUpperCase())
+      const currentSessionHash=await digest(cookieToken(request))
       const statements=[
         db.prepare('UPDATE users SET mfa_enabled=1,mfa_secret_ciphertext=?,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,updated_at=? WHERE id=?').bind(encrypted,nowIso(),user.id),
         db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id),
+        db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').bind(user.id,currentSessionHash),
         ...await Promise.all(recoveryCodes.map(async codeValue=>db.prepare('INSERT INTO mfa_recovery_codes(id,user_id,code_hash) VALUES(?,?,?)').bind(uuid(),user.id,await digest(codeValue))))
       ]
       await db.batch(statements)
@@ -512,7 +527,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
       const result=await db.prepare('SELECT * FROM properties WHERE owner_id=? ORDER BY created_at DESC LIMIT 100').bind(user.id).all<PropertyRow>()
-      return ok(result.results.map(p=>propertyView(p,[])))
+      return ok(result.results.map(p=>propertyView(p,[],true)))
     }
     if(path==='/api/favorites'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
