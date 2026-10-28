@@ -497,7 +497,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         db.prepare(`DELETE FROM inquiries WHERE sender_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
         db.prepare(`DELETE FROM properties WHERE owner_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
         db.prepare(`DELETE FROM users WHERE id=? AND ${canDeleteAdmin}`).bind(user.id),
-        ...accountRateKeys.map(key=>db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=?').bind(key))
+        ...accountRateKeys.map(key=>db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=? AND NOT EXISTS (SELECT 1 FROM users WHERE id=?)').bind(key,user.id))
       ])
       if(!deletion[2]?.meta?.changes)return fail('The last administrator cannot delete this account. Assign another trusted administrator first.',409)
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
