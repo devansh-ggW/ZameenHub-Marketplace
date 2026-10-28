@@ -185,8 +185,12 @@ async function getUser(request:Request,env:Env):Promise<UserRow|null>{
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
 async function sendEmail(env:Env,to:string,subject:string,html:string,text:string) {
   if(!env.RESEND_API_KEY||!env.RESEND_FROM_EMAIL)return false
-  const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:`Bearer ${env.RESEND_API_KEY}`,'content-type':'application/json'},body:JSON.stringify({from:env.RESEND_FROM_EMAIL,to:[to],subject,html,text})})
-  return response.ok
+  try {
+    const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:`Bearer ${env.RESEND_API_KEY}`,'content-type':'application/json'},body:JSON.stringify({from:env.RESEND_FROM_EMAIL,to:[to],subject,html,text})})
+    return response.ok
+  } catch {
+    return false
+  }
 }
 const escapeHtml=(value:string)=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
 function emailHtml(title:string,body:string,url:string,button:string) {
@@ -461,10 +465,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         if(!valid)return fail('Enter a valid authenticator or unused recovery code to confirm account deletion.',401)
       }
       // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
+      const accountRateKeys=await Promise.all([
+        'login-email:'+user.email,'listing-user:'+user.id,'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id
+      ].map(key=>digest(key)))
       await db.batch([
+        db.prepare('DELETE FROM inquiries WHERE sender_id=?').bind(user.id),
         db.prepare('DELETE FROM properties WHERE owner_id=?').bind(user.id),
         db.prepare('DELETE FROM users WHERE id=?').bind(user.id),
-        db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=?').bind(await digest('login-email:'+user.email))
+        ...accountRateKeys.map(key=>db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=?').bind(key))
       ])
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
