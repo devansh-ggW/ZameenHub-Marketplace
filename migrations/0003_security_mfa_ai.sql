@@ -44,3 +44,21 @@ CREATE TABLE IF NOT EXISTS property_moderation_events (
 );
 CREATE INDEX IF NOT EXISTS idx_property_moderation_events_property ON property_moderation_events(property_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_property_moderation_events_reviewer ON property_moderation_events(reviewer_id, created_at DESC);
+
+
+-- User reports feed the safety review process; reports never auto-ban an account.
+CREATE TABLE IF NOT EXISTS property_reports (
+  id TEXT PRIMARY KEY,
+  property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  reporter_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('suspected_fraud', 'incorrect_price', 'duplicate', 'unavailable', 'misleading_details', 'other')),
+  details TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'reviewing', 'resolved', 'dismissed')),
+  created_at TEXT NOT NULL,
+  resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  resolved_at TEXT,
+  resolution_note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_property_reports_status_date ON property_reports(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_property_reports_property ON property_reports(property_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_property_reports_one_open_per_user ON property_reports(property_id, reporter_id) WHERE reporter_id IS NOT NULL AND status IN ('open', 'reviewing');
