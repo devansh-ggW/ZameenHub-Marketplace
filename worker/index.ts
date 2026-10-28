@@ -282,7 +282,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
   if(!path.startsWith('/api/'))return new Response('Not found',{status:404})
   if(method==='OPTIONS')return new Response(null,{status:204,headers:{'Allow':'GET, POST, PATCH, DELETE, OPTIONS','Cache-Control':'no-store'}})
   if(method!=='GET'&&!sameOrigin(request,url))return fail('Request origin could not be validated.',403)
-  if(path==='/api/health'&&method==='GET')return ok({service:'zameenhub-api'})
+  if(path==='/api/health'&&method==='GET') {
+    if(!env.DB)return fail('Service unavailable.',503)
+    try {
+      const health=await env.DB.prepare('SELECT 1 AS ready').first<{ready:number}>()
+      if(health?.ready!==1)return fail('Service unavailable.',503)
+      return ok({service:'zameenhub-api',database:'ready'})
+    } catch {
+      return fail('Service unavailable.',503)
+    }
+  }
   if(!env.DB)return fail('Database is not configured for this environment.',503)
   const db=env.DB
   try {
