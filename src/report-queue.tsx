@@ -69,7 +69,8 @@ export function ReportQueuePage() {
     setBusyId('')
     if (!result.ok) { setError(result.error); return }
     setNotice(status === 'reviewing' ? 'Report assigned for review.' : status === 'resolved' ? 'Report marked resolved.' : 'Report dismissed.')
-    setReports(current => current.filter(item => item.id !== report.id))
+    if (status === 'reviewing') setReports(current => current.map(item => item.id === report.id ? { ...item, status: 'reviewing' } : item))
+    else setReports(current => current.filter(item => item.id !== report.id))
   }
 
   return <main className="page-shell"><div className="container">
