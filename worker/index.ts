@@ -573,8 +573,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
-      const result=await db.prepare('SELECT * FROM properties WHERE owner_id=? ORDER BY created_at DESC LIMIT 100').bind(user.id).all<PropertyRow>()
-      return ok(result.results.map(p=>propertyView(p,[])))
+      const result=await db.prepare("SELECT p.*,(SELECT e.owner_message FROM property_moderation_events e WHERE e.property_id=p.id AND e.new_status='rejected' ORDER BY e.created_at DESC LIMIT 1) AS owner_review_message FROM properties p WHERE p.owner_id=? ORDER BY p.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow & {owner_review_message?:string}>()
+      return ok(result.results.map(p=>({...propertyView(p,[]),reviewMessage:p.owner_review_message||undefined})))
     }
     if(path==='/api/my/inquiries'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your inquiries.',401)
@@ -663,7 +663,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
       if(!await authLimit(request,db,'moderation',30)||!await limited(db,'moderation-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
-      const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000)
+      const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000),ownerMessage=clean(input?.ownerMessage,1000)
       if(status!=='published'&&status!=='rejected'&&status!=='archived')return fail('Unsupported review status.')
       const id=decodeURIComponent(reviewMatch[1])
       const record=await db.prepare("SELECT * FROM properties WHERE id=? AND status IN ('pending','published')").bind(id).first<PropertyRow & {updated_at:string}>()
@@ -679,13 +679,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         return fail('This listing has high-risk signals. An administrator must record at least 20 characters of evidence-based review notes to override the block.',409)
       }
       if((status==='rejected'||status==='archived')&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for this moderation action.')
+      if(status==='rejected'&&ownerMessage.trim().length<10)return fail('Add a clear owner-facing explanation of at least 10 characters. Internal notes stay private.')
       const reviewTime=nowIso()
       // Bind the decision to the exact listing version displayed to the reviewer.
       // An owner edit or re-screen after the queue read must force a fresh review.
       const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=?"
       const auditResults=await db.batch([
         db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status=?"+snapshotGuard).bind(status,reviewTime,id,priorStatus,record.title,record.location,record.city,record.price,record.description,record.property_type,record.purpose,record.bedrooms,record.bathrooms,record.area,record.amenities_json||'[]',record.price_period||'',riskLevel,riskScore,record.ai_risk_reasons_json||'[]',record.ai_model||'not-screened',record.ai_screened_at||'',record.updated_at),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,reviewTime,id,status)
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,id,status)
       ])
       if(!auditResults[0]?.meta?.changes)return fail('The listing changed while it was being reviewed or was already handled. Refresh the queue and review the latest details and risk signals.',409)
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
