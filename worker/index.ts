@@ -226,7 +226,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/properties'&&method==='GET') {
       const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),beds=safeInt(url.searchParams.get('beds'),0,100),sort=url.searchParams.get('sort')
-      let sql="SELECT p.* FROM properties p WHERE p.status='published'",args:unknown[]=[]
+      const viewer=await getUser(request,env); let sql="SELECT p.*, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
       if(q){sql+=' AND (p.location LIKE ? OR p.city LIKE ? OR p.title LIKE ?)';const term='%'+q.replace(/[%_]/g,'')+'%';args.push(term,term,term)}
       if(purpose==='sale'||purpose==='rent'){sql+=' AND p.purpose=?';args.push(purpose)}
       if(type){sql+=' AND p.property_type=?';args.push(type)}
@@ -239,7 +239,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     const detailMatch=path.match(/^\/api\/properties\/([^/]+)$/)
     if(detailMatch&&method==='GET') {
       const slug=decodeURIComponent(detailMatch[1])
-      const p=await db.prepare("SELECT * FROM properties WHERE slug=? AND status='published'").bind(slug).first<PropertyRow>()
+      const viewer=await getUser(request,env); const p=await db.prepare("SELECT p.*, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published'").bind(viewer?.id||'',slug).first<PropertyRow>()
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
     }
