@@ -296,28 +296,44 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       return okWithCookies({loggedOut:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/register'&&method==='POST') {
+      const registrationMessage='If this address can be registered, instructions will be sent by email shortly. Check your inbox; if no message arrives, try signing in or password recovery, or contact dewifystores@gmail.com.'
       if(!await authLimit(request,db,'register',5))return fail('Too many attempts. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid request body.')
       const nextPath=safeNextPath(input.next)
       const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
-      if(name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
+      if(name.length<2||!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
       if(!await limited(db,'register-email:'+email,3,60))return fail('Too many account setup requests for this email. Please wait before trying again.',429)
-      let user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
+
+      // Do the same password-hash work for new and existing addresses, and
+      // return the same status/message so sign-up cannot be used to enumerate accounts.
+      const hash=await passwordHash(password)
+      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
       if(user) {
         if(!user.password_hash) {
           const token=await issueToken(db,user.id,'activate',30)
           const link=`${env.APP_URL||url.origin}/activate-account?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
-          const sent=await sendEmail(env,email,'Activate your ZameenHub account',emailHtml('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'),emailText('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'))
-          return ok({message:sent?'We sent account activation instructions to your email.':'Email delivery is not configured yet. Please contact support at dewifystores@gmail.com.'})
+          await sendEmail(env,email,'Activate your ZameenHub account',emailHtml('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'),emailText('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'))
+          return ok({message:registrationMessage})
         }
-        return ok({message:'If you can register with this address, we will email the next steps. Try signing in or use password recovery.'})
+        if(user.email_verified!==1) {
+          const token=await issueToken(db,user.id,'verify',30)
+          const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
+          await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'),emailText('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
+          return ok({message:registrationMessage})
+        }
+        const signInUrl=`${(env.APP_URL||url.origin).replace(/\\/$/,'')}/login`
+        const helpTitle='Sign in to ZameenHub'
+        const helpBody='A request was made to create or access a ZameenHub account using this email address. If you already have an account, sign in or use password recovery. If you did not make this request, you can ignore this message; no password or account setting was changed.'
+        await sendEmail(env,email,'Sign-in help for ZameenHub',emailHtml(helpTitle,helpBody,signInUrl,'Open sign in'),emailText(helpTitle,helpBody,signInUrl,'Open sign in'))
+        return ok({message:registrationMessage})
       }
-      const id=uuid(),hash=await passwordHash(password)
+
+      const id=uuid()
       await db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,nowIso()).run()
       const token=await issueToken(db,id,'verify',30)
       const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
-      const sent=await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'),emailText('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
-      return ok({message:sent?'Account created. Check your inbox for the verification link.':'Your account was created, but email delivery is not configured. Contact dewifystores@gmail.com before trying to sign in.'},201)
+      await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'),emailText('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
+      return ok({message:registrationMessage})
     }
     if(path==='/api/auth/verify-email'&&method==='POST') {
       if(!await authLimit(request,db,'verify',8))return fail('Too many attempts. Please wait before trying again.',429)
