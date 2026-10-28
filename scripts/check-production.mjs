@@ -42,6 +42,10 @@ if(!worker.includes('DELETE FROM sessions WHERE user_id=? AND token_hash<>?'))er
 if(!worker.includes("DELETE FROM password_reset_tokens WHERE token_hash=? AND expires_at>? RETURNING user_id"))errors.push('Password-reset tokens must be atomically consumed before changing a password')
 if(!worker.includes("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='verify' AND expires_at>? RETURNING user_id"))errors.push('Email-verification tokens must be atomically consumed once')
 if(!worker.includes("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='activate' AND expires_at>? RETURNING user_id"))errors.push('Legacy-account activation tokens must be atomically consumed once')
+const forgotStart=worker.indexOf("if(path==='/api/auth/forgot-password'&&method==='POST')")
+const resetStart=worker.indexOf("if(path==='/api/auth/reset-password'&&method==='POST')",forgotStart)
+const forgotBlock=forgotStart>=0&&resetStart>forgotStart?worker.slice(forgotStart,resetStart):''
+if(!forgotBlock.includes('await db.batch([')||!forgotBlock.includes('DELETE FROM password_reset_tokens WHERE user_id=?')||!forgotBlock.includes('INSERT INTO password_reset_tokens'))errors.push('Password-reset token rotation must replace prior tokens atomically')
 if(!worker.includes('DELETE FROM auth_mfa_challenges WHERE user_id=?'))errors.push('Password reset and MFA changes must invalidate pending challenges')
 if(!worker.includes("const canDeleteAdmin="))errors.push('Last administrator deletion guard must be enforced inside the atomic deletion batch')
 if(!worker.includes('p.price>=?')||!worker.includes('p.price<=?')||!worker.includes('p.area>=?')||!worker.includes('p.area<=?')||!worker.includes('p.bathrooms>=?'))errors.push('Property budget, bathroom and area filters are missing')
