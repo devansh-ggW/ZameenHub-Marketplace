@@ -14,6 +14,9 @@ type Report = {
   property_title: string
   property_slug: string
   property_city: string
+  property_status: 'pending' | 'published' | 'rejected' | 'archived'
+  ai_risk_level: string | null
+  ai_risk_score: number
 }
 const reasonLabel: Record<string, string> = {
   suspected_fraud: 'Suspected scam or fraud',
@@ -73,6 +76,22 @@ export function ReportQueuePage() {
     else setReports(current => current.filter(item => item.id !== report.id))
   }
 
+  async function archiveReportedListing(report: Report) {
+    if (report.property_status !== 'published') { setError('Only a currently published listing can be archived here.'); return }
+    const note = window.prompt('Explain why this reported listing should be taken offline (at least 8 characters). Review the evidence first; a report alone is not proof of fraud:')
+    if (note === null) return
+    if (note.trim().length < 8) { setError('Archiving cancelled. Add at least 8 characters of evidence-based notes.'); return }
+    setBusyId(report.id); setError(''); setNotice('')
+    const result = await apiRequest<{ status: string; priorStatus: string; auditRecorded: boolean }>(`/api/admin/properties/${encodeURIComponent(report.property_id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'archived', reviewNote: note.trim() }),
+    })
+    setBusyId('')
+    if (!result.ok) { setError(result.error); return }
+    setReports(current => current.map(item => item.id === report.id ? { ...item, property_status: 'archived' } : item))
+    setNotice('Listing archived and removed from public search. The report remains open until you record its outcome.')
+  }
+
   return <main className="page-shell"><div className="container">
     <div className="page-title"><SectionKicker>Safety and moderation</SectionKicker><h1>Listing reports.</h1><p>Investigate reported listings, document the outcome, and avoid treating a complaint or AI score as proof on its own.</p></div>
     {loading ? <p className="status-message">Loading reports…</p> : <>
@@ -83,9 +102,11 @@ export function ReportQueuePage() {
       {!error && reports.length > 0 && <div className="report-queue">{reports.map(report => <article className="report-card" key={report.id}>
         <div className="report-card-head"><div><span className={'report-status report-status-' + report.status}>{report.status}</span><h2>{report.property_title}</h2><p>{report.property_city} · {reasonLabel[report.reason] ?? report.reason}</p></div><span className="mono">{new Date(report.created_at).toLocaleDateString('en-IN')}</span></div>
         <p className="report-evidence">{report.details}</p>
-        <p className="muted">Reported listing: <Link to={'/properties/' + report.property_slug} target="_blank" rel="noreferrer">Open property</Link></p>
+        <p className="muted">Reported listing: {report.property_status === 'published' ? <Link to={'/properties/' + report.property_slug} target="_blank" rel="noreferrer">Open property</Link> : <span>Not publicly available · {report.property_status}</span>}</p>
+        <p className="muted">Automated screen: {report.ai_risk_level ?? 'not-screened'} · {Number(report.ai_risk_score) || 0}/100. This is a triage signal, not proof.</p>
         <div className="report-actions">
           {report.status === 'open' && <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void updateReport(report, 'reviewing')}>Start review</button>}
+          {report.property_status === 'published' && <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void archiveReportedListing(report)}>{busyId === report.id ? 'Archiving…' : 'Archive listing'}</button>}
           <button className="btn btn-primary" disabled={busyId === report.id} onClick={() => void updateReport(report, 'resolved')}>Resolve</button>
           <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void updateReport(report, 'dismissed')}>Dismiss</button>
         </div>
