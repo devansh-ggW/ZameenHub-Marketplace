@@ -58,8 +58,8 @@ try {
 if(lockfile.includes('specifier: latest'))errors.push('Lockfile importers should use pinned dependency specifiers')
 if(!worker.includes('sameOrigin(request,url)')||!worker.includes('Request origin could not be validated.'))errors.push('Worker must reject state-changing requests with an invalid/missing Origin')
 if(!worker.includes('request.body?.getReader()')||!worker.includes('total>32768'))errors.push('Worker request bodies must be rejected while streaming once they exceed 32 KiB')
-const faviconTag=indexHtml.match(/<link\\b[^>]*\\brel=[\"']icon[\"'][^>]*>/i)?.[0]||''
-const faviconHref=faviconTag.match(/\\bhref=[\"']([^\"']+)[\"']/i)?.[1]||''
+const faviconLine=indexHtml.split(String.fromCharCode(10)).find(line=>line.includes('rel="icon"'))||''
+const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
 if(!faviconHref)errors.push('HTML must declare a favicon href')
 else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.replace(/^\\/+/,''))))errors.push('HTML favicon target does not exist: '+faviconHref)
 if(!worker.includes("status:p.status,verified:false"))errors.push('A moderated listing must not be mislabelled as independently ownership-verified')
