@@ -21,5 +21,9 @@ if(!read('src/legal-pages.tsx').includes('dewifystores@gmail.com'))errors.push('
 if(!worker.includes('iterations=100000'))errors.push('Worker PBKDF2 hash iteration count must be 100000 for Cloudflare Workers compatibility')
 if(!worker.includes('iterations>100000'))errors.push('Worker PBKDF2 verification limit must not exceed 100000 on Cloudflare Workers')
 if(worker.includes('iterations=120000')||worker.includes('iterations>500000'))errors.push('Worker PBKDF2 configuration exceeds Cloudflare Workers supported limit')
+if(!worker.includes('function emailText('))errors.push('Worker email messages must include a plain-text alternative')
+if(!worker.includes('href=\"${safeUrl}\"'))errors.push('Email HTML must include a link with the generated action URL')
+if(!worker.includes('copy and open this link in your browser'))errors.push('Email HTML must expose the action URL as a visible clickable fallback')
+if(!worker.includes('html,text})'))errors.push('Resend payload must include both HTML and plain-text email bodies')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
 console.log('Static production smoke checks passed. This does not replace a build, live email test, database migration test, or end-to-end test.')
