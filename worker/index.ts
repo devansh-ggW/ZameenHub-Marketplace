@@ -263,7 +263,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/auth/logout'&&method==='POST') {
       const token=cookieToken(request)
       if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await digest(token)).run()
-      return ok({loggedOut:true},200,{'Set-Cookie':sessionCookie('',0)})
+      const challenge=requestCookie(request,'zh_mfa')
+      if(challenge)await db.prepare('DELETE FROM auth_mfa_challenges WHERE token_hash=?').bind(await digest(challenge)).run()
+      return okWithCookies({loggedOut:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/register'&&method==='POST') {
       if(!await authLimit(request,db,'register',5))return fail('Too many attempts. Please wait before trying again.',429)
@@ -328,13 +330,86 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/auth/login'&&method==='POST') {
       if(!await authLimit(request,db,'login',8))return fail('Too many sign-in attempts. Please wait and try again.',429)
-      const input=await body(request),email=normalizeEmail(clean(input?.email,254)),password=clean(input?.password,128)
-      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
+      const input=await body(request);if(!input)return fail('Invalid request body.')
+      const email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
+      if(!await limited(db,'login-email:'+email,8,15))return fail('Too many sign-in attempts. Please wait and try again.',429)
+      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext FROM users WHERE email=?').bind(email).first<UserRow>()
       const valid=await verifyPassword(password,user?.password_hash||null)
       if(!user||!valid)return fail('Email or password is incorrect.',401)
       if(user.email_verified!==1)return fail('Please verify your email before signing in. Use the resend verification option if needed.',403)
+      if(user.mfa_enabled===1){
+        if(!env.MFA_ENCRYPTION_KEY)return fail('Two-factor sign-in is temporarily unavailable. Please contact support.',503)
+        const challenge=randomToken()
+        await db.prepare('INSERT INTO auth_mfa_challenges(id,user_id,token_hash,attempts,expires_at) VALUES(?,?,?,0,?)').bind(uuid(),user.id,await digest(challenge),future(5)).run()
+        return ok({mfaRequired:true},200,{'Set-Cookie':mfaChallengeCookie(challenge,300)})
+      }
       const token=await createSession(db,user.id)
-      return ok({user:userView(user)},200,{'Set-Cookie':sessionCookie(token,60*24*14)})
+      return ok({user:userView(user),mfaRequired:false},200,{'Set-Cookie':sessionCookie(token,60*24*14)})
+    }
+    if(path==='/api/auth/mfa/verify'&&method==='POST') {
+      if(!await authLimit(request,db,'mfa-verify',8))return fail('Too many verification attempts. Please wait before trying again.',429)
+      const challenge=requestCookie(request,'zh_mfa')
+      if(!challenge)return fail('Your two-factor sign-in has expired. Please sign in again.',401)
+      const challengeHash=await digest(challenge)
+      const record=await db.prepare('SELECT id,user_id,attempts,expires_at FROM auth_mfa_challenges WHERE token_hash=? AND expires_at>?').bind(challengeHash,nowIso()).first<{id:string;user_id:string;attempts:number;expires_at:string}>()
+      if(!record)return fail('Your two-factor sign-in has expired. Please sign in again.',401)
+      if(record.attempts>=5){await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run();return fail('Too many incorrect codes. Please sign in again.',429)}
+      const input=await body(request),code=clean(input?.code,40)
+      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext FROM users WHERE id=?').bind(record.user_id).first<UserRow>()
+      let valid=false
+      try { valid=!!user&&user.email_verified===1&&await verifyMfaCode(db,user,code,env) } catch { valid=false }
+      if(!valid){
+        const attempts=record.attempts+1
+        if(attempts>=5)await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
+        else await db.prepare('UPDATE auth_mfa_challenges SET attempts=attempts+1 WHERE id=?').bind(record.id).run()
+        return fail('That code is invalid or expired. Check your authenticator and try again.',401)
+      }
+      const token=await createSession(db,record.user_id)
+      await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
+      return okWithCookies({user:userView(user as UserRow)},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
+    }
+    if(path==='/api/auth/mfa/setup'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling two-factor authentication.',401)
+      if(user.mfa_enabled===1)return fail('Two-factor authentication is already enabled.')
+      if(!env.MFA_ENCRYPTION_KEY||env.MFA_ENCRYPTION_KEY.length<32)return fail('MFA_ENCRYPTION_KEY must be set as a Cloudflare Secret of at least 32 characters before setup.',503)
+      const input=await body(request),password=passwordValue(input?.password)
+      if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
+      const secret=base32Encode(bytes(20)),ciphertext=await encryptMfaSecret(secret,env)
+      await db.prepare('UPDATE users SET mfa_pending_secret_ciphertext=?,mfa_pending_expires_at=?,updated_at=? WHERE id=?').bind(ciphertext,future(10),nowIso(),user.id).run()
+      const otpAuthUri='otpauth://totp/'+encodeURIComponent('ZameenHub:'+user.email)+'?secret='+secret+'&issuer=ZameenHub&algorithm=SHA1&digits=6&period=30'
+      return ok({secret,otpAuthUri,expiresInMinutes:10})
+    }
+    if(path==='/api/auth/mfa/enable'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling two-factor authentication.',401)
+      const input=await body(request),password=passwordValue(input?.password),code=clean(input?.code,20)
+      if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
+      const pending=await db.prepare('SELECT mfa_pending_secret_ciphertext,mfa_pending_expires_at FROM users WHERE id=?').bind(user.id).first<{mfa_pending_secret_ciphertext:string|null;mfa_pending_expires_at:string|null}>()
+      if(!pending?.mfa_pending_secret_ciphertext||!pending.mfa_pending_expires_at||Date.parse(pending.mfa_pending_expires_at)<=Date.now())return fail('Your authenticator setup expired. Start setup again.',400)
+      const secret=await decryptMfaSecret(pending.mfa_pending_secret_ciphertext,env)
+      if(!await verifyTotp(secret,code))return fail('That authenticator code is invalid. Check the code and try again.',400)
+      const encrypted=pending.mfa_pending_secret_ciphertext
+      const recoveryCodes=Array.from({length:10},()=>Array.from(bytes(12),b=>b.toString(16).padStart(2,'0')).join('').toUpperCase())
+      const statements=[
+        db.prepare('UPDATE users SET mfa_enabled=1,mfa_secret_ciphertext=?,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,updated_at=? WHERE id=?').bind(encrypted,nowIso(),user.id),
+        db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id),
+        ...await Promise.all(recoveryCodes.map(async codeValue=>db.prepare('INSERT INTO mfa_recovery_codes(id,user_id,code_hash) VALUES(?,?,?)').bind(uuid(),user.id,await digest(codeValue))))
+      ]
+      await db.batch(statements)
+      return ok({enabled:true,recoveryCodes})
+    }
+    if(path==='/api/auth/mfa/disable'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before changing two-factor authentication.',401)
+      if(user.mfa_enabled!==1)return fail('Two-factor authentication is not enabled.')
+      const input=await body(request),password=passwordValue(input?.password)
+      if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
+      let valid=false
+      try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }
+      if(!valid)return fail('Enter a valid authenticator or unused recovery code.',401)
+      await db.batch([
+        db.prepare('UPDATE users SET mfa_enabled=0,mfa_secret_ciphertext=NULL,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id),
+        db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id)
+      ])
+      return ok({enabled:false})
     }
     if(path==='/api/auth/forgot-password'&&method==='POST') {
       if(!await authLimit(request,db,'forgot',4))return fail('Too many requests. Please wait before trying again.',429)
