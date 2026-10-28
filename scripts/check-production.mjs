@@ -61,7 +61,7 @@ if(!worker.includes('request.body?.getReader()')||!worker.includes('total>32768'
 const registrationStart=worker.indexOf("if(path==='/api/auth/register'&&method==='POST') {")
 const registrationEnd=worker.indexOf("if(path==='/api/auth/verify-email'&&method==='POST')",registrationStart)
 const registrationBlock=registrationStart>=0&&registrationEnd>registrationStart?worker.slice(registrationStart,registrationEnd):''
-if(!registrationBlock.includes('const registrationMessage=')||(registrationBlock.match(/return ok\\(\\{message:registrationMessage\\}\\)/g)||[]).length!==4||/return ok\\(\\{message:registrationMessage\\}\\},201\\)/.test(registrationBlock))errors.push('Registration must use the same generic response and status for existing and new email addresses')
+if(!registrationBlock.includes('const registrationMessage=')||(registrationBlock.split('return ok({message:registrationMessage})').length-1)!==4||registrationBlock.includes('},201)'))errors.push('Registration must use the same generic response and status for existing and new email addresses')
 const faviconLine=indexHtml.split(String.fromCharCode(10)).find(line=>line.includes('rel="icon"'))||''
 const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
 if(!faviconHref)errors.push('HTML must declare a favicon href')
