@@ -93,7 +93,7 @@ Public reference pages:
 1. **Apply and test the database migrations.** Back up production D1 and apply pending migrations through `migrations/0004_media_verification.sql` before deploying Worker code that references those columns/tables.
 2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. Workers AI calls incur usage charges under Cloudflare's current pricing and quotas; verify the current pricing and account limits before launch. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
 3. **Do not advertise automated ownership verification.** This implementation can flag scam language and exact duplicates, and lets a moderator document a check of an owner-supplied public record reference. It does not call government record APIs or establish legal title, prove identity, validate a sale mandate, or verify that photos depict the claimed property. Add evidence-backed owner/agent verification and a clear audit trail before using a “verified owner/property” badge.
-4. **Enable safe image upload.** R2 is currently commented out and the listing flow explicitly says photos are not enabled. Provision storage, enforce file type/size limits, use non-guessable keys, reject active content, and test public delivery before enabling uploads.
+4. **Treat URL-based media as a reference feature, not upload hosting.** This branch stores public HTTPS image/video URLs in D1, not media bytes. Test third-party link stability and permissions. If direct file uploads are later required, provision R2 and add file-type/size validation, non-guessable keys, active-content handling, deletion, and access-control tests before enabling them.
 5. **Exercise reporting, moderation audit, owner lifecycle and inbox isolation.** The report form/queue, resolution notes, moderation-event table, owner edit/archive controls, and private lead inbox are included. Test duplicate reports, role restrictions, concurrent status changes, owner isolation, and retention after account deletion.
 6. **Expand listing management gradually.** Safe edit and archive/unpublish are now implemented and edits re-enter moderation. Remaining workflow improvements include draft autosave, photo management once uploads are enabled, and clear owner-facing reasons when reviewers reject a submission.
 7. **Improve discovery parity gradually.** Basic budget, bathroom, and minimum-area filters, the owner inbox and an EMI calculator are now included. Remaining gaps are locality autocomplete/map, amenities/furnishing/possession filters, market-price research, listing/project/builder profiles, dynamic listing sitemaps and saved-search alerts; add them only as reliable data and providers become available.
@@ -109,7 +109,7 @@ Public reference pages:
 - Make listing review evidence-based. Never describe a text-risk score or moderation approval as independent title/ownership verification.
 
 ### P1 — next practical marketplace upgrades
-- Add safe image storage and delivery only after provisioning R2 and testing file size/type validation, unguessable object keys, content handling, deletion, and access controls.
+- Add direct file uploads only if needed, after provisioning R2 and testing file size/type validation, unguessable object keys, content handling, deletion, and access controls. Current URLs are external references stored in D1.
 - Add owner/agent evidence review and clearly labelled RERA/project fields backed by records that can actually be checked; record what was checked and when.
 - Add locality autocomplete/map only with a suitable provider, permitted usage, privacy review and rate limits. Expand property-type filters (such as commercial or PG/co-living) only if those categories are genuinely supported by the listing schema and moderation workflow.
 
@@ -123,7 +123,7 @@ Public reference pages:
 
 ## Production acceptance checklist
 
-- [ ] Back up production D1 and apply migration 0003 before deploying the changed Worker.
+- [ ] Back up production D1 and apply pending migrations through `migrations/0004_media_verification.sql` before deploying the changed Worker.
 - [ ] Add the `MFA_ENCRYPTION_KEY` Cloudflare secret without exposing it in Git or client code.
 - [ ] Confirm the `AI` binding is active for `zameenhub-marketplace`.
 - [ ] Register, verify email, sign in, sign out, reset password, and test invalid/expired tokens.
