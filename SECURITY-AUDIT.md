@@ -51,7 +51,7 @@ Public reference pages:
 - Listing submission rate limits, login limits by IP and normalized email, request body size limit, strict Origin validation for state-changing requests, and additional security headers.
 - A clear cookie notice and dedicated cookie policy. The current implementation does not intentionally set analytics or advertising cookies; the notice preference uses browser local storage.
 - UI language now makes clear that “published” means approved for public display, not independently verified property ownership.
-- Static production smoke checks now verify the new wiring. CI also runs a SQLite migration test, RFC TOTP vectors, a production dependency audit, and the TypeScript/Vite build.
+- Static production smoke checks now verify the new wiring. CI also runs a SQLite migration test, owner-isolation query checks, RFC TOTP vectors, a full dependency audit, and the TypeScript/Vite build.
 
 ## Security review: addressed in this branch
 
@@ -72,7 +72,7 @@ Public reference pages:
 ## High-priority gaps before public launch
 
 1. **Apply and test the database migration.** `migrations/0003_security_mfa_ai.sql` must be applied to the production D1 database before deploying Worker code that references those columns/tables.
-2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
+2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. Workers AI calls incur usage charges under Cloudflare's current pricing and quotas; verify the current pricing and account limits before launch. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
 3. **Do not advertise automated ownership verification yet.** This implementation can flag scam language and exact duplicates, not establish property title, prove identity, validate a sale mandate, or verify that photos depict the claimed property. Add evidence-backed owner/agent verification and a clear audit trail before using a “verified owner/property” badge.
 4. **Enable safe image upload.** R2 is currently commented out and the listing flow explicitly says photos are not enabled. Provision storage, enforce file type/size limits, use non-guessable keys, reject active content, and test public delivery before enabling uploads.
 5. **Exercise reporting, moderation audit, owner lifecycle and inbox isolation.** The report form/queue, resolution notes, moderation-event table, owner edit/archive controls, and private lead inbox are included. Test duplicate reports, role restrictions, concurrent status changes, owner isolation, and retention after account deletion.
