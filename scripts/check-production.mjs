@@ -23,6 +23,8 @@ if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('in
 if(!worker.includes('propertyView(p,[],true)'))errors.push('Detailed AI risk signals must only be sent to the moderator review queue')
 if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
 if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
+if(!worker.includes('const snapshotGuard=')||!worker.includes('AND updated_at=?'))errors.push('Moderation must reject stale listing versions that changed after review-queue load')
+if(!worker.includes("status==='rejected'&&reviewNote.trim().length<8"))errors.push('Listing rejection must have an evidence-based note')
 if(!worker.includes('input?.overrideRisk===true'))errors.push('High-risk listing publication needs an explicit admin override')
 if(!worker.includes('COALESCE(mfa_last_counter,0)<?'))errors.push('Accepted TOTP codes must not be replayable')
 if(!worker.includes("attempts<5"))errors.push('MFA challenge attempts must be capped atomically')
