@@ -371,6 +371,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/auth/mfa/setup'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling two-factor authentication.',401)
+      if(!await authLimit(request,db,'mfa-setup',5)||!await limited(db,'mfa-setup-user:'+user.id,5,15))return fail('Too many setup attempts. Please wait before trying again.',429)
       if(user.mfa_enabled===1)return fail('Two-factor authentication is already enabled.')
       if(!env.MFA_ENCRYPTION_KEY||env.MFA_ENCRYPTION_KEY.length<32)return fail('MFA_ENCRYPTION_KEY must be set as a Cloudflare Secret of at least 32 characters before setup.',503)
       const input=await body(request),password=passwordValue(input?.password)
@@ -382,6 +383,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/auth/mfa/enable'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling two-factor authentication.',401)
+      if(!await authLimit(request,db,'mfa-enable',5)||!await limited(db,'mfa-enable-user:'+user.id,5,15))return fail('Too many verification attempts. Please wait before trying again.',429)
       const input=await body(request),password=passwordValue(input?.password),code=clean(input?.code,20)
       if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
       const pending=await db.prepare('SELECT mfa_pending_secret_ciphertext,mfa_pending_expires_at FROM users WHERE id=?').bind(user.id).first<{mfa_pending_secret_ciphertext:string|null;mfa_pending_expires_at:string|null}>()
@@ -396,10 +398,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         ...await Promise.all(recoveryCodes.map(async codeValue=>db.prepare('INSERT INTO mfa_recovery_codes(id,user_id,code_hash) VALUES(?,?,?)').bind(uuid(),user.id,await digest(codeValue))))
       ]
       await db.batch(statements)
+      await sendEmail(env,user.email,'Two-factor authentication enabled on ZameenHub',emailHtml('Two-factor authentication enabled','Authenticator-based two-factor authentication was enabled for your account. If you did not do this, sign in, disable it, and contact support.',env.APP_URL||url.origin,'Open ZameenHub'),emailText('Two-factor authentication enabled','Authenticator-based two-factor authentication was enabled for your account. If you did not do this, sign in, disable it, and contact support.',env.APP_URL||url.origin,'Open ZameenHub'))
       return ok({enabled:true,recoveryCodes})
     }
     if(path==='/api/auth/mfa/disable'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before changing two-factor authentication.',401)
+      if(!await authLimit(request,db,'mfa-disable',5)||!await limited(db,'mfa-disable-user:'+user.id,5,15))return fail('Too many verification attempts. Please wait before trying again.',429)
       if(user.mfa_enabled!==1)return fail('Two-factor authentication is not enabled.')
       const input=await body(request),password=passwordValue(input?.password)
       if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
@@ -410,6 +414,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         db.prepare('UPDATE users SET mfa_enabled=0,mfa_secret_ciphertext=NULL,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id),
         db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id)
       ])
+      await sendEmail(env,user.email,'Two-factor authentication disabled on ZameenHub',emailHtml('Two-factor authentication disabled','Authenticator-based two-factor authentication was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'),emailText('Two-factor authentication disabled','Authenticator-based two-factor authentication was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'))
       return ok({enabled:false})
     }
     if(path==='/api/auth/forgot-password'&&method==='POST') {
@@ -441,6 +446,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/account/delete'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before deleting your account.',401)
+      if(!await authLimit(request,db,'account-delete',4)||!await limited(db,'account-delete-user:'+user.id,3,60))return fail('Too many account deletion attempts. Please wait before trying again.',429)
+      if(user.role==='admin'){
+        const administrators=await db.prepare("SELECT COUNT(*) AS total FROM users WHERE role='admin'").first<{total:number}>()
+        if((administrators?.total||0)<=1)return fail('The last administrator cannot delete this account. Assign another trusted administrator first.',409)
+      }
       const input=await body(request)
       if(input?.confirmText!=='DELETE')return fail('Type DELETE to confirm account deletion.')
       const password=passwordValue(input?.password)
@@ -453,7 +463,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
       await db.batch([
         db.prepare('DELETE FROM properties WHERE owner_id=?').bind(user.id),
-        db.prepare('DELETE FROM users WHERE id=?').bind(user.id)
+        db.prepare('DELETE FROM users WHERE id=?').bind(user.id),
+        db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=?').bind(await digest('login-email:'+user.email))
       ])
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
