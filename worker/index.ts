@@ -662,22 +662,24 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000)
       if(status!=='published'&&status!=='rejected')return fail('Unsupported review status.')
       const id=decodeURIComponent(reviewMatch[1])
-      const pending=await db.prepare("SELECT id,status,ai_risk_level,ai_risk_score FROM properties WHERE id=? AND status='pending'").bind(id).first<{id:string;status:string;ai_risk_level:string;ai_risk_score:number}>()
+      const pending=await db.prepare("SELECT * FROM properties WHERE id=? AND status='pending'").bind(id).first<PropertyRow & {updated_at:string}>()
       if(!pending)return fail('Listing was not pending or could not be found.',404)
-      const highRisk=pending.ai_risk_level==='high'||pending.ai_risk_score>=65
-      if(status==='published'&&highRisk&&!(user.role==='admin'&&input?.overrideRisk===true&&reviewNote.trim().length>=20)) {
+      const pendingRiskLevel=pending.ai_risk_level||'not-screened'
+      const pendingRiskScore=Number(pending.ai_risk_score)||0
+      const highRisk=pendingRiskLevel==='high'||pendingRiskScore>=65
+      const adminRiskOverride=status==='published'&&user.role==='admin'&&input?.overrideRisk===true&&reviewNote.trim().length>=20
+      if(status==='published'&&highRisk&&!adminRiskOverride) {
         return fail('This listing has high-risk signals. An administrator must record at least 20 characters of evidence-based review notes to override the block.',409)
       }
       if(status==='rejected'&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for rejecting this listing.')
       const reviewTime=nowIso()
-      // Re-check the risk boundary in the same UPDATE that changes visibility;
-      // never trust the earlier queue read if an owner edited the listing meanwhile.
-      const riskGuard=status!=='published'?'':highRisk
-        ? " AND (ai_risk_level='high' OR ai_risk_score>=65)"
-        : " AND COALESCE(ai_risk_level,'not-screened')!='high' AND ai_risk_score<65"
+      // Compare the exact version of the listing shown to the reviewer. If an
+      // owner changes any material field or the risk screen between queue load
+      // and approval, the update affects zero rows and must be reviewed again.
+      const snapshotGuard=` AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=?`
       const auditResults=await db.batch([
-        db.prepare(`UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'${riskGuard}`).bind(status,reviewTime,id),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?, 'pending',?,?,ai_risk_level,ai_risk_score,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,status,reviewNote,reviewTime,id,status)
+        db.prepare(`UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'${snapshotGuard}`).bind(status,reviewTime,id,pending.title,pending.location,pending.city,pending.price,pending.description,pending.property_type,pending.purpose,pending.bedrooms,pending.bathrooms,pending.area,pending.amenities_json||'[]',pending.price_period||'',pendingRiskLevel,pendingRiskScore,pending.ai_risk_reasons_json||'[]',pending.ai_model||'not-screened',pending.ai_screened_at||'',pending.updated_at),
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?, 'pending',?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,status,reviewNote,reviewTime,id,status)
       ])
       if(!auditResults[0]?.meta?.changes)return fail('The listing changed while it was being reviewed or was already handled. Refresh the queue and review the latest risk signals.',409)
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
