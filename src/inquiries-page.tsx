@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { EmptyState, SectionKicker } from './components'
-import { apiRequest, getSession, type AppUser } from './lib/auth'
+import { apiRequest, getSession } from './lib/auth'
 
 type OwnerInquiry = {
   id: string
@@ -18,7 +18,6 @@ type OwnerInquiry = {
 
 export function InquiriesPage() {
   const navigate = useNavigate()
-  const [user, setUser] = useState<AppUser | null>(null)
   const [items, setItems] = useState<OwnerInquiry[]>([])
   const [filter, setFilter] = useState<'active' | 'archived'>('active')
   const [loading, setLoading] = useState(true)
@@ -33,7 +32,6 @@ export function InquiriesPage() {
       navigate('/login?next=' + encodeURIComponent('/inquiries'), { replace: true })
       setLoading(false); return
     }
-    setUser(session.data.user)
     const result = await apiRequest<OwnerInquiry[]>('/api/my/inquiries')
     if (result.ok) setItems(result.data)
     else setError(result.error)
@@ -76,7 +74,7 @@ export function InquiriesPage() {
           <Link className="inquiry-property-link" to={'/properties/' + item.property_slug}>View listing</Link>
         </div>
         <div className="inquiry-message">{item.message}</div>
-        <p className="inquiry-sender">From <a href={'mailto:' + encodeURIComponent(item.email)}>{item.email}</a></p>
+        <p className="inquiry-sender">From <a href={'mailto:' + item.email}>{item.email}</a></p>
         <div className="inquiry-actions">
           {item.status === 'new' && <button className="btn btn-outline" disabled={busyId === item.id} onClick={() => void update(item, 'read')}>Mark as read</button>}
           {item.status !== 'archived' && <button className="btn btn-outline" disabled={busyId === item.id} onClick={() => void update(item, 'archived')}>{busyId === item.id ? 'Updating…' : 'Archive'}</button>}
