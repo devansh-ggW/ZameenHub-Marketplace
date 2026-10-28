@@ -22,7 +22,7 @@ if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('st
 if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('inquiries SET status=? WHERE id=? AND EXISTS'))errors.push('Owner inquiry inbox must restrict each message to the listing owner')
 if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.includes('INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)')||!worker.includes('sendEmail(env,property.owner_email'))errors.push('Public inquiry submission must persist a lead and attempt owner email notification')
 if(!worker.includes('propertyView(p,[],true)'))errors.push('Detailed AI risk signals must only be sent to the moderator review queue')
-if((worker.match(/propertyView\\(p,\\[\\],true\\)/g)||[]).length!==1||!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')"))errors.push('The detailed property risk serializer must only be used by the authorized moderation queue')
+if((worker.split('propertyView(p,[],true)').length-1)!==1||!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')"))errors.push('The detailed property risk serializer must only be used by the authorized moderation queue')
 if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage }')||!app.includes('<Route path="*" element={<NotFoundPage />} />'))errors.push('Unknown routes must use the dedicated not-found page, not the homepage')
 const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
 const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
