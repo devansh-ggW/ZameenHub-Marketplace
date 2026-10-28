@@ -411,3 +411,35 @@ img { max-width: 100%; display: block; }
   .inquiry-card-head { flex-direction: column; }
   .inquiry-actions .btn { flex: 1; }
 }
+
+
+/* Practical home-loan EMI calculator */
+.emi-layout { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 24px; align-items: start; margin-top: 30px; }
+.emi-inputs { display: grid; gap: 18px; }
+.emi-panel-title { display: flex; align-items: start; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.emi-panel-title > svg { color: var(--blue); margin-top: 4px; }
+.emi-panel-title h2 { margin: 0; font-size: 20px; letter-spacing: -.04em; }
+.emi-panel-title p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.emi-inputs .form-field { margin: 0; }
+.emi-result { background: #182230; color: #fff; padding: clamp(24px, 4vw, 42px); }
+.emi-result .eyebrow { color: #a8c1ff; }
+.emi-result h2 { margin: 14px 0 4px; font-size: clamp(27px, 3vw, 38px); letter-spacing: -.06em; }
+.emi-main-value { margin: 22px 0 28px; font-size: clamp(34px, 5vw, 54px); font-weight: 800; letter-spacing: -.06em; line-height: 1.12; overflow-wrap: anywhere; }
+.emi-main-value span { display: block; margin-top: 6px; font-size: 12px; font-weight: 500; letter-spacing: .01em; color: #c5cfdd; }
+.emi-metric { display: flex; justify-content: space-between; align-items: start; gap: 20px; padding: 16px 0; border-top: 1px solid rgba(255,255,255,.16); }
+.emi-metric span { color: #d4dbe5; font-size: 12px; line-height: 1.5; }
+.emi-metric strong { text-align: right; font-size: 14px; white-space: nowrap; }
+.emi-bar { display: flex; overflow: hidden; height: 8px; margin-top: 22px; border-radius: 99px; background: rgba(255,255,255,.12); }
+.emi-bar span:first-child { background: #87a8ff; }
+.emi-bar span:last-child { background: #f2c984; }
+.emi-legend { display: flex; gap: 18px; margin-top: 10px; color: #d4dbe5; font-size: 11px; }
+.emi-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.emi-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.emi-legend-principal { background: #87a8ff; }
+.emi-legend-interest { background: #f2c984; }
+.emi-disclaimer { color: #c5cfdd; font-size: 11px; line-height: 1.7; margin: 24px 0; }
+.emi-result .btn-primary { background: #fff; color: #182230; border-color: #fff; }
+.emi-back { margin-top: 24px; }
+.emi-back a { display: inline-flex; gap: 7px; align-items: center; color: var(--muted); font-size: 12px; }
+.emi-back a:hover { color: var(--ink); }
+@media (max-width: 800px) { .emi-layout { grid-template-columns: 1fr; } }
