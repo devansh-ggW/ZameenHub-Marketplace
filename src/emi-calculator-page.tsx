@@ -20,10 +20,10 @@ export function EmiCalculatorPage() {
     const down = Number(downPayment)
     const rate = Number(annualRate)
     const term = Number(years)
-    const valid = Number.isFinite(homePrice) && homePrice > 0 && homePrice <= 1_000_000_000
-      && Number.isFinite(down) && down >= 0 && down < homePrice
-      && Number.isFinite(rate) && rate >= 0 && rate <= 50
-      && Number.isFinite(term) && Number.isInteger(term) && term >= 1 && term <= 40
+    const valid = price.trim() !== '' && Number.isFinite(homePrice) && homePrice > 0 && homePrice <= 1_000_000_000
+      && downPayment.trim() !== '' && Number.isFinite(down) && down >= 0 && down < homePrice
+      && annualRate.trim() !== '' && Number.isFinite(rate) && rate >= 0 && rate <= 50
+      && years.trim() !== '' && Number.isFinite(term) && Number.isInteger(term) && term >= 1 && term <= 40
     if (!valid) return { valid: false, principal: 0, emi: 0, total: 0, interest: 0, months: 0 }
     const principal = homePrice - down
     const months = term * 12
