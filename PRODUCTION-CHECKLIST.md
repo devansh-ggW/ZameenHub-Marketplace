@@ -39,3 +39,16 @@
 - [ ] Use a verified sender address on the exact Resend-verified domain.
 - [ ] Keep RESEND_API_KEY secret.
 - [ ] Have a qualified local professional review legal pages for the real business and jurisdiction.
+
+
+## Additional checks for MFA and AI risk screening
+
+- [ ] Back up production D1 and apply `migrations/0003_security_mfa_ai.sql` **before** deploying the updated Worker.
+- [ ] Add `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret (at least 32 random characters); do not commit it or place it in public vars.
+- [ ] Confirm `[ai]` / `binding = "AI"` is active for the Worker and check the Workers AI usage dashboard.
+- [ ] Configure and test authenticator MFA enrolment, invalid/expired TOTP, one-time recovery codes, rate limits, MFA disable alerts and delete-account confirmation.
+- [ ] Verify account deletion revokes sessions and deletes owned property listings; confirm the final administrator cannot self-delete.
+- [ ] Verify suspicious submissions remain pending and expose AI risk evidence only in the authorized moderation queue.
+- [ ] Verify the cookie banner and /cookies policy against the actual production scripts; update policy if analytics or marketing tools are added.
+- [ ] Read [SECURITY-AUDIT.md](./SECURITY-AUDIT.md) and complete every launch blocker listed there.
+- [ ] Pin direct package versions and run frozen-lockfile install, typecheck, production build and smoke tests in CI.
