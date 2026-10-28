@@ -62,6 +62,8 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [mfaRequired, setMfaRequired] = useState(false)
+  const [mfaCode, setMfaCode] = useState('')
   const [acceptedTerms, setAcceptedTerms] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -73,10 +75,13 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     setBusy(true); setError(''); setNotice('')
     const result = mode === 'signup'
       ? await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next }) })
-      : await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      : mfaRequired
+        ? await apiRequest<{ user?: { id: string } }>('/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
+        : await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
     if (mode === 'signup') setNotice(result.data.message || 'Check your email for the verification link. If you already have an account, sign in or use password recovery.')
+    else if (!mfaRequired && 'mfaRequired' in result.data && result.data.mfaRequired) { setMfaRequired(true); setPassword(''); setNotice('Enter the six-digit code from your authenticator app, or use one unused recovery code.'); }
     else navigate(next, { replace: true })
   }
 
@@ -95,12 +100,13 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     <p>{mode === 'login' ? 'Access saved properties, your profile and your listings.' : 'Verify your email to save properties and submit a listing for review.'}</p>
     <form onSubmit={submit}>
       {mode === 'signup' && <div className="form-field"><label htmlFor="auth-name">Full name</label><input className="form-control" id="auth-name" autoComplete="name" minLength={2} maxLength={100} required value={name} onChange={e => setName(e.target.value)} /></div>}
-      <div className="form-field"><label htmlFor="auth-email">Email address</label><input className="form-control" id="auth-email" type="email" autoComplete="email" maxLength={254} required value={email} onChange={e => setEmail(e.target.value)} /></div>
-      <PasswordField id="auth-password" label="Password" value={password} onChange={setPassword} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} helpText="Use at least 8 characters and avoid reusing a password." />
+      {!mfaRequired ? <><div className="form-field"><label htmlFor="auth-email">Email address</label><input className="form-control" id="auth-email" type="email" autoComplete="email" maxLength={254} required value={email} onChange={e => setEmail(e.target.value)} /></div>
+      <PasswordField id="auth-password" label="Password" value={password} onChange={setPassword} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} helpText="Use at least 8 characters and avoid reusing a password." /></> : <div className="form-field"><label htmlFor="auth-mfa-code">Authenticator or recovery code</label><input className="form-control" id="auth-mfa-code" inputMode="numeric" autoComplete="one-time-code" required maxLength={40} value={mfaCode} onChange={e => setMfaCode(e.target.value)} autoFocus /><small>Authenticator codes have six digits. Recovery codes can be entered without spaces.</small></div>}
       {mode === 'signup' && <label className="terms-consent"><input type="checkbox" checked={acceptedTerms} required onChange={e => setAcceptedTerms(e.target.checked)} /><span>I agree to the <Link to="/terms">Terms</Link> and acknowledge the <Link to="/privacy">Privacy Policy</Link>.</span></label>}
       {error && <p className="status-message error" role="alert">{error}</p>}
       {notice && <p className="status-message success" role="status">{notice}</p>}
-      <button className="btn btn-primary" style={{ width: '100%' }} disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
+      <button className="btn btn-primary" style={{ width: '100%' }} disabled={busy}>{busy ? 'Please wait…' : mfaRequired ? 'Verify code' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
+      {mfaRequired && <button className="btn btn-outline" type="button" style={{ width: '100%', marginTop: 10 }} disabled={busy} onClick={() => { setMfaRequired(false); setMfaCode(''); setError(''); setNotice('') }}>Back to sign in</button>}
     </form>
     {mode === 'signup' && <button className="btn btn-outline" style={{ width: '100%', marginTop: 10 }} disabled={resending} onClick={() => void resend()}>{resending ? 'Sending…' : 'Resend verification / account activation email'}</button>}
     <div className="auth-switch">{mode === 'login' ? <>New to ZameenHub? <Link to={'/signup' + (params.get('next') ? '?next=' + encodeURIComponent(next) : '')}>Create an account</Link><br /><Link to="/forgot-password">Forgot your password?</Link></> : <>Already registered? <Link to={'/login?next=' + encodeURIComponent(next)}>Sign in</Link></>}</div>
