@@ -5,7 +5,7 @@ const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
   'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','scripts/check-migrations.py','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
