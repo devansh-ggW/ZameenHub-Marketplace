@@ -241,6 +241,11 @@ function propertyView(p:PropertyRow,images:string[]=[],includeRisk=false) {
   }
 }
 function parseArray(s:string){try{const a=JSON.parse(s);return Array.isArray(a)?a.filter(x=>typeof x==='string').slice(0,50):[]}catch{return []}}
+const allowedAmenityNames=new Set(['Parking','Lift','Power backup','Security','Balcony','Garden','Gym','Swimming pool','Clubhouse','Furnished','Pet-friendly'])
+function sanitizeAmenities(value:unknown):string[]{
+  if(!Array.isArray(value))return []
+  return [...new Set(value.filter((item):item is string=>typeof item==='string').map(item=>clean(item,40)).filter(item=>allowedAmenityNames.has(item)))].slice(0,11)
+}
 async function propertyImages(db:D1Database,id:string) {
   const result=await db.prepare('SELECT object_key FROM property_images WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{object_key:string}>()
   // Image URLs are not emitted until a public R2 delivery URL is explicitly configured.
@@ -503,7 +508,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/properties'&&method==='GET') {
-      const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),bedsRaw=url.searchParams.get('beds'),bathsRaw=url.searchParams.get('baths'),minPriceRaw=url.searchParams.get('minPrice'),maxPriceRaw=url.searchParams.get('maxPrice'),minAreaRaw=url.searchParams.get('minArea'),beds=bedsRaw?safeInt(bedsRaw,0,100):null,baths=bathsRaw?safeInt(bathsRaw,0,100):null,minPrice=minPriceRaw?safeInt(minPriceRaw,0,1_000_000_000):null,maxPrice=maxPriceRaw?safeInt(maxPriceRaw,0,1_000_000_000):null,minArea=minAreaRaw?safeInt(minAreaRaw,0,100_000_000):null,sort=url.searchParams.get('sort')
+      const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),bedsRaw=url.searchParams.get('beds'),bathsRaw=url.searchParams.get('baths'),minPriceRaw=url.searchParams.get('minPrice'),maxPriceRaw=url.searchParams.get('maxPrice'),minAreaRaw=url.searchParams.get('minArea'),amenityRaw=url.searchParams.get('amenities'),beds=bedsRaw?safeInt(bedsRaw,0,100):null,baths=bathsRaw?safeInt(bathsRaw,0,100):null,minPrice=minPriceRaw?safeInt(minPriceRaw,0,1_000_000_000):null,maxPrice=maxPriceRaw?safeInt(maxPriceRaw,0,1_000_000_000):null,minArea=minAreaRaw?safeInt(minAreaRaw,0,100_000_000):null,requestedAmenities=sanitizeAmenities(amenityRaw?amenityRaw.split(','):[]),sort=url.searchParams.get('sort')
       const viewer=await getUser(request,env); let sql="SELECT p.*, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
       if(q){sql+=' AND (p.location LIKE ? OR p.city LIKE ? OR p.title LIKE ?)';const term='%'+q.replace(/[%_]/g,'')+'%';args.push(term,term,term)}
       if(purpose==='sale'||purpose==='rent'){sql+=' AND p.purpose=?';args.push(purpose)}
@@ -513,6 +518,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(minPrice!==null){sql+=' AND p.price>=?';args.push(minPrice)}
       if(maxPrice!==null){sql+=' AND p.price<=?';args.push(maxPrice)}
       if(minArea!==null&&minArea>0){sql+=' AND p.area>=?';args.push(minArea)}
+      for(const amenity of requestedAmenities){sql+=" AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(p.amenities_json) THEN p.amenities_json ELSE '[]' END) AS item WHERE item.value=?)";args.push(amenity)}
       sql+=sort==='price-asc'?' ORDER BY p.price ASC':sort==='price-desc'?' ORDER BY p.price DESC':' ORDER BY p.created_at DESC'
       sql+=' LIMIT 100'
       const result=await db.prepare(sql).bind(...args).all<PropertyRow>()
@@ -530,13 +536,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!user)return fail('Sign in with a verified email before listing a property.',401)
       if(!await authLimit(request,db,'listing',6)||!await limited(db,'listing-user:'+user.id,4,60))return fail('Too many listing submissions. Please wait before submitting another property.',429)
       const input=await body(request);if(!input)return fail('Invalid listing request.')
-      const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000)
+      const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const duplicate=await db.prepare("SELECT id FROM properties WHERE lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
-      await db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model).run()
+      await db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model).run()
       return ok({id,status:'pending',riskLevel:risk.level,riskScore:risk.score,riskReasons:risk.reasons,reviewMessage:risk.level==='high'?'This listing has been flagged for additional fraud checks. It remains private until review.':'Automated risk screening is complete. This is not proof of ownership; your listing remains private until review.'},201)
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
@@ -562,12 +568,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const current=await db.prepare('SELECT id,owner_id,status FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string;owner_id:string;status:string}>()
       if(!current)return fail('Listing not found in your account.',404)
       const input=await body(request);if(!input)return fail('Invalid listing update.')
-      const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000)
+      const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const duplicate=await db.prepare("SELECT id FROM properties WHERE id<>? AND lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(id,title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
-      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model,nowIso(),id,user.id).run()
+      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model,nowIso(),id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       return ok({id,status:'pending',riskLevel:risk.level,riskScore:risk.score,riskReasons:risk.reasons,message:'Changes saved. The listing is pending review and will remain private until approved.'})
     }
