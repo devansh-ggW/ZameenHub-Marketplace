@@ -6,6 +6,7 @@ import { AuthPage, VerifyEmailPage, ActivateAccountPage, ForgotPasswordPage, Res
 import { InfoPage } from './legal-pages'
 import { ListingPage } from './listing-page'
 import { SiteFooter, SiteHeader } from './site-chrome'
+import { CookieNotice } from './cookie-notice'
 
 export default function App() {
   return <MotionProvider><ScrollProgress /><SiteHeader /><Routes>
@@ -27,7 +28,8 @@ export default function App() {
     <Route path="/contact" element={<InfoPage kind="contact" />} />
     <Route path="/help" element={<InfoPage kind="help" />} />
     <Route path="/privacy" element={<InfoPage kind="privacy" />} />
+    <Route path="/cookies" element={<InfoPage kind="cookies" />} />
     <Route path="/terms" element={<InfoPage kind="terms" />} />
     <Route path="*" element={<HomePage />} />
-  </Routes><SiteFooter /></MotionProvider>
+  </Routes><SiteFooter /><CookieNotice /></MotionProvider>
 }
