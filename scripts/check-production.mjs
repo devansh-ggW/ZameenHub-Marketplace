@@ -61,7 +61,7 @@ if(!worker.includes('request.body?.getReader()')||!worker.includes('total>32768'
 const faviconLine=indexHtml.split(String.fromCharCode(10)).find(line=>line.includes('rel="icon"'))||''
 const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
 if(!faviconHref)errors.push('HTML must declare a favicon href')
-else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.replace(/^\\/+/,''))))errors.push('HTML favicon target does not exist: '+faviconHref)
+else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.slice(1))))errors.push('HTML favicon target does not exist: '+faviconHref)
 if(!worker.includes("status:p.status,verified:false"))errors.push('A moderated listing must not be mislabelled as independently ownership-verified')
 if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
 if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
