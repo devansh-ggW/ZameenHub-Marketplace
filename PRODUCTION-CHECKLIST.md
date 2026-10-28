@@ -52,6 +52,9 @@
 - [ ] Verify the cookie banner and /cookies policy against the actual production scripts; update policy if analytics or marketing tools are added.
 - [ ] Read [SECURITY-AUDIT.md](./SECURITY-AUDIT.md) and complete every launch blocker listed there.
 - [ ] Pin direct package versions and run frozen-lockfile install, typecheck, production build and smoke tests in CI.
+- [ ] Verify concurrent reuse attempts for email verification, legacy activation and password reset accept each token only once; confirm sign-up responses do not reveal whether an email is already registered.
+- [ ] Confirm listing submitters cannot retrieve AI risk scores/reasons from the response or public property API; only the authorized review queue should contain detailed risk evidence.
+- [ ] Test that oversized request bodies are canceled while streaming and that no API mutation succeeds with a missing or mismatched Origin.
 
 
 ## Discovery, calculator and SEO checks
