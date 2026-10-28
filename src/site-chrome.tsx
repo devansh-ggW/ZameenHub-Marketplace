@@ -25,11 +25,19 @@ export function SiteHeader() {
     <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
     <nav className={'nav-links ' + (open ? 'open' : '')} aria-label="Primary navigation">
       <NavLink to="/properties">Browse properties</NavLink>
-      {user && <NavLink to="/saved">Saved</NavLink>}
+      {user && <NavLink to="/saved">Saved properties</NavLink>}
       {user && <NavLink to="/my-listings">My listings</NavLink>}
       {user && <NavLink to="/profile">Account</NavLink>}
       {user && ['admin','moderator'].includes(user.role) && <NavLink to="/review-queue">Review queue</NavLink>}
       <NavLink to="/about">About</NavLink>
+      {user ? <>
+        <NavLink className="mobile-menu-link mobile-menu-list" to="/list-property">List a property <ArrowUpRight size={15} /></NavLink>
+        <button className="mobile-menu-link mobile-menu-button" disabled={busy} onClick={() => void logout()}>{busy ? 'Signing out…' : 'Sign out'}</button>
+      </> : <>
+        <NavLink className="mobile-menu-link" to={'/login?next=' + encodeURIComponent(location.pathname === '/list-property' ? '/list-property' : '/profile')}>Sign in</NavLink>
+        <NavLink className="mobile-menu-link" to="/signup">Create account</NavLink>
+        <NavLink className="mobile-menu-link mobile-menu-list" to="/list-property">List a property <ArrowUpRight size={15} /></NavLink>
+      </>}
     </nav>
     <div className="nav-actions">
       {user ? <><Link className="btn btn-outline nav-account" to="/profile">{user.name.split(' ')[0]}</Link><button className="btn btn-outline nav-signout" disabled={busy} onClick={() => void logout()}>{busy ? 'Signing out…' : 'Sign out'}</button></> : <><Link className="btn btn-outline nav-signin" to={'/login?next=' + encodeURIComponent(location.pathname === '/list-property' ? '/list-property' : '/profile')}>Sign in</Link><Link className="btn btn-primary nav-signup" to="/signup">Create account</Link></>}
