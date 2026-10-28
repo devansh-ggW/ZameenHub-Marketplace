@@ -20,8 +20,8 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     event.preventDefault()
     setBusy(true); setError(''); setNotice('')
     const result = mode === 'signup'
-      ? await apiRequest<{ message: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms }) })
-      : await apiRequest<{ user: { id: string } }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      ? await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms }) })
+      : await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
     if (mode === 'signup') setNotice(result.data.message || 'Check your email for the verification link. If you already have an account, sign in or use password recovery.')
