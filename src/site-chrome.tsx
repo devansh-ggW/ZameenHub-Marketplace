@@ -24,6 +24,7 @@ export function SiteHeader() {
   return <header className="site-header"><div className="container nav">
     <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
     <nav className={'nav-links ' + (open ? 'open' : '')} aria-label="Primary navigation">
+      <NavLink to="/">Home</NavLink>
       <NavLink to="/properties">Browse properties</NavLink>
       {user && <NavLink to="/saved">Saved properties</NavLink>}
       {user && <NavLink to="/my-listings">My listings</NavLink>}
