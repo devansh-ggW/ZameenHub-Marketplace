@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, ArrowUpRight, Calculator } from 'lucide-react'
 import { SectionKicker } from './components'
+import { calculateEmi } from './lib/emi'
 
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 })
 
@@ -26,12 +27,7 @@ export function EmiCalculatorPage() {
       && years.trim() !== '' && Number.isFinite(term) && Number.isInteger(term) && term >= 1 && term <= 40
     if (!valid) return { valid: false, principal: 0, emi: 0, total: 0, interest: 0, months: 0 }
     const principal = homePrice - down
-    const months = term * 12
-    const monthlyRate = rate / 1200
-    const factor = monthlyRate === 0 ? 1 : Math.pow(1 + monthlyRate, months)
-    const emi = monthlyRate === 0 ? principal / months : principal * monthlyRate * factor / (factor - 1)
-    const total = emi * months
-    return { valid: true, principal, emi, total, interest: Math.max(0, total - principal), months }
+    return { valid: true, ...calculateEmi(principal, rate, term) }
   }, [price, downPayment, annualRate, years])
 
   return <main className="page-shell emi-page"><div className="container">
