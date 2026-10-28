@@ -52,7 +52,7 @@ def main() -> int:
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status,ai_risk_level,ai_risk_score)
                   VALUES('pending','owner','pending-home','Pending home','rent','Apartment','West','Nashik',20000,'A detailed description of another test property','pending','high',80)""")
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
-                  VALUES('other-property','other-owner','other-home','Other home','sale','Apartment','East','Nashik',3000000,'A detailed description of another owner's test property','published')""")
+                  VALUES('other-property','other-owner','other-home','Other home','sale','Apartment','East','Nashik',3000000,'A detailed description of another owner property','published')""")
 
     db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
                   VALUES('report-1','published','reporter','suspected_fraud','Specific evidence for the report','open',?)""", (now,))
