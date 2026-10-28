@@ -47,7 +47,7 @@ Public reference pages:
 - Listing submission rate limits, login limits by IP and normalized email, request body size limit, strict Origin validation for state-changing requests, and additional security headers.
 - A clear cookie notice and dedicated cookie policy. The current implementation does not intentionally set analytics or advertising cookies; the notice preference uses browser local storage.
 - UI language now makes clear that “published” means approved for public display, not independently verified property ownership.
-- Static production smoke checks now verify the new wiring.
+- Static production smoke checks now verify the new wiring. CI also runs a SQLite migration test, RFC TOTP vectors, a production dependency audit, and the TypeScript/Vite build.
 
 ## Security review: addressed in this branch
 
