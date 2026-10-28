@@ -1,6 +1,33 @@
 import { Route, Routes } from 'react-router-dom'
-import { SiteFooter, SiteHeader } from './components'
 import { MotionProvider, ScrollProgress } from './motion'
-import { AccountPage, AuthPage, HomePage, InfoPage, ListingPage, PropertiesPage, PropertyDetailPage } from './pages'
+import { HomePage, PropertiesPage, PropertyDetailPage } from './pages'
+import { AccountPage } from './account-pages'
+import { AuthPage, VerifyEmailPage, ActivateAccountPage, ForgotPasswordPage, ResetPasswordPage } from './auth-pages'
+import { InfoPage } from './legal-pages'
+import { ListingPage } from './listing-page'
+import { SiteFooter, SiteHeader } from './site-chrome'
 
-export default function App() { return <MotionProvider><ScrollProgress /><SiteHeader /><Routes><Route path="/" element={<HomePage />} /><Route path="/properties" element={<PropertiesPage />} /><Route path="/properties/:slug" element={<PropertyDetailPage />} /><Route path="/login" element={<AuthPage mode="login" />} /><Route path="/signup" element={<AuthPage mode="signup" />} /><Route path="/profile" element={<AccountPage kind="profile" />} /><Route path="/saved" element={<AccountPage kind="saved" />} /><Route path="/list-property" element={<ListingPage />} /><Route path="/my-listings" element={<AccountPage kind="my-listings" />} /><Route path="/about" element={<InfoPage kind="about" />} /><Route path="/contact" element={<InfoPage kind="contact" />} /><Route path="/help" element={<InfoPage kind="help" />} /><Route path="/privacy" element={<InfoPage kind="privacy" />} /><Route path="/terms" element={<InfoPage kind="terms" />} /><Route path="*" element={<HomePage />} /></Routes><SiteFooter /></MotionProvider> }
+export default function App() {
+  return <MotionProvider><ScrollProgress /><SiteHeader /><Routes>
+    <Route path="/" element={<HomePage />} />
+    <Route path="/properties" element={<PropertiesPage />} />
+    <Route path="/properties/:slug" element={<PropertyDetailPage />} />
+    <Route path="/login" element={<AuthPage mode="login" />} />
+    <Route path="/signup" element={<AuthPage mode="signup" />} />
+    <Route path="/verify-email" element={<VerifyEmailPage />} />
+    <Route path="/activate-account" element={<ActivateAccountPage />} />
+    <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+    <Route path="/reset-password" element={<ResetPasswordPage />} />
+    <Route path="/profile" element={<AccountPage kind="profile" />} />
+    <Route path="/saved" element={<AccountPage kind="saved" />} />
+    <Route path="/list-property" element={<ListingPage />} />
+    <Route path="/my-listings" element={<AccountPage kind="my-listings" />} />
+    <Route path="/review-queue" element={<AccountPage kind="review-queue" />} />
+    <Route path="/about" element={<InfoPage kind="about" />} />
+    <Route path="/contact" element={<InfoPage kind="contact" />} />
+    <Route path="/help" element={<InfoPage kind="help" />} />
+    <Route path="/privacy" element={<InfoPage kind="privacy" />} />
+    <Route path="/terms" element={<InfoPage kind="terms" />} />
+    <Route path="*" element={<HomePage />} />
+  </Routes><SiteFooter /></MotionProvider>
+}
