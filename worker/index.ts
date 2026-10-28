@@ -23,6 +23,7 @@ const randomToken=()=>b64(bytes(32))
 const nowIso=()=>new Date().toISOString()
 const future=(minutes:number)=>new Date(Date.now()+minutes*60_000).toISOString()
 const normalizeEmail=(s:string)=>s.trim().toLowerCase()
+function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('/')||s.startsWith('//')||s.includes('\\\\'))return '';try{const u=new URL(s,'https://zameenhub.invalid');return u.origin==='https://zameenhub.invalid'?u.pathname+u.search+u.hash:''}catch{return ''}}
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
 const passwordValue=(v:unknown)=>typeof v==='string'?v.slice(0,128):''
 const safeInt=(v:unknown,min=0,max=100_000_000)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>=min&&n<=max?n:null}
@@ -130,6 +131,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/auth/register'&&method==='POST') {
       if(!await authLimit(request,db,'register',5))return fail('Too many attempts. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid request body.')
+      const nextPath=safeNextPath(input.next)
       const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
       let user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
@@ -176,7 +178,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/auth/resend-verification'&&method==='POST') {
       if(!await authLimit(request,db,'resend',4))return fail('Too many requests. Please wait before trying again.',429)
-      const input=await body(request),email=normalizeEmail(clean(input?.email,254))
+      const input=await body(request),email=normalizeEmail(clean(input?.email,254)),nextPath=safeNextPath(input?.next)
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
       if(user&&!user.email_verified) {
         const purpose=user.password_hash?'verify':'activate'
