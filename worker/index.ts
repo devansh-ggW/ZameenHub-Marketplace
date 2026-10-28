@@ -616,7 +616,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
       const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model,nowIso(),id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      return ok({id,status:'pending',riskLevel:risk.level,riskScore:risk.score,riskReasons:risk.reasons,message:'Changes saved. The listing is pending review and will remain private until approved.'})
+      return ok({id,status:'pending',message:'Changes saved. The listing is pending review and will remain private until approved. Automated screening is not proof of ownership.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
