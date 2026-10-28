@@ -12,8 +12,8 @@ export type Env = {
   SUPPORT_EMAIL?: string
   APP_URL?: string
 }
-type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
-type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; owner_id:string; owner_name?:string; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string }
+type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
+type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
   headers.set('content-type','application/json; charset=utf-8')
@@ -46,7 +46,7 @@ function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
 const passwordValue=(v:unknown)=>typeof v==='string'?v:''
 const safeInt=(v:unknown,min=0,max=100_000_000)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>=min&&n<=max?n:null}
-const userView=(u:UserRow)=>({id:u.id,email:u.email,name:u.name,role:u.role,emailVerified:u.email_verified===1,mfaEnabled:u.mfa_enabled===1})
+const userView=(u:UserRow)=>({id:u.id,email:u.email,name:u.name,role:u.role,emailVerified:u.email_verified===1,mfaEnabled:u.mfa_enabled===1,profileImageUrl:u.profile_image_url||''})
 async function passwordHash(password:string) {
   const salt=bytes(16), iterations=100000
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits'])
@@ -158,7 +158,7 @@ const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURICompone
 const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
 async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
-  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
+  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
   return row??null
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
@@ -245,13 +245,25 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-function propertyView(p:PropertyRow,images:string[]=[],includeRisk=false) {
+function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includeRisk=false,includePrivateVerification=false) {
+  const verificationStatus=p.verification_status||'unverified'
   return {
     id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
     propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
     bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
-    image:images[0]||'',gallery:images,description:p.description,
-    amenities:parseArray(p.amenities_json),status:p.status,verified:false,favorite:!!p.favorite,
+    image:images[0]||'',gallery:images,videoUrl:videoUrl||'',description:p.description,
+    amenities:parseArray(p.amenities_json),status:p.status,
+    verified:verificationStatus==='verified',
+    verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
+    ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',
+    favorite:!!p.favorite,
+    ...(includePrivateVerification ? {
+      verificationEvidenceType:p.verification_evidence_type||'none',
+      verificationEvidenceUrl:p.verification_evidence_url||'',
+      verificationSubmittedAt:p.verification_submitted_at||undefined,
+      verificationReviewedAt:p.verification_reviewed_at||undefined,
+      verificationNote:p.verification_note||''
+    } : {}),
     ...(includeRisk ? {
       aiRiskLevel:p.ai_risk_level||'not-screened',
       aiRiskScore:Number(p.ai_risk_score)||0,
@@ -267,12 +279,69 @@ function sanitizeAmenities(value:unknown):string[]{
   if(!Array.isArray(value))return []
   return [...new Set(value.filter((item):item is string=>typeof item==='string').map(item=>clean(item,40)).filter(item=>allowedAmenityNames.has(item)))].slice(0,11)
 }
-async function propertyImages(db:D1Database,id:string) {
-  const result=await db.prepare('SELECT object_key FROM property_images WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{object_key:string}>()
-  // Image URLs are not emitted until a public R2 delivery URL is explicitly configured.
-  return result.results.map(()=> '').filter(Boolean)
+function normalizeHttpsUrl(value:unknown,max=1500):string|null {
+  const raw=clean(value,max)
+  if(!raw||raw.length>max)return null
+  try {
+    const parsed=new URL(raw)
+    const host=parsed.hostname.toLowerCase()
+    if(parsed.protocol!=='https:'||parsed.username||parsed.password||!host||!host.includes('.')||host==='localhost'||host.endsWith('.localhost')||host.endsWith('.local')||host.endsWith('.internal')||/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)||host.includes(':'))return null
+    return parsed.toString()
+  } catch { return null }
 }
-async function withProperty(db:D1Database,p:PropertyRow){return propertyView(p,await propertyImages(db,p.id))}
+function sanitizeImageUrls(value:unknown):string[]|null {
+  if(value===undefined||value===null)return []
+  if(!Array.isArray(value)||value.length>5)return null
+  const urls:string[]=[]
+  for(const item of value) {
+    const raw=clean(item,1500)
+    if(!raw)continue
+    const normalized=normalizeHttpsUrl(raw,1500)
+    if(!normalized)return null
+    if(!urls.includes(normalized))urls.push(normalized)
+  }
+  return urls.length<=5?urls:null
+}
+function sanitizeVideoUrl(value:unknown):string|null {
+  const raw=clean(value,1500)
+  if(!raw)return ''
+  const normalized=normalizeHttpsUrl(raw,1500)
+  if(!normalized)return null
+  try {
+    const parsed=new URL(normalized),host=parsed.hostname.toLowerCase(),path=parsed.pathname.toLowerCase()
+    const hostedVideo=host==='youtu.be'||host==='youtube.com'||host.endsWith('.youtube.com')||host==='youtube-nocookie.com'||host.endsWith('.youtube-nocookie.com')||host==='vimeo.com'||host.endsWith('.vimeo.com')
+    const directVideo=/\.(mp4|webm|ogg|m3u8)$/.test(path)
+    return hostedVideo||directVideo?normalized:null
+  } catch { return null }
+}
+const verificationEvidenceTypes=new Set(['none','official_record','property_tax_record','registry_reference','other_public_record'])
+function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string;url:string;status:'unverified'|'submitted';submittedAt:string|null}|null {
+  const rawType=clean(input.verificationEvidenceType,40)||'none'
+  const rawUrl=clean(input.verificationEvidenceUrl,1500)
+  if(!verificationEvidenceTypes.has(rawType))return null
+  if(!rawUrl&&rawType==='none')return {type:'none',url:'',status:'unverified',submittedAt:null}
+  const normalized=normalizeHttpsUrl(rawUrl,1500)
+  if(rawType==='none'||!normalized)return null
+  return {type:rawType,url:normalized,status:'submitted',submittedAt:nowIso()}
+}
+function mediaInsertStatements(db:D1Database,id:string,images:string[],videoUrl:string):D1PreparedStatement[] {
+  const statements:D1PreparedStatement[]=[]
+  images.forEach((mediaUrl,index)=>statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'image',?,?,?)").bind(uuid(),id,mediaUrl,'Property image '+(index+1),index)))
+  if(videoUrl)statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'video',?,'Property video',0)").bind(uuid(),id,videoUrl))
+  return statements
+}
+async function savePropertyMedia(db:D1Database,id:string,images:string[],videoUrl:string) {
+  await db.batch([db.prepare('DELETE FROM property_media WHERE property_id=?').bind(id),...mediaInsertStatements(db,id,images,videoUrl)])
+}
+async function propertyMedia(db:D1Database,id:string) {
+  const result=await db.prepare('SELECT media_type,media_url FROM property_media WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{media_type:string;media_url:string}>()
+  const rows=result.results
+  return {images:rows.filter(row=>row.media_type==='image').slice(0,5).map(row=>row.media_url),videoUrl:rows.find(row=>row.media_type==='video')?.media_url||''}
+}
+async function withProperty(db:D1Database,p:PropertyRow,includeRisk=false,includePrivateVerification=false) {
+  const media=await propertyMedia(db,p.id)
+  return propertyView(p,media.images,media.videoUrl,includeRisk,includePrivateVerification)
+}
 function sameOrigin(request:Request,url:URL) {
   return request.headers.get('Origin')===url.origin
 }
@@ -520,6 +589,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ])
       return ok({message:'Password updated. All existing sessions have been signed out; sign in with your new password.'})
     }
+    if(path==='/api/account/profile'&&method==='PATCH') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to update your profile.',401)
+      if(!await authLimit(request,db,'profile-image',8)||!await limited(db,'profile-image-user:'+user.id,12,60))return fail('Too many profile changes. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid profile update.')
+      const raw=clean(input.profileImageUrl,1500)
+      const profileImageUrl=raw?normalizeHttpsUrl(raw,1500):''
+      if(raw&&!profileImageUrl)return fail('Use a complete public HTTPS image URL. Local, data, and non-HTTPS URLs are not accepted.')
+      await db.prepare('UPDATE users SET profile_image_url=?,updated_at=? WHERE id=?').bind(profileImageUrl,nowIso(),user.id).run()
+      return ok({profileImageUrl:profileImageUrl||''})
+    }
     if(path==='/api/account/delete'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before deleting your account.',401)
       if(!await authLimit(request,db,'account-delete',4)||!await limited(db,'account-delete-user:'+user.id,3,60))return fail('Too many account deletion attempts. Please wait before trying again.',429)
@@ -558,7 +637,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/properties'&&method==='GET') {
       const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),bedsRaw=url.searchParams.get('beds'),bathsRaw=url.searchParams.get('baths'),minPriceRaw=url.searchParams.get('minPrice'),maxPriceRaw=url.searchParams.get('maxPrice'),minAreaRaw=url.searchParams.get('minArea'),maxAreaRaw=url.searchParams.get('maxArea'),amenityRaw=url.searchParams.get('amenities'),beds=bedsRaw?safeInt(bedsRaw,0,100):null,baths=bathsRaw?safeInt(bathsRaw,0,100):null,minPrice=minPriceRaw?safeInt(minPriceRaw,0,1_000_000_000):null,maxPrice=maxPriceRaw?safeInt(maxPriceRaw,0,1_000_000_000):null,minArea=minAreaRaw?safeInt(minAreaRaw,0,100_000_000):null,maxArea=maxAreaRaw?safeInt(maxAreaRaw,0,100_000_000):null,requestedAmenities=sanitizeAmenities(amenityRaw?amenityRaw.split(','):[]),sort=url.searchParams.get('sort')
-      const viewer=await getUser(request,env); let sql="SELECT p.*, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
+      const viewer=await getUser(request,env); let sql="SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
       if(q){sql+=' AND (p.location LIKE ? OR p.city LIKE ? OR p.title LIKE ?)';const term='%'+q.replace(/[%_]/g,'')+'%';args.push(term,term,term)}
       if(purpose==='sale'||purpose==='rent'){sql+=' AND p.purpose=?';args.push(purpose)}
       if(type){sql+=' AND p.property_type=?';args.push(type)}
@@ -577,7 +656,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     const detailMatch=path.match(/^\/api\/properties\/([^/]+)$/)
     if(detailMatch&&method==='GET') {
       const slug=decodeURIComponent(detailMatch[1])
-      const viewer=await getUser(request,env); const p=await db.prepare("SELECT p.*, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published'").bind(viewer?.id||'',slug).first<PropertyRow>()
+      const viewer=await getUser(request,env); const p=await db.prepare("SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published'").bind(viewer?.id||'',slug).first<PropertyRow>()
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
     }
@@ -588,12 +667,20 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing request.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
+      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
+      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const duplicate=await db.prepare("SELECT id FROM properties WHERE lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
-      await db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model).run()
-      return ok({id,status:'pending',message:'Your listing has been submitted and remains private until an authorized moderator reviews it. Automated screening is not proof of ownership.'},201)
+      const createdAt=nowIso()
+      const statements=[
+        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),createdAt,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt),
+        ...mediaInsertStatements(db,id,mediaImages,videoUrl)
+      ]
+      await db.batch(statements)
+      return ok({id,status:'pending',message:evidence.status==='submitted'?'Submitted for review. The listing stays private until an authorized reviewer approves it; a supplied record link is not automatically verified.':'Submitted for review. Add a public record reference in the edit screen if you want the team to review evidence. Automated screening is not proof of ownership.'},201)
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
@@ -609,7 +696,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
       const property=await db.prepare('SELECT * FROM properties WHERE id=? AND owner_id=?').bind(decodeURIComponent(ownedPropertyMatch[1]),user.id).first<PropertyRow>()
       if(!property)return fail('Listing not found in your account.',404)
-      return ok(await withProperty(db,property))
+      return ok(await withProperty(db,property,false,true))
     }
     if(ownedPropertyMatch&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to edit your listings.',401)
@@ -620,17 +707,22 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
+      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
+      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const duplicate=await db.prepare("SELECT id FROM properties WHERE id<>? AND lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(id,title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
-      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model,nowIso(),id,user.id).run()
+      const updateTime=nowIso()
+      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,verification_status=?,verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),updateTime,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      return ok({id,status:'pending',message:'Changes saved. The listing is pending review and will remain private until approved. Automated screening is not proof of ownership.'})
+      await savePropertyMedia(db,id,mediaImages,videoUrl)
+      return ok({id,status:'pending',message:'Changes saved. The listing is pending review. Any prior evidence review is reset when listing details change.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
       const result=await db.prepare("SELECT p.*,(SELECT e.owner_message FROM property_moderation_events e WHERE e.property_id=p.id AND e.new_status='rejected' ORDER BY e.created_at DESC LIMIT 1) AS owner_review_message FROM properties p WHERE p.owner_id=? ORDER BY p.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow & {owner_review_message?:string}>()
-      return ok(result.results.map(p=>({...propertyView(p,[]),reviewMessage:p.owner_review_message||undefined})))
+      return ok(await Promise.all(result.results.map(async p=>({...await withProperty(db,p,false,true),reviewMessage:p.owner_review_message||undefined}))))
     }
     if(path==='/api/my/inquiries'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your inquiries.',401)
@@ -712,14 +804,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
       const result=await db.prepare("SELECT * FROM properties WHERE status='pending' ORDER BY created_at ASC LIMIT 100").all<PropertyRow>()
-      return ok(result.results.map(p=>propertyView(p,[],true)))
+      return ok(await Promise.all(result.results.map(p=>withProperty(db,p,true,true))))
     }
     const reviewMatch=path.match(/^\/api\/admin\/properties\/([^/]+)$/)
     if(reviewMatch&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
       if(!await authLimit(request,db,'moderation',30)||!await limited(db,'moderation-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
-      const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000),ownerMessage=clean(input?.ownerMessage,1000)
+      const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000),ownerMessage=clean(input?.ownerMessage,1000),verifyEvidence=input?.verifyEvidence===true
       if(status!=='published'&&status!=='rejected'&&status!=='archived')return fail('Unsupported review status.')
       const id=decodeURIComponent(reviewMatch[1])
       const record=await db.prepare("SELECT * FROM properties WHERE id=? AND status IN ('pending','published')").bind(id).first<PropertyRow & {updated_at:string}>()
@@ -736,17 +828,24 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       if((status==='rejected'||status==='archived')&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for this moderation action.')
       if(status==='rejected'&&ownerMessage.trim().length<10)return fail('Add a clear owner-facing explanation of at least 10 characters. Internal notes stay private.')
+      if(verifyEvidence&&status!=='published')return fail('Evidence can only be marked reviewed while publishing the listing.')
+      if(verifyEvidence&&(!record.verification_evidence_url||!record.verification_evidence_type||record.verification_evidence_type==='none'))return fail('The owner has not supplied a public evidence reference to review.')
+      if(verifyEvidence&&reviewNote.trim().length<20)return fail('Record at least 20 characters describing the evidence you checked before marking it reviewed.')
       const reviewTime=nowIso()
-      // Bind the decision to the exact listing version displayed to the reviewer.
-      // An owner edit or re-screen after the queue read must force a fresh review.
-      const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=?"
+      const verificationDecision=status==='rejected'?'rejected':verifyEvidence?'verified':'unchanged'
+      const nextVerificationStatus=status==='rejected'?'rejected':verifyEvidence?'verified':(record.verification_status||'unverified')
+      const nextVerificationReviewedAt=verificationDecision==='unchanged'?(record.verification_reviewed_at||null):reviewTime
+      const nextVerificationReviewedBy=verificationDecision==='unchanged'?(record.verification_reviewed_by||null):user.id
+      const nextVerificationNote=verificationDecision==='unchanged'?(record.verification_note||''):reviewNote
+      // The decision is bound to the exact submitted listing and evidence link.
+      const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=? AND COALESCE(verification_status,'unverified')=? AND COALESCE(verification_evidence_type,'none')=? AND COALESCE(verification_evidence_url,'')=?"
       const auditResults=await db.batch([
-        db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status=?"+snapshotGuard).bind(status,reviewTime,id,priorStatus,record.title,record.location,record.city,record.price,record.description,record.property_type,record.purpose,record.bedrooms,record.bathrooms,record.area,record.amenities_json||'[]',record.price_period||'',riskLevel,riskScore,record.ai_risk_reasons_json||'[]',record.ai_model||'not-screened',record.ai_screened_at||'',record.updated_at),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,id,status)
+        db.prepare("UPDATE properties SET status=?,updated_at=?,verification_status=?,verification_reviewed_at=?,verification_reviewed_by=?,verification_note=? WHERE id=? AND status=?"+snapshotGuard).bind(status,reviewTime,nextVerificationStatus,nextVerificationReviewedAt,nextVerificationReviewedBy,nextVerificationNote,id,priorStatus,record.title,record.location,record.city,record.price,record.description,record.property_type,record.purpose,record.bedrooms,record.bathrooms,record.area,record.amenities_json||'[]',record.price_period||'',riskLevel,riskScore,record.ai_risk_reasons_json||'[]',record.ai_model||'not-screened',record.ai_screened_at||'',record.updated_at,record.verification_status||'unverified',record.verification_evidence_type||'none',record.verification_evidence_url||''),
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at,verification_decision) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,verificationDecision,id,status)
       ])
-      if(!auditResults[0]?.meta?.changes)return fail('The listing changed while it was being reviewed or was already handled. Refresh the queue and review the latest details and risk signals.',409)
+      if(!auditResults[0]?.meta?.changes)return fail('The listing or evidence changed while it was being reviewed. Refresh the queue and review the latest details.',409)
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
-      return ok({status,priorStatus,auditRecorded:true,highRiskOverride:status==='published'&&adminRiskOverride})
+      return ok({status,priorStatus,auditRecorded:true,highRiskOverride:status==='published'&&adminRiskOverride,verificationStatus:nextVerificationStatus,verificationDecision})
     }
     if(path==='/api/inquiries'&&method==='POST') {
       if(!await authLimit(request,db,'inquiry-submit',8))return fail('Too many inquiry submissions. Please wait and try again.',429)
