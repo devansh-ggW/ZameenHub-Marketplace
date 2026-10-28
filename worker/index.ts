@@ -113,15 +113,20 @@ async function decryptMfaSecret(packedValue:string,env:Env) {
   return new TextDecoder().decode(clear)
 }
 async function verifyMfaCode(db:D1Database,user:UserRow,code:unknown,env:Env) {
-  if(user.mfa_enabled!==1||!user.mfa_secret_ciphertext||!env.MFA_ENCRYPTION_KEY)return false
+  if(user.mfa_enabled!==1)return false
   const normalized=clean(code,40).replace(/[\s-]/g,'').toUpperCase()
+  // Recovery codes are independently hashed and must remain usable if the
+  // authenticator encryption key is accidentally lost or unavailable.
+  if(/^[A-F0-9]{24}$/.test(normalized)){
+    const backup=await db.prepare('SELECT id FROM mfa_recovery_codes WHERE user_id=? AND code_hash=? AND used_at IS NULL').bind(user.id,await digest(normalized)).first<{id:string}>()
+    if(backup){
+      const consumed=await db.prepare('UPDATE mfa_recovery_codes SET used_at=? WHERE id=? AND used_at IS NULL').bind(nowIso(),backup.id).run()
+      if(consumed.meta.changes===1)return true
+    }
+  }
+  if(!user.mfa_secret_ciphertext||!env.MFA_ENCRYPTION_KEY)return false
   const secret=await decryptMfaSecret(user.mfa_secret_ciphertext,env)
-  if(await verifyTotp(secret,normalized))return true
-  if(!/^[A-F0-9]{24}$/.test(normalized))return false
-  const backup=await db.prepare('SELECT id FROM mfa_recovery_codes WHERE user_id=? AND code_hash=? AND used_at IS NULL').bind(user.id,await digest(normalized)).first<{id:string}>()
-  if(!backup)return false
-  const consumed=await db.prepare('UPDATE mfa_recovery_codes SET used_at=? WHERE id=? AND used_at IS NULL').bind(nowIso(),backup.id).run()
-  return consumed.meta.changes===1
+  return verifyTotp(secret,normalized)
 }
 type ListingRisk={level:'low'|'medium'|'high'|'unscored';score:number;reasons:string[];model:string}
 async function screenListingRisk(input:{title:string;location:string;city:string;purpose:string;propertyType:string;price:number;description:string},env:Env,duplicate:boolean):Promise<ListingRisk>{
@@ -358,7 +363,6 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!user||!valid)return fail('Email or password is incorrect.',401)
       if(user.email_verified!==1)return fail('Please verify your email before signing in. Use the resend verification option if needed.',403)
       if(user.mfa_enabled===1){
-        if(!env.MFA_ENCRYPTION_KEY)return fail('Two-factor sign-in is temporarily unavailable. Please contact support.',503)
         const challenge=randomToken()
         await db.prepare('DELETE FROM auth_mfa_challenges WHERE expires_at<=?').bind(nowIso()).run()
         await db.prepare('INSERT INTO auth_mfa_challenges(id,user_id,token_hash,attempts,expires_at) VALUES(?,?,?,0,?)').bind(uuid(),user.id,await digest(challenge),future(5)).run()
