@@ -74,7 +74,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     event.preventDefault()
     setBusy(true); setError(''); setNotice('')
     const result = mode === 'signup'
-      ? await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next }) })
+      ? await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next }) })
       : mfaRequired
         ? await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
         : await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
