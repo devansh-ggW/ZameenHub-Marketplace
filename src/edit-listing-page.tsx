@@ -73,7 +73,7 @@ export function EditListingPage() {
       return
     }
     setSaving(true)
-    const result = await apiRequest<{ id: string; status: 'pending'; message: string; riskLevel?: string }>('/api/my/properties/' + encodeURIComponent(id), {
+    const result = await apiRequest<{ id: string; status: 'pending'; message: string }>('/api/my/properties/' + encodeURIComponent(id), {
       method: 'PATCH',
       body: JSON.stringify({
         title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType,
