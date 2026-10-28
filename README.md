@@ -44,3 +44,18 @@ Before launch, complete the checklist in `PRODUCTION-CHECKLIST.md` (if supplied 
 ## Support
 
 Customer support: [dewifystores@gmail.com](mailto:dewifystores@gmail.com)
+
+
+## Account security and listing-risk screening
+
+The security branch adds optional authenticator-app MFA, single-use recovery codes, password-confirmed account deletion, cookie notice/policy, and server-side listing-risk triage. See [SECURITY-AUDIT.md](./SECURITY-AUDIT.md) for the competitor gap analysis and the deployment acceptance checklist.
+
+### Deploying the security branch safely
+
+1. Back up the production D1 database before making schema changes.
+2. Apply `migrations/0003_security_mfa_ai.sql` to the configured `zameenhub` D1 database **before** deploying the matching Worker source.
+3. In Cloudflare Worker settings, add `MFA_ENCRYPTION_KEY` as a secret, using a cryptographically random value of at least 32 characters. Do not put it in `wrangler.toml`, the source tree, client-side code, or GitHub issues.
+4. Confirm the Workers AI binding named `AI` is enabled for `zameenhub-marketplace`. The model uses the Cloudflare Workers AI allowance and may fall back to rule-based flags when inference is unavailable; all new listings remain pending until a reviewer approves them.
+5. Run a complete test with non-production accounts and a restorable database backup. Static checks alone do not establish deployment safety.
+
+For example, from an environment already set up with the repository and Wrangler, the migration can be applied with `pnpm exec wrangler d1 migrations apply zameenhub --remote`. Do not deploy the new Worker first: it references the new columns and tables.
