@@ -28,17 +28,24 @@ def main() -> int:
         "users", "sessions", "properties", "favorites", "inquiries",
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
-        "property_moderation_events",
+        "property_moderation_events", "property_media",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
 
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
-    expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext"} <= user_columns,
+    expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext", "profile_image_url"} <= user_columns,
            "MFA user columns are incomplete")
     moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
-    expect({"owner_message", "review_note", "new_status"} <= moderation_columns,
+    expect({"owner_message", "review_note", "new_status", "verification_decision"} <= moderation_columns,
            "Moderation audit must separate private internal notes from owner-facing feedback")
+
+    property_columns = {row["name"] for row in db.execute("PRAGMA table_info(properties)")}
+    expect({"verification_status", "verification_evidence_type", "verification_evidence_url", "verification_reviewed_by"} <= property_columns,
+           "Property evidence review columns are incomplete")
+    media_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_media)")}
+    expect({"property_id", "media_type", "media_url", "sort_order"} <= media_columns,
+           "URL-based property media columns are incomplete")
 
     now = "2026-10-28T00:00:00.000Z"
 
@@ -79,6 +86,38 @@ def main() -> int:
                   VALUES('other-property','other-owner','other-home','Other home','sale','Apartment','East','Nashik',3000000,'A detailed description of another owner property','published')""")
     db.execute("UPDATE properties SET amenities_json=?,area=1200 WHERE id='published'", ('["Parking","Lift"]',))
     db.execute("UPDATE properties SET area=1800 WHERE id='other-property'")
+
+    # Public URL references are stored in D1; no binary upload/R2 object is required.
+    db.execute("UPDATE users SET profile_image_url=? WHERE id='owner'", ("https://media.example.test/avatar.jpg",))
+    expect(db.execute("SELECT profile_image_url FROM users WHERE id='owner'").fetchone()[0] == "https://media.example.test/avatar.jpg",
+           "Profile image URL was not persisted in D1")
+    for index in range(5):
+        db.execute("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,?,?,?,?)",
+                   (f"media-{index}", "published", "image", f"https://media.example.test/home-{index}.jpg", "Property view", index))
+    try:
+        db.execute("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,?,?,?,?)",
+                   ("media-six", "published", "image", "https://media.example.test/home-6.jpg", "Extra view", 0))
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("D1 trigger accepted a sixth property image")
+    db.execute("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,?,?,?,?)",
+               ("media-video", "published", "video", "https://media.example.test/tour.mp4", "Property video", 0))
+    try:
+        db.execute("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,?,?,?,?)",
+                   ("media-video-2", "published", "video", "https://media.example.test/second.mp4", "Extra video", 0))
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("D1 trigger accepted a second property video")
+    db.execute("UPDATE properties SET verification_status='submitted',verification_evidence_type='official_record',verification_evidence_url=?,verification_submitted_at=? WHERE id='published'",
+               ("https://records.example.test/property/123", now))
+    expect(db.execute("SELECT verification_status,verification_evidence_url FROM properties WHERE id='published'").fetchone()[:] ==
+           ("submitted", "https://records.example.test/property/123"), "Evidence reference/state did not persist in D1")
+    db.execute("UPDATE properties SET verification_status='verified',verification_reviewed_at=?,verification_reviewed_by=?,verification_note=? WHERE id='published'",
+               (now, "reviewer", "Public record inspected and matched to the listing details"))
+    expect(db.execute("SELECT verification_status,verification_reviewed_by FROM properties WHERE id='published'").fetchone()[:] ==
+           ("verified", "reviewer"), "Moderator evidence review decision was not persisted")
     area_range_query = "SELECT id FROM properties WHERE status='published' AND area>=? AND area<=? ORDER BY id"
     expect([row["id"] for row in db.execute(area_range_query, (1000, 1500))] == ["published"],
            "Area-range filtering did not return the expected property")
