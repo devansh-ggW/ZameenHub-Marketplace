@@ -321,7 +321,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'),emailText('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
           return ok({message:registrationMessage})
         }
-        const signInUrl=`${(env.APP_URL||url.origin).replace(/\\/$/,'')}/login`
+        const appBase=env.APP_URL||url.origin
+        const signInUrl=`${appBase.endsWith('/')?appBase.slice(0,-1):appBase}/login`
         const helpTitle='Sign in to ZameenHub'
         const helpBody='A request was made to create or access a ZameenHub account using this email address. If you already have an account, sign in or use password recovery. If you did not make this request, you can ignore this message; no password or account setting was changed.'
         await sendEmail(env,email,'Sign-in help for ZameenHub',emailHtml(helpTitle,helpBody,signInUrl,'Open sign in'),emailText(helpTitle,helpBody,signInUrl,'Open sign in'))
