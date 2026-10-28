@@ -3,6 +3,58 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { SectionKicker } from './components'
 import { apiRequest, safeNext } from './lib/auth'
 
+type PasswordFieldProps = {
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  autoComplete?: string
+  minLength?: number
+  maxLength?: number
+  required?: boolean
+  helpText?: string
+}
+
+function PasswordField({
+  id,
+  label,
+  value,
+  onChange,
+  autoComplete,
+  minLength = 8,
+  maxLength = 128,
+  required = true,
+  helpText,
+}: PasswordFieldProps) {
+  const [visible, setVisible] = useState(false)
+
+  return <div className="form-field">
+    <label htmlFor={id}>{label}</label>
+    <div className="password-input-wrap">
+      <input
+        className="form-control"
+        id={id}
+        type={visible ? 'text' : 'password'}
+        autoComplete={autoComplete}
+        minLength={minLength}
+        maxLength={maxLength}
+        required={required}
+        value={value}
+        onChange={event => onChange(event.target.value)}
+      />
+      <button
+        className="password-toggle"
+        type="button"
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        aria-controls={id}
+        aria-pressed={visible}
+        onClick={() => setVisible(current => !current)}
+      >{visible ? 'Hide' : 'Show'}</button>
+    </div>
+    {helpText && <small>{helpText}</small>}
+  </div>
+}
+
 export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -44,7 +96,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     <form onSubmit={submit}>
       {mode === 'signup' && <div className="form-field"><label htmlFor="auth-name">Full name</label><input className="form-control" id="auth-name" autoComplete="name" minLength={2} maxLength={100} required value={name} onChange={e => setName(e.target.value)} /></div>}
       <div className="form-field"><label htmlFor="auth-email">Email address</label><input className="form-control" id="auth-email" type="email" autoComplete="email" maxLength={254} required value={email} onChange={e => setEmail(e.target.value)} /></div>
-      <div className="form-field"><label htmlFor="auth-password">Password</label><input className="form-control" id="auth-password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={8} maxLength={128} required value={password} onChange={e => setPassword(e.target.value)} /><small>Use at least 8 characters and avoid reusing a password.</small></div>
+      <PasswordField id="auth-password" label="Password" value={password} onChange={setPassword} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} helpText="Use at least 8 characters and avoid reusing a password." />
       {mode === 'signup' && <label className="terms-consent"><input type="checkbox" checked={acceptedTerms} required onChange={e => setAcceptedTerms(e.target.checked)} /><span>I agree to the <Link to="/terms">Terms</Link> and acknowledge the <Link to="/privacy">Privacy Policy</Link>.</span></label>}
       {error && <p className="status-message error" role="alert">{error}</p>}
       {notice && <p className="status-message success" role="status">{notice}</p>}
@@ -92,7 +144,13 @@ export function ActivateAccountPage() {
     if (result.ok) setNotice(result.data.message)
     else setError(result.error)
   }
-  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Account activation</SectionKicker><h1>Secure your account.</h1><p>This link is for an existing account that needs a password and email confirmation.</p><form onSubmit={submit}><div className="form-field"><label htmlFor="activate-password">Create password</label><input className="form-control" id="activate-password" type="password" minLength={8} maxLength={128} required value={password} onChange={e => setPassword(e.target.value)} /></div><div className="form-field"><label htmlFor="activate-confirm">Confirm password</label><input className="form-control" id="activate-confirm" type="password" minLength={8} maxLength={128} required value={confirm} onChange={e => setConfirm(e.target.value)} /></div><label className="terms-consent"><input type="checkbox" checked={acceptedTerms} required onChange={e => setAcceptedTerms(e.target.checked)} /><span>I agree to the <Link to="/terms">Terms</Link> and acknowledge the <Link to="/privacy">Privacy Policy</Link>.</span></label>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice} <Link to={'/login?next=' + encodeURIComponent(next)}>Sign in</Link></p>}<button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Activating…' : 'Activate account'}</button></form></section></main>
+  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Account activation</SectionKicker><h1>Secure your account.</h1><p>This link is for an existing account that needs a password and email confirmation.</p><form onSubmit={submit}>
+    <PasswordField id="activate-password" label="Create password" value={password} onChange={setPassword} autoComplete="new-password" />
+    <PasswordField id="activate-confirm" label="Confirm password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
+    <label className="terms-consent"><input type="checkbox" checked={acceptedTerms} required onChange={e => setAcceptedTerms(e.target.checked)} /><span>I agree to the <Link to="/terms">Terms</Link> and acknowledge the <Link to="/privacy">Privacy Policy</Link>.</span></label>
+    {error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice} <Link to={'/login?next=' + encodeURIComponent(next)}>Sign in</Link></p>}
+    <button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Activating…' : 'Activate account'}</button>
+  </form></section></main>
 }
 
 export function ForgotPasswordPage() {
@@ -127,5 +185,10 @@ export function ResetPasswordPage() {
     if (result.ok) setNotice(result.data.message)
     else setError(result.error)
   }
-  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Account recovery</SectionKicker><h1>Choose a new password.</h1><form onSubmit={submit}><div className="form-field"><label htmlFor="reset-password">New password</label><input className="form-control" id="reset-password" type="password" minLength={8} maxLength={128} required value={password} onChange={e => setPassword(e.target.value)} /></div><div className="form-field"><label htmlFor="reset-confirm">Confirm password</label><input className="form-control" id="reset-confirm" type="password" minLength={8} maxLength={128} required value={confirm} onChange={e => setConfirm(e.target.value)} /></div>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice} <Link to="/login">Sign in</Link></p>}<button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Saving…' : 'Reset password'}</button></form></section></main>
+  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Account recovery</SectionKicker><h1>Choose a new password.</h1><form onSubmit={submit}>
+    <PasswordField id="reset-password" label="New password" value={password} onChange={setPassword} autoComplete="new-password" />
+    <PasswordField id="reset-confirm" label="Confirm password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
+    {error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice} <Link to="/login">Sign in</Link></p>}
+    <button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Saving…' : 'Reset password'}</button>
+  </form></section></main>
 }
