@@ -36,6 +36,9 @@ def main() -> int:
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext"} <= user_columns,
            "MFA user columns are incomplete")
+    moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
+    expect({"owner_message", "review_note", "new_status"} <= moderation_columns,
+           "Moderation audit must separate private internal notes from owner-facing feedback")
 
     now = "2026-10-28T00:00:00.000Z"
 
@@ -149,13 +152,14 @@ def main() -> int:
                   WHERE id=? AND status='pending' AND (ai_risk_level='high' OR ai_risk_score>=65)""",
                (now, "pending"))
     db.execute("""INSERT INTO property_moderation_events
-                  (id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at)
-                  SELECT ?,?,?, 'pending',?,?,ai_risk_level,ai_risk_score,?
+                  (id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at)
+                  SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?
                   FROM properties WHERE id=? AND status=? AND changes()=1""",
-               ("event-1", "pending", "reviewer", "published", "Risk evidence reviewed by administrator", now, "pending", "published"))
-    event = db.execute("SELECT ai_risk_level,ai_risk_score FROM property_moderation_events WHERE id='event-1'").fetchone()
-    expect(event is not None and event[0] == "high" and event[1] == 80,
-           "Moderation audit did not capture the current risk state with the status change")
+               ("event-1", "pending", "reviewer", "pending", "published", "Risk evidence reviewed by administrator",
+                "", now, "pending", "published"))
+    event = db.execute("SELECT ai_risk_level,ai_risk_score,owner_message FROM property_moderation_events WHERE id='event-1'").fetchone()
+    expect(event is not None and event[0] == "high" and event[1] == 80 and event[2] == "",
+           "Moderation audit did not capture current risk state while keeping internal notes separate")
 
     # The same conditional deletion guard used by the Worker protects the last
     # administrator even when two deletion requests race.
