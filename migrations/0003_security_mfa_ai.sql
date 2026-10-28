@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS property_moderation_events (
   prior_status TEXT NOT NULL,
   new_status TEXT NOT NULL CHECK (new_status IN ('published', 'rejected', 'archived')),
   review_note TEXT NOT NULL DEFAULT '',
+  owner_message TEXT NOT NULL DEFAULT '',
   ai_risk_level TEXT NOT NULL DEFAULT 'not-screened',
   ai_risk_score INTEGER NOT NULL DEFAULT 0 CHECK (ai_risk_score BETWEEN 0 AND 100),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
