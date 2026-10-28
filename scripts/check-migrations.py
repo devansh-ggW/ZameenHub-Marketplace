@@ -38,6 +38,27 @@ def main() -> int:
            "MFA user columns are incomplete")
 
     now = "2026-10-28T00:00:00.000Z"
+
+    # Exercise the atomic UPSERT used by the Worker rate limiter. The allowed
+    # count is never decided from a stale SELECT result.
+    limiter_sql = """INSERT INTO auth_rate_limits(key_hash,window_started_at,request_count)
+                     VALUES(?,?,1)
+                     ON CONFLICT(key_hash) DO UPDATE SET
+                       window_started_at=CASE WHEN auth_rate_limits.window_started_at<=? THEN excluded.window_started_at ELSE auth_rate_limits.window_started_at END,
+                       request_count=CASE WHEN auth_rate_limits.window_started_at<=? THEN 1 ELSE auth_rate_limits.request_count+1 END
+                     RETURNING request_count"""
+    def rate_limit(now_value: str, minutes: int = 15, maximum: int = 3) -> bool:
+        from datetime import datetime, timedelta
+        current = datetime.fromisoformat(now_value.replace("Z", "+00:00"))
+        cutoff = (current - timedelta(minutes=minutes)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        row = db.execute(limiter_sql, ("rate-test", now_value, cutoff, cutoff)).fetchone()
+        return row is not None and row["request_count"] <= maximum
+    expect([rate_limit(now) for _ in range(3)] == [True, True, True],
+           "Rate limiter rejected a request before the configured maximum")
+    expect(rate_limit(now) is False, "Rate limiter allowed a request beyond its configured maximum")
+    expect(rate_limit("2026-10-28T00:16:00.000Z") is True,
+           "Rate limiter did not reset after its time window")
+
     db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                ("owner", "owner@example.test", "Owner", "user", "test-hash"))
     db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
@@ -46,6 +67,17 @@ def main() -> int:
                ("reporter", "reporter@example.test", "Reporter", "user", "test-hash"))
     db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                ("other-owner", "other-owner@example.test", "Other Owner", "user", "test-hash"))
+    db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+               ("second-admin", "second-admin@example.test", "Second Admin", "admin", "test-hash"))
+    # The same conditional deletion guard used by the Worker protects the last
+    # administrator even when two deletion requests race.
+    admin_guard = "DELETE FROM users WHERE id=? AND (role<>'admin' OR (SELECT COUNT(*) FROM users WHERE role='admin')>1)"
+    first_admin = db.execute(admin_guard, ("reviewer",))
+    expect(first_admin.rowcount == 1, "First of two administrators could not be removed")
+    last_admin = db.execute(admin_guard, ("second-admin",))
+    expect(last_admin.rowcount == 0, "The last administrator was deleted")
+    expect(db.execute("SELECT COUNT(*) FROM users WHERE role='admin'").fetchone()[0] == 1,
+           "The service was left without an administrator")
 
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('published','owner','published-home','Published home','sale','Apartment','Central','Nashik',5000000,'A detailed description of a test property','published')""")
