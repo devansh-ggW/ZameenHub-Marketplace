@@ -645,11 +645,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(status==='published'&&highRisk&&!(user.role==='admin'&&input?.overrideRisk===true&&reviewNote.trim().length>=20)) {
         return fail('This listing has high-risk signals. An administrator must record at least 20 characters of evidence-based review notes to override the block.',409)
       }
+      const reviewTime=nowIso()
+      // Re-check the risk boundary in the same UPDATE that changes visibility;
+      // never trust the earlier queue read if an owner edited the listing meanwhile.
+      const riskGuard=status!=='published'?'':highRisk
+        ? " AND (ai_risk_level='high' OR ai_risk_score>=65)"
+        : " AND COALESCE(ai_risk_level,'not-screened')!='high' AND ai_risk_score<65"
       const auditResults=await db.batch([
-        db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'").bind(status,nowIso(),id),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?, 'pending',?,?,?,?,? WHERE changes()=1").bind(uuid(),id,user.id,status,reviewNote,pending.ai_risk_level||'not-screened',Number(pending.ai_risk_score)||0,nowIso())
+        db.prepare(`UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'${riskGuard}`).bind(status,reviewTime,id),
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?, 'pending',?,?,ai_risk_level,ai_risk_score,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,status,reviewNote,reviewTime,id,status)
       ])
-      if(!auditResults[0]?.meta?.changes)return fail('Listing was already reviewed or could not be found.',409)
+      if(!auditResults[0]?.meta?.changes)return fail('The listing changed while it was being reviewed or was already handled. Refresh the queue and review the latest risk signals.',409)
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
       return ok({status,auditRecorded:true,highRiskOverride:status==='published'&&highRisk})
     }
