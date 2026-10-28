@@ -280,6 +280,7 @@ function sanitizeAmenities(value:unknown):string[]{
   return [...new Set(value.filter((item):item is string=>typeof item==='string').map(item=>clean(item,40)).filter(item=>allowedAmenityNames.has(item)))].slice(0,11)
 }
 function normalizeHttpsUrl(value:unknown,max=1500):string|null {
+  if(typeof value!=='string'||value.length>max)return null
   const raw=clean(value,max)
   if(!raw||raw.length>max)return null
   try {
@@ -294,6 +295,7 @@ function sanitizeImageUrls(value:unknown):string[]|null {
   if(!Array.isArray(value)||value.length>5)return null
   const urls:string[]=[]
   for(const item of value) {
+    if(typeof item!=='string'||item.length>1500)return null
     const raw=clean(item,1500)
     if(!raw)continue
     const normalized=normalizeHttpsUrl(raw,1500)
@@ -303,6 +305,8 @@ function sanitizeImageUrls(value:unknown):string[]|null {
   return urls.length<=5?urls:null
 }
 function sanitizeVideoUrl(value:unknown):string|null {
+  if(value===undefined||value===null||value==='')return ''
+  if(typeof value!=='string'||value.length>1500)return null
   const raw=clean(value,1500)
   if(!raw)return ''
   const normalized=normalizeHttpsUrl(raw,1500)
@@ -317,6 +321,8 @@ function sanitizeVideoUrl(value:unknown):string|null {
 const verificationEvidenceTypes=new Set(['none','official_record','property_tax_record','registry_reference','other_public_record'])
 function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string;url:string;status:'unverified'|'submitted';submittedAt:string|null}|null {
   const rawType=clean(input.verificationEvidenceType,40)||'none'
+  if(typeof input.verificationEvidenceUrl==='string'&&input.verificationEvidenceUrl.length>1500)return null
+  if(input.verificationEvidenceUrl!==undefined&&input.verificationEvidenceUrl!==null&&typeof input.verificationEvidenceUrl!=='string')return null
   const rawUrl=clean(input.verificationEvidenceUrl,1500)
   if(!verificationEvidenceTypes.has(rawType))return null
   if(!rawUrl&&rawType==='none')return {type:'none',url:'',status:'unverified',submittedAt:null}
@@ -593,6 +599,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to update your profile.',401)
       if(!await authLimit(request,db,'profile-image',8)||!await limited(db,'profile-image-user:'+user.id,12,60))return fail('Too many profile changes. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid profile update.')
+      if(input.profileImageUrl!==undefined&&input.profileImageUrl!==null&&typeof input.profileImageUrl!=='string')return fail('Profile image must be a public HTTPS image URL.')
+      if(typeof input.profileImageUrl==='string'&&input.profileImageUrl.length>1500)return fail('Profile image URL is too long (maximum 1500 characters).')
       const raw=clean(input.profileImageUrl,1500)
       const profileImageUrl=raw?normalizeHttpsUrl(raw,1500):''
       if(raw&&!profileImageUrl)return fail('Use a complete public HTTPS image URL. Local, data, and non-HTTPS URLs are not accepted.')
