@@ -10,7 +10,7 @@ const required=[
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
 const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
-const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml')
+const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html')
 for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/tools/emi-calculator','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
 for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/my/inquiries','/api/inquiries','/api/properties','/api/favorites','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
 for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
@@ -57,7 +57,11 @@ try {
 } catch { errors.push('package.json is not valid JSON') }
 if(lockfile.includes('specifier: latest'))errors.push('Lockfile importers should use pinned dependency specifiers')
 if(!worker.includes('sameOrigin(request,url)')||!worker.includes('Request origin could not be validated.'))errors.push('Worker must reject state-changing requests with an invalid/missing Origin')
-if(!worker.includes('new TextEncoder().encode(raw).byteLength>32768'))errors.push('Worker request bodies must be size-limited')
+if(!worker.includes('request.body?.getReader()')||!worker.includes('total>32768'))errors.push('Worker request bodies must be rejected while streaming once they exceed 32 KiB')
+const faviconTag=indexHtml.match(/<link\\b[^>]*\\brel=[\"']icon[\"'][^>]*>/i)?.[0]||''
+const faviconHref=faviconTag.match(/\\bhref=[\"']([^\"']+)[\"']/i)?.[1]||''
+if(!faviconHref)errors.push('HTML must declare a favicon href')
+else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.replace(/^\\/+/,''))))errors.push('HTML favicon target does not exist: '+faviconHref)
 if(!worker.includes("status:p.status,verified:false"))errors.push('A moderated listing must not be mislabelled as independently ownership-verified')
 if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
 if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
