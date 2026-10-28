@@ -26,6 +26,11 @@ export type Property = {
   status: ListingStatus
   ownerName: string
   ownerRole: string
+  aiRiskLevel?: 'low' | 'medium' | 'high' | 'unscored' | 'not-screened'
+  aiRiskScore?: number
+  aiRiskReasons?: string[]
+  aiScreenedAt?: string
+  aiModel?: string
 }
 
 // These are editorial architectural images for brand composition only.
