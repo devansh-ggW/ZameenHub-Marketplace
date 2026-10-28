@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user ON mfa_recovery_codes(user_id, 
 CREATE TABLE IF NOT EXISTS property_moderation_events (
   id TEXT PRIMARY KEY,
   property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  reviewer_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  reviewer_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   prior_status TEXT NOT NULL,
   new_status TEXT NOT NULL CHECK (new_status IN ('published', 'rejected')),
   review_note TEXT NOT NULL DEFAULT '',
