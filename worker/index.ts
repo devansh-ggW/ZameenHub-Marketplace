@@ -132,7 +132,7 @@ async function screenListingRisk(input:{title:string;location:string;city:string
       const match=output.match(/\{[\s\S]*\}/)
       if(match){
         const parsed=JSON.parse(match[0]) as {score?:unknown;reasons?:unknown}
-        const modelScore=safeInt(parsed.score,0,100)
+        const modelScore=typeof parsed.score==='number'&&Number.isInteger(parsed.score)&&parsed.score>=0&&parsed.score<=100?parsed.score:null
         if(modelScore!==null){
           modelAvailable=true;model='@cf/meta/llama-3.2-1b-instruct';score=Math.max(score,modelScore)
           if(Array.isArray(parsed.reasons))for(const reason of parsed.reasons.slice(0,3))if(typeof reason==='string'&&reason.trim())reasons.push(reason.trim().slice(0,180))
