@@ -8,6 +8,7 @@ import { ListingPage } from './listing-page'
 import { EditListingPage } from './edit-listing-page'
 import { ReportQueuePage } from './report-queue'
 import { InquiriesPage } from './inquiries-page'
+import { EmiCalculatorPage } from './emi-calculator-page'
 import { SiteFooter, SiteHeader } from './site-chrome'
 import { CookieNotice } from './cookie-notice'
 
@@ -33,6 +34,7 @@ export default function App() {
       <Route path="/review-queue" element={<AccountPage kind="review-queue" />} />
       <Route path="/report-queue" element={<ReportQueuePage />} />
       <Route path="/inquiries" element={<InquiriesPage />} />
+      <Route path="/tools/emi-calculator" element={<EmiCalculatorPage />} />
       <Route path="/about" element={<InfoPage kind="about" />} />
       <Route path="/contact" element={<InfoPage kind="contact" />} />
       <Route path="/help" element={<InfoPage kind="help" />} />
