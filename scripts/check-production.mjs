@@ -76,6 +76,7 @@ try {
 if(lockfile.includes('specifier: latest'))errors.push('Lockfile importers should use pinned dependency specifiers')
 if(!worker.includes('sameOrigin(request,url)')||!worker.includes('Request origin could not be validated.'))errors.push('Worker must reject state-changing requests with an invalid/missing Origin')
 if(!worker.includes('request.body?.getReader()')||!worker.includes('total>32768'))errors.push('Worker request bodies must be rejected while streaming once they exceed 32 KiB')
+if(!worker.includes("if(path==='/api/health'&&method==='GET')")||!worker.includes("SELECT 1 AS ready")||!worker.includes("database:'ready'"))errors.push('Health endpoint must check that D1 is available and responsive')
 const registrationStart=worker.indexOf("if(path==='/api/auth/register'&&method==='POST') {")
 const registrationEnd=worker.indexOf("if(path==='/api/auth/verify-email'&&method==='POST')",registrationStart)
 const registrationBlock=registrationStart>=0&&registrationEnd>registrationStart?worker.slice(registrationStart,registrationEnd):''
