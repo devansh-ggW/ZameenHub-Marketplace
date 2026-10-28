@@ -582,7 +582,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const duplicate=await db.prepare("SELECT id FROM properties WHERE lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
       await db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model).run()
-      return ok({id,status:'pending',riskLevel:risk.level,riskScore:risk.score,riskReasons:risk.reasons,reviewMessage:risk.level==='high'?'This listing has been flagged for additional fraud checks. It remains private until review.':'Automated risk screening is complete. This is not proof of ownership; your listing remains private until review.'},201)
+      return ok({id,status:'pending',message:'Your listing has been submitted and remains private until an authorized moderator reviews it. Automated screening is not proof of ownership.'},201)
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
