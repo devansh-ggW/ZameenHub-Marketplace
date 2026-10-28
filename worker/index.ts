@@ -546,9 +546,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(status==='published'&&highRisk&&!(user.role==='admin'&&input?.overrideRisk===true&&reviewNote.trim().length>=20)) {
         return fail('This listing has high-risk signals. An administrator must record at least 20 characters of evidence-based review notes to override the block.',409)
       }
-      const result=await db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'").bind(status,nowIso(),id).run()
-      if(!result.meta.changes)return fail('Listing was already reviewed or could not be found.',409)
-      await db.prepare('INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) VALUES(?,?,?,\'pending\',?,?,?,?,?)').bind(uuid(),id,user.id,status,reviewNote,pending.ai_risk_level||'not-screened',Number(pending.ai_risk_score)||0,nowIso()).run()
+      const auditResults=await db.batch([
+        db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'").bind(status,nowIso(),id),
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?, 'pending',?,?,?,?,? WHERE changes()=1").bind(uuid(),id,user.id,status,reviewNote,pending.ai_risk_level||'not-screened',Number(pending.ai_risk_score)||0,nowIso())
+      ])
+      if(!auditResults[0]?.meta?.changes)return fail('Listing was already reviewed or could not be found.',409)
+      if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
       return ok({status,auditRecorded:true,highRiskOverride:status==='published'&&highRisk})
     }
     if(path==='/api/inquiries'&&method==='POST') {
