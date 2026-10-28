@@ -290,6 +290,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const nextPath=safeNextPath(input.next)
       const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
+      if(!await limited(db,'register-email:'+email,3,60))return fail('Too many account setup requests for this email. Please wait before trying again.',429)
       let user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
       if(user) {
         if(!user.password_hash) {
@@ -335,6 +336,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/auth/resend-verification'&&method==='POST') {
       if(!await authLimit(request,db,'resend',4))return fail('Too many requests. Please wait before trying again.',429)
       const input=await body(request),email=normalizeEmail(clean(input?.email,254)),nextPath=safeNextPath(input?.next)
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return ok({message:'If this address needs verification or activation, instructions will be sent shortly.'})
+      if(!await limited(db,'resend-email:'+email,3,60))return ok({message:'If this address needs verification or activation, instructions will be sent shortly.'})
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
       if(user&&!user.email_verified) {
         const purpose=user.password_hash?'verify':'activate'
@@ -439,6 +442,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/auth/forgot-password'&&method==='POST') {
       if(!await authLimit(request,db,'forgot',4))return fail('Too many requests. Please wait before trying again.',429)
       const input=await body(request),email=normalizeEmail(clean(input?.email,254))
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return ok({message:'If a verified account matches that address, password-reset instructions will be sent shortly.'})
+      if(!await limited(db,'forgot-email:'+email,3,60))return ok({message:'If a verified account matches that address, password-reset instructions will be sent shortly.'})
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
       if(user?.password_hash&&user.email_verified) {
         const token=randomToken()
