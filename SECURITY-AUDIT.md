@@ -58,7 +58,8 @@ Public reference pages:
 - Listing submission rate limits, login limits by IP and normalized email, a streaming 32 KiB request-body cap, strict Origin validation for state-changing requests, and additional security headers.
 - Valid registration attempts use a generic response and status to reduce account enumeration; existing accounts receive neutral sign-in guidance rather than an account-state response.
 - Email verification, legacy activation, and password-reset tokens are atomically consumed before use, reducing replay under concurrent requests.
-- Listing submission responses do not reveal internal AI risk scores or detailed trigger reasons; these remain restricted to the authorized review queue.
+- Listing submission and owner-edit responses do not reveal internal AI risk scores or detailed trigger reasons; these remain restricted to the authorized review queue.
+- The AI classifier accepts only actual JSON integer scores from 0–100. Malformed values such as `null`, strings or booleans are ignored instead of being coerced to a misleading low-risk score.
 - A clear cookie notice and dedicated cookie policy. The current implementation does not intentionally set analytics or advertising cookies; the notice preference uses browser local storage.
 - UI language now makes clear that “published” means approved for public display, not independently verified property ownership.
 - Static production smoke checks now verify the new wiring. CI also runs a SQLite migration test, owner-isolation query checks, RFC TOTP vectors, a full dependency audit, and the TypeScript/Vite build.
@@ -76,7 +77,8 @@ Public reference pages:
 | Request-body buffering before the size check | The Worker reads streamed chunks and cancels once the 32 KiB cap is exceeded |
 | Registration response account enumeration | Valid registration branches use a generic status/message and perform password-hash work before checking the email address |
 | Verification/reset token reuse races | Email verification, activation and reset tokens are claimed atomically with `DELETE ... RETURNING` before use |
-| Risk-score leakage to listing submitters | Submission responses reveal pending status only; detailed risk evidence stays in the moderator queue |
+| Risk-score leakage to listing submitters or owners editing a listing | Submission and edit responses reveal pending status/message only; detailed risk evidence stays in the moderator queue |
+| Malformed AI classifier output | Only an actual integer JSON score from 0–100 is accepted; other value types are ignored |
 | Password input silently truncated/trimmed before verification | Password values are kept byte-for-byte as provided; passwords outside 8–128 characters are rejected |
 | “Published” presented like proof of ownership | Backend no longer maps publication status to a verified-owner boolean; public copy warns users to verify independently |
 | Listing text may attempt prompt injection | AI instruction treats fields as untrusted data; returned risk is parsed as data and never has authority to publish |
