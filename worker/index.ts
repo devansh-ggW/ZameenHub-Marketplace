@@ -668,6 +668,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(status==='published'&&highRisk&&!(user.role==='admin'&&input?.overrideRisk===true&&reviewNote.trim().length>=20)) {
         return fail('This listing has high-risk signals. An administrator must record at least 20 characters of evidence-based review notes to override the block.',409)
       }
+      if(status==='rejected'&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for rejecting this listing.')
       const reviewTime=nowIso()
       // Re-check the risk boundary in the same UPDATE that changes visibility;
       // never trust the earlier queue read if an owner edited the listing meanwhile.
