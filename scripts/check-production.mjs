@@ -58,6 +58,10 @@ try {
 if(lockfile.includes('specifier: latest'))errors.push('Lockfile importers should use pinned dependency specifiers')
 if(!worker.includes('sameOrigin(request,url)')||!worker.includes('Request origin could not be validated.'))errors.push('Worker must reject state-changing requests with an invalid/missing Origin')
 if(!worker.includes('request.body?.getReader()')||!worker.includes('total>32768'))errors.push('Worker request bodies must be rejected while streaming once they exceed 32 KiB')
+const registrationStart=worker.indexOf("if(path==='/api/auth/register'&&method==='POST') {")
+const registrationEnd=worker.indexOf("if(path==='/api/auth/verify-email'&&method==='POST')",registrationStart)
+const registrationBlock=registrationStart>=0&&registrationEnd>registrationStart?worker.slice(registrationStart,registrationEnd):''
+if(!registrationBlock.includes('const registrationMessage=')||(registrationBlock.match(/return ok\\(\\{message:registrationMessage\\}\\)/g)||[]).length!==4||/return ok\\(\\{message:registrationMessage\\}\\},201\\)/.test(registrationBlock))errors.push('Registration must use the same generic response and status for existing and new email addresses')
 const faviconLine=indexHtml.split(String.fromCharCode(10)).find(line=>line.includes('rel="icon"'))||''
 const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
 if(!faviconHref)errors.push('HTML must declare a favicon href')
