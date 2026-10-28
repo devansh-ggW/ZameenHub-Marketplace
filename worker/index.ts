@@ -138,7 +138,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(user) {
         if(!user.password_hash) {
           const token=await issueToken(db,user.id,'activate',30)
-          const link=`${env.APP_URL||url.origin}/activate-account?token=${encodeURIComponent(token)}`
+          const link=`${env.APP_URL||url.origin}/activate-account?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
           const sent=await sendEmail(env,email,'Activate your ZameenHub account',emailHtml('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'))
           return ok({message:sent?'We sent account activation instructions to your email.':'Email delivery is not configured yet. Please contact support at dewifystores@gmail.com.'})
         }
@@ -147,7 +147,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=uuid(),hash=await passwordHash(password)
       await db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,nowIso()).run()
       const token=await issueToken(db,id,'verify',30)
-      const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}`
+      const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
       const sent=await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
       return ok({message:sent?'Account created. Check your inbox for the verification link.':'Your account was created, but email delivery is not configured. Contact dewifystores@gmail.com before trying to sign in.'},201)
     }
@@ -184,7 +184,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         const purpose=user.password_hash?'verify':'activate'
         const token=await issueToken(db,user.id,purpose,30)
         const route=purpose==='verify'?'verify-email':'activate-account'
-        const link=`${env.APP_URL||url.origin}/${route}?token=${encodeURIComponent(token)}`
+        const link=`${env.APP_URL||url.origin}/${route}?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
         await sendEmail(env,email,purpose==='verify'?'Verify your ZameenHub email':'Activate your ZameenHub account',emailHtml('Finish setting up ZameenHub','Use this one-time link to continue. It expires in 30 minutes.',link,'Continue'))
       }
       return ok({message:'If this address needs verification or activation, instructions will be sent shortly.'})
