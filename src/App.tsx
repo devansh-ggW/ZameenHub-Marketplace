@@ -1,0 +1,6 @@
+import { Route, Routes } from 'react-router-dom'
+import { SiteFooter, SiteHeader } from './components'
+import { MotionProvider, ScrollProgress } from './motion'
+import { AccountPage, AuthPage, HomePage, InfoPage, ListingPage, PropertiesPage, PropertyDetailPage } from './pages'
+
+export default function App() { return <MotionProvider><ScrollProgress /><SiteHeader /><Routes><Route path="/" element={<HomePage />} /><Route path="/properties" element={<PropertiesPage />} /><Route path="/properties/:slug" element={<PropertyDetailPage />} /><Route path="/login" element={<AuthPage mode="login" />} /><Route path="/signup" element={<AuthPage mode="signup" />} /><Route path="/profile" element={<AccountPage kind="profile" />} /><Route path="/saved" element={<AccountPage kind="saved" />} /><Route path="/list-property" element={<ListingPage />} /><Route path="/my-listings" element={<AccountPage kind="my-listings" />} /><Route path="/about" element={<InfoPage kind="about" />} /><Route path="/contact" element={<InfoPage kind="contact" />} /><Route path="/help" element={<InfoPage kind="help" />} /><Route path="/privacy" element={<InfoPage kind="privacy" />} /><Route path="/terms" element={<InfoPage kind="terms" />} /><Route path="*" element={<HomePage />} /></Routes><SiteFooter /></MotionProvider> }

@@ -1,0 +1,18 @@
+{
+  "routes": [
+    { "path": "/", "title": "Home" },
+    { "path": "/properties", "title": "Browse properties" },
+    { "path": "/properties/:slug", "title": "Property detail" },
+    { "path": "/login", "title": "Sign in" },
+    { "path": "/signup", "title": "Create account" },
+    { "path": "/profile", "title": "Profile" },
+    { "path": "/saved", "title": "Saved properties" },
+    { "path": "/list-property", "title": "List a property" },
+    { "path": "/my-listings", "title": "My listings" },
+    { "path": "/about", "title": "About ZameenHub" },
+    { "path": "/contact", "title": "Contact" },
+    { "path": "/help", "title": "Help centre" },
+    { "path": "/privacy", "title": "Privacy" },
+    { "path": "/terms", "title": "Terms" }
+  ]
+}

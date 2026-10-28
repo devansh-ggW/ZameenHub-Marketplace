@@ -1,0 +1,27 @@
+.scroll-progress { position: fixed; z-index: 60; top: 0; left: 0; right: 0; height: 2px; pointer-events: none; background: rgba(255,255,255,.15); }
+.scroll-progress span { display: block; width: 100%; height: 100%; transform-origin: left center; background: var(--blue); }
+.scroll-scene { position: relative; isolation: isolate; overflow: clip; }
+.scroll-scene-lift > .section, .scroll-scene-reveal > .section { transform: translateY(calc((1 - var(--scene-progress)) * 26px)); opacity: calc(.86 + var(--scene-progress) * .14); transition: opacity .15s linear; }
+.scroll-scene-quiet > .section { transform: translate3d(0, calc((.5 - var(--scene-progress)) * 18px), 0); }
+.architecture-scene { height: 150vh; background: var(--ink); color: white; }
+.architecture-canvas { position: sticky; top: 0; height: 100vh; overflow: hidden; perspective: 1100px; }
+.architecture-canvas::after { content: ''; position: absolute; inset: 0; z-index: 3; background: linear-gradient(90deg, rgba(10,18,30,.72), rgba(10,18,30,.05) 70%); pointer-events: none; }
+.depth-image { position: absolute; object-fit: cover; will-change: transform; transform-style: preserve-3d; }
+.architecture-back { inset: -10%; width: 120%; height: 120%; opacity: .45; transform: translate3d(0, calc((.5 - var(--scene-progress)) * var(--depth) * -100px), -120px) scale(1.08); filter: saturate(.65); }
+.architecture-main { top: 11%; right: 7%; width: 63%; height: 78%; transform: translate3d(calc((.5 - var(--scene-progress)) * var(--depth) * -170px), calc((.5 - var(--scene-progress)) * var(--depth) * 100px), 0) rotateY(calc((.5 - var(--scene-progress)) * -4deg)); }
+.architecture-front { right: 3%; bottom: 7%; width: 31%; height: 35%; border: 8px solid var(--ink); z-index: 2; transform: translate3d(calc((.5 - var(--scene-progress)) * var(--depth) * 190px), calc((.5 - var(--scene-progress)) * var(--depth) * -150px), 100px) rotate(4deg); }
+.architecture-copy { position: absolute; z-index: 4; left: max(32px, calc((100vw - 1240px) / 2)); top: 30%; max-width: 620px; transform: translate3d(calc((.5 - var(--scene-progress)) * -70px), 0, 80px); }
+.architecture-copy h2 { margin: 18px 0; font-size: clamp(3rem, 7vw, 7.2rem); line-height: .9; letter-spacing: -.08em; }
+.architecture-copy p { max-width: 300px; color: rgba(255,255,255,.72); line-height: 1.7; }
+.home-page .discovery-section, .home-page .category-section, .home-page .process-section, .home-page .closing-section { transform: translateZ(0); }
+.home-page .discovery-section::before, .home-page .category-section::before, .home-page .process-section::before, .home-page .closing-section::before { content: ''; position: absolute; top: 0; left: 7%; right: 7%; height: 1px; background: linear-gradient(90deg, transparent, var(--line), transparent); transform: scaleX(calc(.6 + var(--scene-progress) * .4)); transform-origin: center; }
+.motion-root .page-shell { position: relative; overflow: clip; }
+.motion-root .page-shell::before { content: ''; position: absolute; top: 0; right: 7%; width: min(22vw, 300px); height: 420px; background: url('https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=700&q=70') center/cover; opacity: .06; transform: translate3d(0, calc(var(--site-progress) * -80px), 0) rotate(calc(var(--site-progress) * 4deg)); pointer-events: none; }
+.motion-root .page-title { transform: translate3d(0, calc((.5 - var(--site-progress)) * 18px), 0); }
+.motion-root .filters-bar, .motion-root .form-card, .motion-root .empty-state { transform: translate3d(0, calc((.5 - var(--site-progress)) * 8px), 0); }
+.motion-root .property-card { transform: translate3d(0, calc((.5 - var(--site-progress)) * 12px), 0); }
+.motion-root .detail-grid, .motion-root .info-layout, .motion-root .stepper { transform: translate3d(0, calc((.5 - var(--site-progress)) * 10px), 0); }
+.footer { position: relative; overflow: hidden; }
+.footer::before { content: ''; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 25%, rgba(40,100,220,.16) 50%, transparent 75%); transform: translateX(calc((var(--site-progress) - .5) * 80%)); pointer-events: none; }
+@media (max-width: 560px) { .architecture-scene { height: 125vh; } .architecture-main { top: 22%; right: 5%; width: 82%; height: 55%; } .architecture-front { width: 45%; height: 27%; } .architecture-copy { left: 16px; top: 11%; max-width: 90%; } .architecture-copy h2 { font-size: 3.8rem; } }
+@media (prefers-reduced-motion: reduce) { .scroll-scene-lift > .section, .scroll-scene-reveal > .section, .scroll-scene-quiet > .section, .motion-root .page-title, .motion-root .filters-bar, .motion-root .form-card, .motion-root .empty-state, .motion-root .property-card, .motion-root .detail-grid, .motion-root .info-layout, .motion-root .stepper, .architecture-back, .architecture-main, .architecture-front, .architecture-copy, .footer::before { transform: none !important; opacity: 1 !important; } }
