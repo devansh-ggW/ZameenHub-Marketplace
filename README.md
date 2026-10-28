@@ -2,9 +2,11 @@
 
 ZameenHub is a React + TypeScript property marketplace for India, with a Cloudflare Worker API and D1 persistence.
 
-## Native email authentication
+## Authentication and marketplace security
 
-The `feat/production-auth-upgrade` branch adds email/password authentication, email verification, existing-account activation, password recovery, server-side sessions, protected listing submission, saved properties, owner inquiries, support email delivery, moderator review routes, Privacy Policy and Terms pages.
+The application uses native email/password authentication, email verification, existing-account activation, password recovery, server-side sessions, protected listing submission, saved properties, owner inquiries, support email delivery, moderator review routes, Privacy Policy, Terms, and Cookie Policy.
+
+This security-hardening release adds optional authenticator-app TOTP two-factor authentication, single-use recovery codes, password-confirmed account deletion, listing-risk triage, property reporting, owner listing management, an inquiry inbox, additional search filters, and an EMI calculator.
 
 ### Configure Cloudflare
 
@@ -27,7 +29,7 @@ pnpm build
 pnpm test:smoke
 ``
 
-GitHub Actions runs the build and static smoke checks on the upgrade branch and pull requests to main. Static checks are not a substitute for testing live Resend delivery, D1 queries, cookie behavior over HTTPS, role permissions, abuse/rate limits, and the full browser journey.
+GitHub Actions runs the dependency audit, migration checks, TOTP and EMI tests, production build, smoke checks, and Wrangler dry-run on `main`, the authentication-upgrade branch, the security-hardening branch, and pull requests targeting `main`. Static checks are not a substitute for testing live Resend delivery, D1 queries, cookie behavior over HTTPS, role permissions, abuse/rate limits, and the full browser journey.
 
 ## Marketplace behavior
 
@@ -39,7 +41,7 @@ GitHub Actions runs the build and static smoke checks on the upgrade branch and 
 
 ## Production checklist
 
-Before launch, complete the checklist in `PRODUCTION-CHECKLIST.md` (if supplied with your deployment package), review the privacy/terms text for the operator's legal identity and jurisdiction, and verify that account roles are assigned only through trusted administrative processes. Do not promote anyone to moderator/admin through a public endpoint. Photo uploads are not enabled by this upgrade; the UI must not imply that owners can upload photos until a configured storage/delivery path is implemented.
+Before launch, complete `PRODUCTION-CHECKLIST.md`, review the privacy/terms text for the operator's legal identity and jurisdiction, and verify that account roles are assigned only through trusted administrative processes. Do not promote anyone to moderator/admin through a public endpoint. Photo uploads are not enabled by this upgrade; the UI must not imply that owners can upload photos until a configured storage/delivery path is implemented.
 
 ## Support
 
