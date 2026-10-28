@@ -4,9 +4,9 @@ ZameenHub is a React + TypeScript property marketplace for India, with a Cloudfl
 
 ## Authentication and marketplace security
 
-The application uses native email/password authentication, email verification, existing-account activation, password recovery, server-side sessions, protected listing submission, saved properties, owner inquiries, support email delivery, moderator review routes, Privacy Policy, Terms, and Cookie Policy.
+The application uses native email/password authentication, email verification, existing-account activation, password recovery, server-side sessions, protected listing submission, saved properties, owner inquiries, support email delivery, moderator review routes, Privacy Policy, Terms, and Cookie Policy. Property and profile media use public HTTPS URL references stored in D1; ZameenHub does not upload or store file bytes.
 
-This security-hardening release adds optional authenticator-app TOTP two-factor authentication, single-use recovery codes, password-confirmed account deletion, listing-risk triage, property reporting, owner listing management, an inquiry inbox, additional search filters, and an EMI calculator.
+This security-hardening release adds optional authenticator-app TOTP two-factor authentication, single-use recovery codes, password-confirmed account deletion, listing-risk triage, evidence-reference review, D1-backed property/profile media URLs, property reporting, owner listing management, an inquiry inbox, additional search filters, and an EMI calculator.
 
 ### Configure Cloudflare
 
@@ -41,7 +41,7 @@ GitHub Actions runs the dependency audit, migration checks, TOTP and EMI tests, 
 
 ## Production checklist
 
-Before launch, complete `PRODUCTION-CHECKLIST.md`, review the privacy/terms text for the operator's legal identity and jurisdiction, and verify that account roles are assigned only through trusted administrative processes. Do not promote anyone to moderator/admin through a public endpoint. Photo uploads are not enabled by this upgrade; the UI must not imply that owners can upload photos until a configured storage/delivery path is implemented.
+Before launch, complete `PRODUCTION-CHECKLIST.md`, review the privacy/terms text for the operator's legal identity and jurisdiction, and verify that account roles are assigned only through trusted administrative processes. Do not promote anyone to moderator/admin through a public endpoint. Owners can reference up to five public HTTPS photo URLs, one supported HTTPS video URL, and a profile image URL; files are hosted elsewhere and are not uploaded to ZameenHub.
 
 ## Support
 
@@ -55,9 +55,17 @@ The security branch adds optional authenticator-app MFA, single-use recovery cod
 ### Deploying the security branch safely
 
 1. Back up the production D1 database before making schema changes.
-2. Apply `migrations/0003_security_mfa_ai.sql` to the configured `zameenhub` D1 database **before** deploying the matching Worker source.
+2. Back up the target D1 database and apply all pending migrations, including `migrations/0003_security_mfa_ai.sql` and `migrations/0004_media_verification.sql`, **before** deploying the matching Worker source.
 3. In Cloudflare Worker settings, add `MFA_ENCRYPTION_KEY` as a secret, using a cryptographically random value of at least 32 characters. Do not put it in `wrangler.toml`, the source tree, client-side code, or GitHub issues.
 4. Confirm the Workers AI binding named `AI` is enabled for `zameenhub-marketplace`. The model uses the Cloudflare Workers AI allowance and may fall back to rule-based flags when inference is unavailable; all new listings remain pending until a reviewer approves them.
 5. Run a complete test with non-production accounts and a restorable database backup. Static checks alone do not establish deployment safety.
 
-For example, from an environment already set up with the repository and Wrangler, the migration can be applied with `pnpm exec wrangler d1 migrations apply zameenhub --remote`. Do not deploy the new Worker first: it references the new columns and tables.
+For example, from an environment already set up with the repository and Wrangler, the migration can be applied with `pnpm exec wrangler d1 migrations apply zameenhub --remote`. Do not deploy the new Worker first: it references the new columns and tables. Migration 0004 adds profile image URL, property media URL, and evidence-review columns. It does not create an R2 binding or store uploaded files.
+
+
+### Media and evidence review
+
+- Property forms accept up to five public HTTPS image URLs and one public HTTPS video URL (YouTube, Vimeo, or direct MP4/WebM/Ogg/HLS). URLs are stored in D1; media payload bytes stay on the chosen host. This is URL-reference storage, not upload hosting.
+- Profile avatars use a public HTTPS image URL stored in D1. Invalid/local URLs and embedded `data:` URLs are rejected.
+- A property submission remains private until moderator approval. The optional public-record reference is private to the owner/review queue. A moderator can mark a supplied reference as reviewed with an audit note; this is not a legal guarantee of property title or an automated government-record lookup.
+- Public inquiries are only accepted for published listings and are delivered to the owner’s registered email when Resend is configured.
