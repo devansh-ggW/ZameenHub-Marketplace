@@ -24,6 +24,7 @@ const nowIso=()=>new Date().toISOString()
 const future=(minutes:number)=>new Date(Date.now()+minutes*60_000).toISOString()
 const normalizeEmail=(s:string)=>s.trim().toLowerCase()
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
+const passwordValue=(v:unknown)=>typeof v==='string'?v.slice(0,128):''
 const safeInt=(v:unknown,min=0,max=100_000_000)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>=min&&n<=max?n:null}
 const userView=(u:UserRow)=>({id:u.id,email:u.email,name:u.name,role:u.role,emailVerified:u.email_verified===1})
 async function passwordHash(password:string) {
@@ -129,7 +130,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/auth/register'&&method==='POST') {
       if(!await authLimit(request,db,'register',5))return fail('Too many attempts. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid request body.')
-      const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=clean(input.password,128)
+      const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
       let user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified FROM users WHERE email=?').bind(email).first<UserRow>()
       if(user) {
@@ -162,7 +163,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/auth/activate-account'&&method==='POST') {
       if(!await authLimit(request,db,'activate',5))return fail('Too many attempts. Please wait before trying again.',429)
-      const input=await body(request),token=clean(input?.token,200),password=clean(input?.password,128)
+      const input=await body(request),token=clean(input?.token,200),password=passwordValue(input?.password)
       if(password.length<8||password.length>128||input?.acceptedTerms!==true)return fail('Choose a password of at least 8 characters and accept the Terms.')
       const record=await db.prepare("SELECT user_id FROM email_verification_tokens WHERE token_hash=? AND purpose='activate' AND expires_at>?").bind(await digest(token),nowIso()).first<{user_id:string}>()
       if(!record)return fail('This activation link is invalid or expired. Request a new one.',400)
