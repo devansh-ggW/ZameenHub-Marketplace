@@ -484,7 +484,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
       const accountRateKeys=await Promise.all([
-        'login-email:'+user.email,'listing-user:'+user.id,'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id
+        'login-email:'+user.email,'register-email:'+user.email,'resend-email:'+user.email,'forgot-email:'+user.email,
+        'listing-user:'+user.id,'listing-edit-user:'+user.id,'listing-manage-user:'+user.id,
+        'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id,
+        'property-report-user:'+user.id,'inquiry-inbox-user:'+user.id,'inquiry-update-user:'+user.id,
+        'moderation-user:'+user.id,'report-review-user:'+user.id
       ].map(key=>digest(key)))
       // Keep the last-admin guard inside the atomic batch as well: two admins
       // attempting deletion at once must not both observe a count of two.
