@@ -20,7 +20,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     event.preventDefault()
     setBusy(true); setError(''); setNotice('')
     const result = mode === 'signup'
-      ? await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms }) })
+      ? await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next }) })
       : await apiRequest<{ message?: string; user?: { id: string } }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
@@ -31,7 +31,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   async function resend() {
     if (!email.trim()) { setError('Enter your email address first.'); return }
     setResending(true); setError('')
-    const result = await apiRequest<{ message: string }>('/api/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email }) })
+    const result = await apiRequest<{ message: string }>('/api/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email, next }) })
     setResending(false)
     if (result.ok) setNotice(result.data.message)
     else setError(result.error)
@@ -59,6 +59,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
 export function VerifyEmailPage() {
   const [params] = useSearchParams()
   const token = params.get('token') ?? ''
+  const next = safeNext(params.get('next'), '/profile')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -69,12 +70,13 @@ export function VerifyEmailPage() {
     if (result.ok) setNotice(result.data.message)
     else setError(result.error)
   }
-  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Email verification</SectionKicker><h1>Confirm your email.</h1><p>Verify your address to finish setting up your ZameenHub account.</p>{!token && <p className="status-message error">This link has no verification token. Request a new email from sign-up.</p>}{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice}</p>}<form onSubmit={verify}><button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Verifying…' : notice ? 'Email verified' : 'Verify email'}</button></form><div className="auth-switch"><Link to="/login">Return to sign in</Link></div></section></main>
+  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Email verification</SectionKicker><h1>Confirm your email.</h1><p>Verify your address to finish setting up your ZameenHub account.</p>{!token && <p className="status-message error">This link has no verification token. Request a new email from sign-up.</p>}{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice} <Link to={'/login?next=' + encodeURIComponent(next)}>Continue to sign in</Link></p>}<form onSubmit={verify}><button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Verifying…' : notice ? 'Email verified' : 'Verify email'}</button></form><div className="auth-switch"><Link to="/login">Return to sign in</Link></div></section></main>
 }
 
 export function ActivateAccountPage() {
   const [params] = useSearchParams()
   const token = params.get('token') ?? ''
+  const next = safeNext(params.get('next'), '/profile')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [acceptedTerms, setAcceptedTerms] = useState(false)
@@ -90,7 +92,7 @@ export function ActivateAccountPage() {
     if (result.ok) setNotice(result.data.message)
     else setError(result.error)
   }
-  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Account activation</SectionKicker><h1>Secure your account.</h1><p>This link is for an existing account that needs a password and email confirmation.</p><form onSubmit={submit}><div className="form-field"><label htmlFor="activate-password">Create password</label><input className="form-control" id="activate-password" type="password" minLength={8} maxLength={128} required value={password} onChange={e => setPassword(e.target.value)} /></div><div className="form-field"><label htmlFor="activate-confirm">Confirm password</label><input className="form-control" id="activate-confirm" type="password" minLength={8} maxLength={128} required value={confirm} onChange={e => setConfirm(e.target.value)} /></div><label className="terms-consent"><input type="checkbox" checked={acceptedTerms} required onChange={e => setAcceptedTerms(e.target.checked)} /><span>I agree to the <Link to="/terms">Terms</Link> and acknowledge the <Link to="/privacy">Privacy Policy</Link>.</span></label>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice} <Link to="/login">Sign in</Link></p>}<button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Activating…' : 'Activate account'}</button></form></section></main>
+  return <main className="auth-wrap"><section className="auth-card"><SectionKicker>Account activation</SectionKicker><h1>Secure your account.</h1><p>This link is for an existing account that needs a password and email confirmation.</p><form onSubmit={submit}><div className="form-field"><label htmlFor="activate-password">Create password</label><input className="form-control" id="activate-password" type="password" minLength={8} maxLength={128} required value={password} onChange={e => setPassword(e.target.value)} /></div><div className="form-field"><label htmlFor="activate-confirm">Confirm password</label><input className="form-control" id="activate-confirm" type="password" minLength={8} maxLength={128} required value={confirm} onChange={e => setConfirm(e.target.value)} /></div><label className="terms-consent"><input type="checkbox" checked={acceptedTerms} required onChange={e => setAcceptedTerms(e.target.checked)} /><span>I agree to the <Link to="/terms">Terms</Link> and acknowledge the <Link to="/privacy">Privacy Policy</Link>.</span></label>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice} <Link to={'/login?next=' + encodeURIComponent(next)}>Sign in</Link></p>}<button className="btn btn-primary" style={{ width: '100%' }} disabled={!token || busy || !!notice}>{busy ? 'Activating…' : 'Activate account'}</button></form></section></main>
 }
 
 export function ForgotPasswordPage() {
