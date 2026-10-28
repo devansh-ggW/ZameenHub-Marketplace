@@ -515,7 +515,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
       const result=await db.prepare('SELECT * FROM properties WHERE owner_id=? ORDER BY created_at DESC LIMIT 100').bind(user.id).all<PropertyRow>()
-      return ok(result.results.map(p=>propertyView(p,[],true)))
+      return ok(result.results.map(p=>propertyView(p,[])))
     }
     if(path==='/api/favorites'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
@@ -579,7 +579,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
       const result=await db.prepare("SELECT * FROM properties WHERE status='pending' ORDER BY created_at ASC LIMIT 100").all<PropertyRow>()
-      return ok(result.results.map(p=>propertyView(p,[])))
+      return ok(result.results.map(p=>propertyView(p,[],true)))
     }
     const reviewMatch=path.match(/^\/api\/admin\/properties\/([^/]+)$/)
     if(reviewMatch&&method==='PATCH') {
