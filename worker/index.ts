@@ -664,51 +664,32 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
       if(!await authLimit(request,db,'moderation',30)||!await limited(db,'moderation-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
       const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000)
-      if(status!=='published'&&status!=='rejected')return fail('Unsupported review status.')
+      if(status!=='published'&&status!=='rejected'&&status!=='archived')return fail('Unsupported review status.')
       const id=decodeURIComponent(reviewMatch[1])
-      const pending=await db.prepare("SELECT * FROM properties WHERE id=? AND status='pending'").bind(id).first<PropertyRow & {updated_at:string}>()
-      if(!pending)return fail('Listing was not pending or could not be found.',404)
-      const pendingRiskLevel=pending.ai_risk_level||'not-screened'
-      const pendingRiskScore=Number(pending.ai_risk_score)||0
-      const highRisk=pendingRiskLevel==='high'||pendingRiskScore>=65
+      const record=await db.prepare("SELECT * FROM properties WHERE id=? AND status IN ('pending','published')").bind(id).first<PropertyRow & {updated_at:string}>()
+      if(!record)return fail('Listing was not found in a reviewable state.',404)
+      const priorStatus=record.status
+      if(status==='published'&&priorStatus!=='pending')return fail('Only pending listings can be approved for public search.',409)
+      if(status==='archived'&&priorStatus!=='published')return fail('Only a published listing can be archived by the moderation team.',409)
+      const riskLevel=record.ai_risk_level||'not-screened'
+      const riskScore=Number(record.ai_risk_score)||0
+      const highRisk=riskLevel==='high'||riskScore>=65
       const adminRiskOverride=status==='published'&&user.role==='admin'&&input?.overrideRisk===true&&reviewNote.trim().length>=20
       if(status==='published'&&highRisk&&!adminRiskOverride) {
         return fail('This listing has high-risk signals. An administrator must record at least 20 characters of evidence-based review notes to override the block.',409)
       }
-      if(status==='rejected'&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for rejecting this listing.')
+      if((status==='rejected'||status==='archived')&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for this moderation action.')
       const reviewTime=nowIso()
-      // Compare the exact version of the listing shown to the reviewer. If an
-      // owner changes any material field or the risk screen between queue load
-      // and approval, the update affects zero rows and must be reviewed again.
-      const snapshotGuard=` AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=?`
+      // Bind the decision to the exact listing version displayed to the reviewer.
+      // An owner edit or re-screen after the queue read must force a fresh review.
+      const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=?"
       const auditResults=await db.batch([
-        db.prepare(`UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'${snapshotGuard}`).bind(status,reviewTime,id,pending.title,pending.location,pending.city,pending.price,pending.description,pending.property_type,pending.purpose,pending.bedrooms,pending.bathrooms,pending.area,pending.amenities_json||'[]',pending.price_period||'',pendingRiskLevel,pendingRiskScore,pending.ai_risk_reasons_json||'[]',pending.ai_model||'not-screened',pending.ai_screened_at||'',pending.updated_at),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?, 'pending',?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,status,reviewNote,reviewTime,id,status)
+        db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status=?"+snapshotGuard).bind(status,reviewTime,id,priorStatus,record.title,record.location,record.city,record.price,record.description,record.property_type,record.purpose,record.bedrooms,record.bathrooms,record.area,record.amenities_json||'[]',record.price_period||'',riskLevel,riskScore,record.ai_risk_reasons_json||'[]',record.ai_model||'not-screened',record.ai_screened_at||'',record.updated_at),
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) SELECT ?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,reviewTime,id,status)
       ])
-      if(!auditResults[0]?.meta?.changes)return fail('The listing changed while it was being reviewed or was already handled. Refresh the queue and review the latest risk signals.',409)
+      if(!auditResults[0]?.meta?.changes)return fail('The listing changed while it was being reviewed or was already handled. Refresh the queue and review the latest details and risk signals.',409)
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
-      return ok({status,auditRecorded:true,highRiskOverride:status==='published'&&highRisk})
-    }
-    if(path==='/api/inquiries'&&method==='POST') {
-      if(!await authLimit(request,db,'inquiry',12))return fail('Too many requests. Please wait and try again.',429)
-      const input=await body(request),propertyId=clean(input?.propertyId,80),message=clean(input?.message,4000),email=normalizeEmail(clean(input?.email,254))
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||message.length<12)return fail('Enter a valid email and a message of at least 12 characters.')
-      const property=await db.prepare("SELECT p.id,p.owner_id,p.title,u.email AS owner_email FROM properties p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.status='published'").bind(propertyId).first<{id:string;owner_id:string;title:string;owner_email:string}>()
-      if(!property)return fail('This property is no longer available.',404)
-      const sender=await getUser(request,env),reference=uuid()
-      await db.prepare("INSERT INTO inquiries(id,property_id,sender_id,email,message,status) VALUES(?,?,?,?,?,'new')").bind(reference,propertyId,sender?.id||null,email,message).run()
-      const inquiryTitle='A new property inquiry',inquiryBody=`Someone has asked about “${property.title.replace(/[<>]/g,'') }”. Reply to the sender at ${email.replace(/[<>]/g,'')}. Message: ${message.replace(/[<>]/g,'')}`,inquiryUrl=env.APP_URL||url.origin
-      const sent=await sendEmail(env,property.owner_email,'New inquiry about your ZameenHub listing',emailHtml(inquiryTitle,inquiryBody,inquiryUrl,'Open ZameenHub'),emailText(inquiryTitle,inquiryBody,inquiryUrl,'Open ZameenHub'))
-      return ok({reference,notificationSent:sent},201)
-    }
-    if(path==='/api/support'&&method==='POST') {
-      if(!await authLimit(request,db,'support',8))return fail('Too many requests. Please wait and try again.',429)
-      const input=await body(request),email=normalizeEmail(clean(input?.email,254)),message=clean(input?.message,4000)
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||message.length<12)return fail('Enter a valid email and a message of at least 12 characters.')
-      const supportTitle='Support request',supportBody=`From: ${email.replace(/[<>]/g,'')}\n\n${message.replace(/[<>]/g,'')}`,supportUrl=env.APP_URL||url.origin
-      const sent=await sendEmail(env,env.SUPPORT_EMAIL||'dewifystores@gmail.com','ZameenHub support request',emailHtml(supportTitle,supportBody,supportUrl,'Open support site'),emailText(supportTitle,supportBody,supportUrl,'Open support site'))
-      if(!sent)return fail('Support email could not be delivered. Please email dewifystores@gmail.com directly.',503)
-      return ok({message:'Your support request was sent. We will follow up at the email you provided.'},201)
+      return ok({status,priorStatus,auditRecorded:true,highRiskOverride:status==='published'&&adminRiskOverride})
     }
     return fail('Route not found.',404)
   } catch(error) {
