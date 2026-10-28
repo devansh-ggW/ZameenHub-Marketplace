@@ -298,7 +298,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       return okWithCookies({loggedOut:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/register'&&method==='POST') {
-      const registrationMessage='If this address can be registered, instructions will be sent by email shortly. Check your inbox; if no message arrives, try signing in or password recovery, or contact dewifystores@gmail.com.'
+      const registrationMessage='If this address can be registered, check your inbox for any next steps. If no email arrives, try signing in or password recovery, or contact dewifystores@gmail.com. Email delivery depends on service configuration.'
       if(!await authLimit(request,db,'register',5))return fail('Too many attempts. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid request body.')
       const nextPath=safeNextPath(input.next)
