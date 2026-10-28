@@ -58,15 +58,18 @@ async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   return row??null
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
-async function sendEmail(env:Env,to:string,subject:string,html:string) {
+async function sendEmail(env:Env,to:string,subject:string,html:string,text:string) {
   if(!env.RESEND_API_KEY||!env.RESEND_FROM_EMAIL)return false
-  const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:`Bearer ${env.RESEND_API_KEY}`,'content-type':'application/json'},body:JSON.stringify({from:env.RESEND_FROM_EMAIL,to:[to],subject,html})})
+  const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{authorization:`Bearer ${env.RESEND_API_KEY}`,'content-type':'application/json'},body:JSON.stringify({from:env.RESEND_FROM_EMAIL,to:[to],subject,html,text})})
   return response.ok
 }
 const escapeHtml=(value:string)=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
 function emailHtml(title:string,body:string,url:string,button:string) {
   const safeUrl=escapeHtml(url)
-  return `<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#182230;line-height:1.65"><p style="font-weight:700">ZameenHub</p><h1 style="font-size:26px">${escapeHtml(title)}</h1><p style="white-space:pre-wrap">${escapeHtml(body)}</p><p style="margin:28px 0"><a href="${safeUrl}" style="background:#2864dc;color:#fff;text-decoration:none;padding:13px 18px;border-radius:3px;display:inline-block">${escapeHtml(button)}</a></p><p style="font-size:12px;color:#647184">If you did not request this, you can ignore this email. Never share this link with anyone.</p><p style="font-size:12px;color:#647184">Support: dewifystores@gmail.com</p></div>`
+  return `<!doctype html><html><body style="margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#182230"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6f8"><tr><td align="center" style="padding:24px 12px"><table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#ffffff"><tr><td style="padding:32px 28px;line-height:1.6"><p style="margin:0 0 20px;font-weight:700;font-size:17px;color:#182230">ZameenHub</p><h1 style="margin:0 0 16px;font-size:26px;line-height:1.25;color:#182230">${escapeHtml(title)}</h1><p style="margin:0 0 24px;white-space:pre-line;color:#445164">${escapeHtml(body)}</p><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0"><tr><td align="center" bgcolor="#2864dc" style="background:#2864dc;border-radius:4px"><a href="${safeUrl}" target="_blank" style="display:inline-block;padding:14px 22px;color:#ffffff !important;text-decoration:none;font-weight:700;font-size:15px;border-radius:4px" rel="noopener noreferrer">${escapeHtml(button)}</a></td></tr></table><p style="margin:18px 0 6px;font-size:13px;color:#647184">If the button does not work, copy and open this link in your browser:</p><p style="margin:0 0 24px;font-size:12px;line-height:1.6;overflow-wrap:anywhere;word-break:break-word"><a href="${safeUrl}" target="_blank" style="color:#1746a2;text-decoration:underline;overflow-wrap:anywhere;word-break:break-all" rel="noopener noreferrer">${safeUrl}</a></p><p style="margin:0;font-size:12px;line-height:1.6;color:#647184">If you did not request this, you can ignore this email. Never share this link with anyone.</p><p style="margin:10px 0 0;font-size:12px;color:#647184">Support: dewifystores@gmail.com</p></td></tr></table></td></tr></table></body></html>`
+}
+function emailText(title:string,body:string,url:string,button:string) {
+  return `ZameenHub\n\n${title}\n\n${body}\n\n${button}:\n${url}\n\nIf you did not request this, you can ignore this email. Never share this link with anyone.\n\nSupport: dewifystores@gmail.com`
 }
 async function limited(db:D1Database,key:string,max=8,windowMinutes=15) {
   const keyHash=await digest(key), now=Date.now(), windowMs=windowMinutes*60_000
@@ -140,7 +143,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         if(!user.password_hash) {
           const token=await issueToken(db,user.id,'activate',30)
           const link=`${env.APP_URL||url.origin}/activate-account?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
-          const sent=await sendEmail(env,email,'Activate your ZameenHub account',emailHtml('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'))
+          const sent=await sendEmail(env,email,'Activate your ZameenHub account',emailHtml('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'),emailText('Secure your account','Set a password and verify your email to activate your existing ZameenHub account.',link,'Activate account'))
           return ok({message:sent?'We sent account activation instructions to your email.':'Email delivery is not configured yet. Please contact support at dewifystores@gmail.com.'})
         }
         return ok({message:'If you can register with this address, we will email the next steps. Try signing in or use password recovery.'})
@@ -149,7 +152,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       await db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,nowIso()).run()
       const token=await issueToken(db,id,'verify',30)
       const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
-      const sent=await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
+      const sent=await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'),emailText('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
       return ok({message:sent?'Account created. Check your inbox for the verification link.':'Your account was created, but email delivery is not configured. Contact dewifystores@gmail.com before trying to sign in.'},201)
     }
     if(path==='/api/auth/verify-email'&&method==='POST') {
@@ -186,7 +189,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         const token=await issueToken(db,user.id,purpose,30)
         const route=purpose==='verify'?'verify-email':'activate-account'
         const link=`${env.APP_URL||url.origin}/${route}?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
-        await sendEmail(env,email,purpose==='verify'?'Verify your ZameenHub email':'Activate your ZameenHub account',emailHtml('Finish setting up ZameenHub','Use this one-time link to continue. It expires in 30 minutes.',link,'Continue'))
+        await sendEmail(env,email,purpose==='verify'?'Verify your ZameenHub email':'Activate your ZameenHub account',emailHtml('Finish setting up ZameenHub','Use this one-time link to continue. It expires in 30 minutes.',link,'Continue'),emailText('Finish setting up ZameenHub','Use this one-time link to continue. It expires in 30 minutes.',link,'Continue'))
       }
       return ok({message:'If this address needs verification or activation, instructions will be sent shortly.'})
     }
@@ -209,7 +212,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         await db.prepare('DELETE FROM password_reset_tokens WHERE user_id=?').bind(user.id).run()
         await db.prepare('INSERT INTO password_reset_tokens(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)').bind(uuid(),user.id,await digest(token),future(30)).run()
         const link=`${env.APP_URL||url.origin}/reset-password?token=${encodeURIComponent(token)}`
-        await sendEmail(env,email,'Reset your ZameenHub password',emailHtml('Reset your password','This one-time link expires in 30 minutes. If you did not request it, ignore this email.',link,'Reset password'))
+        await sendEmail(env,email,'Reset your ZameenHub password',emailHtml('Reset your password','This one-time link expires in 30 minutes. If you did not request it, ignore this email.',link,'Reset password'),emailText('Reset your password','This one-time link expires in 30 minutes. If you did not request it, ignore this email.',link,'Reset password'))
       }
       return ok({message:'If a verified account matches that address, password-reset instructions will be sent shortly.'})
     }
@@ -306,14 +309,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!property)return fail('This property is no longer available.',404)
       const sender=await getUser(request,env),reference=uuid()
       await db.prepare("INSERT INTO inquiries(id,property_id,sender_id,email,message,status) VALUES(?,?,?,?,?,'new')").bind(reference,propertyId,sender?.id||null,email,message).run()
-      const sent=await sendEmail(env,property.owner_email,'New inquiry about your ZameenHub listing',emailHtml('A new property inquiry',`Someone has asked about “${property.title.replace(/[<>]/g,'') }”. Reply to the sender at ${email.replace(/[<>]/g,'')}. Message: ${message.replace(/[<>]/g,'')}`,env.APP_URL||url.origin,'Open ZameenHub'))
+      const inquiryTitle='A new property inquiry',inquiryBody=`Someone has asked about “${property.title.replace(/[<>]/g,'') }”. Reply to the sender at ${email.replace(/[<>]/g,'')}. Message: ${message.replace(/[<>]/g,'')}`,inquiryUrl=env.APP_URL||url.origin
+      const sent=await sendEmail(env,property.owner_email,'New inquiry about your ZameenHub listing',emailHtml(inquiryTitle,inquiryBody,inquiryUrl,'Open ZameenHub'),emailText(inquiryTitle,inquiryBody,inquiryUrl,'Open ZameenHub'))
       return ok({reference,notificationSent:sent},201)
     }
     if(path==='/api/support'&&method==='POST') {
       if(!await authLimit(request,db,'support',8))return fail('Too many requests. Please wait and try again.',429)
       const input=await body(request),email=normalizeEmail(clean(input?.email,254)),message=clean(input?.message,4000)
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||message.length<12)return fail('Enter a valid email and a message of at least 12 characters.')
-      const sent=await sendEmail(env,env.SUPPORT_EMAIL||'dewifystores@gmail.com','ZameenHub support request',emailHtml('Support request',`From: ${email.replace(/[<>]/g,'')}<br><br>${message.replace(/[<>]/g,'')}`,env.APP_URL||url.origin,'Open support site'))
+      const supportTitle='Support request',supportBody=`From: ${email.replace(/[<>]/g,'')}\n\n${message.replace(/[<>]/g,'')}`,supportUrl=env.APP_URL||url.origin
+      const sent=await sendEmail(env,env.SUPPORT_EMAIL||'dewifystores@gmail.com','ZameenHub support request',emailHtml(supportTitle,supportBody,supportUrl,'Open support site'),emailText(supportTitle,supportBody,supportUrl,'Open support site'))
       if(!sent)return fail('Support email could not be delivered. Please email dewifystores@gmail.com directly.',503)
       return ok({message:'Your support request was sent. We will follow up at the email you provided.'},201)
     }
