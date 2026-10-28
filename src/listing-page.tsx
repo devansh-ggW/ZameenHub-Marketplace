@@ -39,8 +39,8 @@ export function ListingPage() {
     event.preventDefault(); setError(''); setNotice('')
     if (step < 4) { setStep(step + 1); return }
     const numericPrice = Number(price)
-    if (!title.trim() || title.trim().length < 6 || !locationText.trim() || !Number.isSafeInteger(numericPrice) || numericPrice < 1) {
-      setError('Enter a clear title, location and a valid positive price before submitting.')
+    if (!title.trim() || title.trim().length < 6 || !locationText.trim() || !city.trim() || description.trim().length < 20 || !Number.isSafeInteger(numericPrice) || numericPrice < 1) {
+      setError('Enter a clear title, location, city, a valid positive price, and a description of at least 20 characters.')
       setStep(2); return
     }
     setBusy(true)
