@@ -29,7 +29,7 @@ const passwordValue=(v:unknown)=>typeof v==='string'?v.slice(0,128):''
 const safeInt=(v:unknown,min=0,max=100_000_000)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>=min&&n<=max?n:null}
 const userView=(u:UserRow)=>({id:u.id,email:u.email,name:u.name,role:u.role,emailVerified:u.email_verified===1})
 async function passwordHash(password:string) {
-  const salt=bytes(16), iterations=120000
+  const salt=bytes(16), iterations=100000
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits'])
   const derived=await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt,iterations},key,256)
   return `pbkdf2$${iterations}$${b64(salt)}$${b64(derived)}`
@@ -38,7 +38,7 @@ async function verifyPassword(password:string,stored:string|null) {
   if(!stored)return false
   const [kind,iterationText,saltText,expected]=stored.split('$')
   const iterations=Number(iterationText)
-  if(kind!=='pbkdf2'||!Number.isInteger(iterations)||iterations<10000||iterations>500000||!saltText||!expected)return false
+  if(kind!=='pbkdf2'||!Number.isInteger(iterations)||iterations<10000||iterations>100000||!saltText||!expected)return false
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits'])
   const actual=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:unb64(saltText),iterations},key,256))
   const target=unb64(expected)
