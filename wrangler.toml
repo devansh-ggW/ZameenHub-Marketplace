@@ -9,7 +9,7 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "zameenhub"
-database_id = "REPLACE_WITH_CONFIGURED_D1_DATABASE_ID"
+database_id = "771caa73-f1ec-4f51-b2f2-06b94fd3f5c1"
 migrations_dir = "migrations"
 
 # Configure the already-planned object storage binding only when the owner has provisioned it.
