@@ -4,7 +4,7 @@ import process from 'node:process'
 const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
-  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
+  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/property-options.ts','worker/index.ts',
   'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
@@ -38,6 +38,9 @@ if(!worker.includes('DELETE FROM sessions WHERE user_id=? AND token_hash<>?'))er
 if(!worker.includes('DELETE FROM auth_mfa_challenges WHERE user_id=?'))errors.push('Password reset and MFA changes must invalidate pending challenges')
 if(!worker.includes("const canDeleteAdmin="))errors.push('Last administrator deletion guard must be enforced inside the atomic deletion batch')
 if(!worker.includes('p.price>=?')||!worker.includes('p.price<=?')||!worker.includes('p.area>=?')||!worker.includes('p.bathrooms>=?'))errors.push('Property budget, bathroom and area filters are missing')
+if(!worker.includes('sanitizeAmenities(input.amenities)')||!worker.includes('amenities_json=?')||!worker.includes('json_each(CASE WHEN json_valid(p.amenities_json)'))errors.push('Listing amenities must be validated, persisted and filterable')
+if(!pages.includes('selectedAmenities')||!pages.includes('PROPERTY_AMENITIES.map'))errors.push('Buyer-facing amenity filters must be available and URL-synced')
+if(!read('src/listing-page.tsx').includes('amenities }),')||!read('src/edit-listing-page.tsx').includes('description: description.trim(), amenities'))errors.push('Owners must be able to submit and edit real amenity data')
 if(!pages.includes("setMinPrice")||!pages.includes("setMaxPrice")||!pages.includes("setMinArea"))errors.push('Buyer-side budget and area filter controls are missing')
 if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage must load real public listings from the property API')
 if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
