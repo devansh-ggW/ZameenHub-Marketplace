@@ -1,34 +1,46 @@
 # ZameenHub
 
-ZameenHub is a React + TypeScript real-estate marketplace experience for India. It combines a premium architectural editorial surface with a practical discovery flow: search, filter, property detail, saved states, account routes, and a listing wizard with review status.
+ZameenHub is a React + TypeScript property marketplace for India, with a Cloudflare Worker API and D1 persistence.
 
-## Current state
+## Native email authentication
 
-The workspace is implemented and runs as a Vite SPA on port 3000. It contains no local property records, demo listings, sample sellers, fabricated prices, or fallback marketplace data. Architectural photographs remain only as editorial brand imagery. When the live data source is empty or unavailable, the application shows a zero-result empty state or an explicit backend error.
+The `feat/production-auth-upgrade` branch adds email/password authentication, email verification, existing-account activation, password recovery, server-side sessions, protected listing submission, saved properties, owner inquiries, support email delivery, moderator review routes, Privacy Policy and Terms pages.
 
-The supplied blue architectural mark is stored at `public/assets/zameenhub-icon.jpg` and is used in the browser favicon, header, footer, and brand presentation.
+### Configure Cloudflare
 
-## Run locally
+1. Confirm the existing D1 binding in `wrangler.toml` points to the correct `zameenhub` database.
+2. Add the Resend API key in **Workers & Pages → zameenhub-marketplace → Settings → Variables and Secrets** as a **Secret** named `RESEND_API_KEY`. Never put it in the repository, `wrangler.toml`, frontend code or a `VITE_` variable.
+3. Configure plain-text Worker variables `APP_URL=https://zameenhub.dewify.shop`, `RESEND_FROM_EMAIL=ZameenHub <verify@zameenhub.dewify.shop>`, and `SUPPORT_EMAIL=dewifystores@gmail.com`. Confirm the exact sender address/domain is Verified in Resend.
+4. Apply the additive migration to the intended remote D1 database **before** deploying this Worker:
+   ```bash
+   npx wrangler d1 migrations apply zameenhub --remote
+   ```
+5. Verify `/api/health` and complete signup → received email → verification → login → listing submission → moderation → password reset on the deployed domain.
+
+The migration preserves existing users and property data. Existing accounts without a password need the activation flow to set a password and verify their email. Keep the database backup/restore path available before applying schema changes.
+
+## Local checks
 
 ```bash
 pnpm install
-pnpm dev
-```
+pnpm build
+pnpm test:smoke
+``
 
-Then open the Preview for the project. Production compilation is `pnpm build`; type checking is `pnpm typecheck`.
+GitHub Actions runs the build and static smoke checks on the upgrade branch and pull requests to main. Static checks are not a substitute for testing live Resend delivery, D1 queries, cookie behavior over HTTPS, role permissions, abuse/rate limits, and the full browser journey.
 
-## Architecture
+## Marketplace behavior
 
-The frontend lives in `src/` and uses React Router. Shared components are in `src/components.tsx`; routed screens are in `src/pages.tsx`; types, editorial image assets, and the typed API boundary are in `src/lib/`. `src/motion.tsx` provides the sitewide `MotionProvider`, `ScrollProgress`, `ScrollScene`, and `DepthImage` primitives. The homepage now uses multiple distinct architectural scenes, and the global motion root adds restrained progress-linked depth treatments to discovery, detail, account, listing, informational, and footer layouts. Every scroll listener is coalesced with `requestAnimationFrame` and cleaned up on unmount. Reduced-motion CSS disables transforms while preserving content and controls.
+- Public discovery returns only rows whose status is `published`; an empty database is shown as an empty state rather than fake listings.
+- New property submissions require a verified account and remain `pending` until a moderator/admin approves them.
+- Session cookies are HTTP-only, Secure and SameSite=Lax; session tokens are stored in D1 only as hashes.
+- Passwords are hashed with PBKDF2-HMAC-SHA-256 using per-password random salts; password-reset and email-verification tokens are random, hashed at rest, single-use and expiring.
+- Support form submissions are sent to `dewifystores@gmail.com` through Resend. If delivery is unavailable, the UI tells the visitor to email support directly.
 
-`worker/index.ts` is the Cloudflare-compatible API boundary. `migrations/0001_initial.sql` is a versioned SQLite/D1 schema for users, sessions, properties, images, favorites, and inquiries. If deploying with a Cloudflare Worker, connect the `DB` and `R2` bindings and expand the route handlers to use parameterized queries, secure session validation, ownership checks, CSRF protection, and the approved authentication flow. The current managed Webdev project does not claim those external Cloudflare resources are connected.
+## Production checklist
 
-## Data, auth, storage, and deployment
+Before launch, complete the checklist in `PRODUCTION-CHECKLIST.md` (if supplied with your deployment package), review the privacy/terms text for the operator's legal identity and jurisdiction, and verify that account roles are assigned only through trusted administrative processes. Do not promote anyone to moderator/admin through a public endpoint. Photo uploads are not enabled by this upgrade; the UI must not imply that owners can upload photos until a configured storage/delivery path is implemented.
 
-No additional database, storage service, or hosting service has been introduced. The managed project server/database capabilities remain the existing integration boundary. Before production use, configure the approved authentication provider and server-verified sessions, apply the existing migration to the intended database, connect the already-planned object storage binding for validated image uploads, and return verified records through `/api/properties`. There is no development seed and no local fallback array to remove or accidentally deploy.
+## Support
 
-For a Cloudflare deployment, adapt the existing project configuration to the chosen Worker/static-assets target, run the migration through the target D1 migration command, set the Worker bindings and secrets, and route `/api/*` to the Worker while serving the Vite build output for the SPA. No Cloudflare credentials or deployment claim is included in this workspace.
-
-## Honest limitations
-
-The managed development environment starts with no verified marketplace records or configured owner-supplied contact/legal details. Login and account pages therefore fail closed with an explicit configuration message, private account routes do not expose simulated data, and the contact/legal pages explain what the owner must supply before launch. Inquiry and listing interfaces validate their forms and use the typed boundary, but production delivery requires the configured backend and approved authentication/database bindings.
+Customer support: [dewifystores@gmail.com](mailto:dewifystores@gmail.com)
