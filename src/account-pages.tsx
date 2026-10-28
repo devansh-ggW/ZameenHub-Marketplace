@@ -50,12 +50,19 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   }
 
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
-  return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Only authorized moderators and admins can approve a submission for public discovery.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
+  return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Only authorized moderators and admins can approve a submission for public discovery.' : kind === 'my-listings' ? 'Your submissions appear here immediately. They become visible in Browse properties only after approval.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
     {loading ? <p className="status-message">Loading your account…</p> : <>
       {kind === 'profile' && user && <div className="form-card account-profile"><h2>Account details</h2><p><strong>Name</strong><br />{user.name}</p><p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role}</p><Link to="/list-property" className="btn btn-primary">List a property</Link></div>}
       {kind !== 'profile' && error && <p className="status-message error" role="alert">{error}</p>}
       {kind !== 'profile' && notice && <p className="status-message success" role="status">{notice}</p>}
-      {kind !== 'profile' && !error && items.length > 0 && <div className="property-grid">{items.map(item => <div className="account-property" key={item.id}><PropertyCard property={item} />{kind === 'review-queue' && <div className="review-actions"><button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item.id, 'published')}>Approve</button><button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item.id, 'rejected')}>Reject</button></div>}</div>)}</div>}
+      {kind !== 'profile' && !error && items.length > 0 && <div className="property-grid">{items.map(item => <div className="account-property" key={item.id}>
+        <PropertyCard property={item} />
+        {kind === 'my-listings' && <div className={`listing-status status-${item.status}`}>
+          <strong>{item.status === 'pending' ? 'Pending review' : item.status === 'published' ? 'Published' : item.status === 'rejected' ? 'Rejected' : item.status === 'archived' ? 'Archived' : 'Listing status'}</strong>
+          <p>{item.status === 'pending' ? 'Saved successfully. This listing is private and will not appear in public search until approved.' : item.status === 'published' ? 'This listing is approved and available in public property search.' : item.status === 'rejected' ? 'This listing was not approved. Contact support if you need help.' : item.status === 'archived' ? 'This listing is archived and is not shown in public search.' : 'Check back here for the latest review status.'}</p>
+        </div>}
+        {kind === 'review-queue' && <div className="review-actions"><button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item.id, 'published')}>Approve</button><button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item.id, 'rejected')}>Reject</button></div>}
+      </div>)}</div>}
       {kind !== 'profile' && !error && items.length === 0 && <EmptyState title={kind === 'saved' ? 'Nothing saved yet.' : kind === 'my-listings' ? 'No submitted listings yet.' : 'Review queue is clear.'} copy={kind === 'saved' ? 'Use the heart control on a property to save it to your account.' : kind === 'my-listings' ? 'Listings you submit will appear here with their review status.' : 'Pending submissions will appear here when they are available.'} />}
     </>}
   </div></main>
