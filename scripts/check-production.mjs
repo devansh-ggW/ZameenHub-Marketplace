@@ -4,7 +4,7 @@ import process from 'node:process'
 const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
-  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
+  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
   'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
@@ -39,6 +39,10 @@ if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage
 if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
 if(!read('src/emi-calculator-page.tsx').includes('calculateEmi(')||!read('src/lib/emi.ts').includes('monthlyRate'))errors.push('EMI calculator must use the tested monthly-repayment formula')
 if(!read('src/site-chrome.tsx').includes('to="/tools/emi-calculator"'))errors.push('EMI calculator must be reachable from primary navigation')
+const sitemap=read('public/sitemap.xml'), robots=read('public/robots.txt')
+if(!sitemap.includes('https://zameenhub.dewify.shop/')||!sitemap.includes('/tools/emi-calculator'))errors.push('Sitemap must include the canonical public homepage and EMI tool')
+for(const route of ['/profile','/my-listings','/inquiries','/review-queue'])if(sitemap.includes(route))errors.push('Sitemap must not advertise private account/moderation route '+route)
+if(!robots.includes('Sitemap: https://zameenhub.dewify.shop/sitemap.xml'))errors.push('robots.txt must reference the actual sitemap')
 if(vite.includes('sourcemap: true'))errors.push('Production source maps should not be publicly emitted')
 try {
   const parsed=JSON.parse(packageJson)
