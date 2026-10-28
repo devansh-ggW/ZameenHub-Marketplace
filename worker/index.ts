@@ -217,8 +217,27 @@ async function body(request:Request) {
   try {
     const declared=Number(request.headers.get('content-length')||0)
     if(Number.isFinite(declared)&&declared>32768)return null
-    const raw=await request.text()
-    if(new TextEncoder().encode(raw).byteLength>32768)return null
+    const reader=request.body?.getReader()
+    if(!reader)return null
+    const chunks:Uint8Array[]=[]
+    let total=0
+    while(true) {
+      const {done,value}=await reader.read()
+      if(done)break
+      total+=value.byteLength
+      if(total>32768) {
+        await reader.cancel('Request body exceeds the 32 KiB limit').catch(()=>{})
+        return null
+      }
+      chunks.push(value)
+    }
+    const buffer=new Uint8Array(total)
+    let offset=0
+    for(const chunk of chunks) {
+      buffer.set(chunk,offset)
+      offset+=chunk.byteLength
+    }
+    const raw=new TextDecoder('utf-8',{fatal:true}).decode(buffer)
     const value=JSON.parse(raw) as unknown
     return value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null
   } catch { return null }
