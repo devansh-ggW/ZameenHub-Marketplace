@@ -1,6 +1,6 @@
 export type ListingPurpose = 'sale' | 'rent'
 export type PropertyType = 'Apartment' | 'Villa' | 'House' | 'Plot' | 'Studio'
-export type ListingStatus = 'published' | 'pending' | 'draft' | 'archived'
+export type ListingStatus = 'published' | 'pending' | 'rejected' | 'draft' | 'archived'
 
 export type Property = {
   id: string
