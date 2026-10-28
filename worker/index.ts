@@ -549,6 +549,24 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare('SELECT * FROM properties WHERE owner_id=? ORDER BY created_at DESC LIMIT 100').bind(user.id).all<PropertyRow>()
       return ok(result.results.map(p=>propertyView(p,[])))
     }
+    if(path==='/api/my/inquiries'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to view your inquiries.',401)
+      if(!await authLimit(request,db,'inquiry-inbox',20)||!await limited(db,'inquiry-inbox-user:'+user.id,60,60))return fail('Too many inbox requests. Please try again shortly.',429)
+      const result=await db.prepare("SELECT i.id,i.property_id,i.sender_id,i.email,i.message,i.status,i.created_at,p.title AS property_title,p.slug AS property_slug,p.city AS property_city FROM inquiries i JOIN properties p ON p.id=i.property_id WHERE p.owner_id=? ORDER BY CASE i.status WHEN 'new' THEN 0 WHEN 'read' THEN 1 ELSE 2 END, i.created_at DESC LIMIT 200").bind(user.id).all<{id:string;property_id:string;sender_id:string|null;email:string;message:string;status:string;created_at:string;property_title:string;property_slug:string;property_city:string}>()
+      return ok(result.results)
+    }
+    const ownedInquiryMatch=path.match(/^\/api\/my\/inquiries\/([^/]+)$/)
+    if(ownedInquiryMatch&&method==='PATCH') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage your inquiries.',401)
+      if(!await authLimit(request,db,'inquiry-update',20)||!await limited(db,'inquiry-update-user:'+user.id,60,60))return fail('Too many inbox updates. Please try again shortly.',429)
+      const input=await body(request);if(!input)return fail('Invalid inquiry update.')
+      const status=clean(input.status,20)
+      if(!['read','archived'].includes(status))return fail('Unsupported inquiry status.')
+      const id=decodeURIComponent(ownedInquiryMatch[1])
+      const result=await db.prepare("UPDATE inquiries SET status=? WHERE id=? AND EXISTS (SELECT 1 FROM properties p WHERE p.id=inquiries.property_id AND p.owner_id=?)").bind(status,id,user.id).run()
+      if(!result.meta.changes)return fail('Inquiry could not be found in your owner inbox.',404)
+      return ok({id,status})
+    }
     if(path==='/api/favorites'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
       const result=await db.prepare("SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' ORDER BY f.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow>()
