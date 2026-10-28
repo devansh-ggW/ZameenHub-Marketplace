@@ -51,14 +51,19 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
       if (note.trim().length < 20) { setError('Approval cancelled. Record at least 20 characters of review notes to override a high-risk flag.'); return }
       overrideRisk = true; reviewNote = note.trim()
     }
+    let ownerMessage = ''
     if (status === 'rejected') {
-      const note = window.prompt('Record the specific, evidence-based reason this listing is being rejected (at least 8 characters):')
+      const note = window.prompt('Record the specific, evidence-based reason for internal moderation notes (at least 8 characters):')
       if (note === null) return
       if (note.trim().length < 8) { setError('Rejection cancelled. Add at least 8 characters of evidence-based notes.'); return }
       reviewNote = note.trim()
+      const message = window.prompt('Write a clear explanation the property owner may see (at least 10 characters). Do not include internal fraud signals or another person’s private data:')
+      if (message === null) return
+      if (message.trim().length < 10) { setError('Rejection cancelled. Add a clear owner-facing explanation of at least 10 characters.'); return }
+      ownerMessage = message.trim()
     }
     setWorkingId(id); setNotice(''); setError('')
-    const result = await apiRequest<{ status: string; auditRecorded?: boolean }>(`/api/admin/properties/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status, overrideRisk, reviewNote }) })
+    const result = await apiRequest<{ status: string; auditRecorded?: boolean }>(`/api/admin/properties/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status, overrideRisk, reviewNote, ownerMessage }) })
     setWorkingId('')
     if (!result.ok) { setError(result.error); return }
     setNotice(status === 'published' ? 'Listing approved and published. The moderator decision was recorded.' : 'Listing rejected. The moderator decision was recorded.')
@@ -85,7 +90,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
         <PropertyCard property={item} />
         {kind === 'my-listings' && <div className={`listing-status status-${item.status}`}>
           <strong>{item.status === 'pending' ? 'Pending review' : item.status === 'published' ? 'Published' : item.status === 'rejected' ? 'Rejected' : item.status === 'archived' ? 'Archived' : 'Listing status'}</strong>
-          <p>{item.status === 'pending' ? 'Saved successfully. This listing is private and will not appear in public search until approved.' : item.status === 'published' ? 'This listing is approved and available in public property search.' : item.status === 'rejected' ? 'This listing was not approved. Contact support if you need help.' : item.status === 'archived' ? 'This listing is archived and is not shown in public search.' : 'Check back here for the latest review status.'}</p>
+          <p>{item.status === 'pending' ? 'Saved successfully. This listing is private and will not appear in public search until approved.' : item.status === 'published' ? 'This listing is approved and available in public property search.' : item.status === 'rejected' ? (item.reviewMessage || 'This listing was not approved. Contact support if you need help.') : item.status === 'archived' ? 'This listing is archived and is not shown in public search.' : 'Check back here for the latest review status.'}</p>
         </div>}
         {kind === 'my-listings' && <div className="listing-actions listing-management-actions">
           <Link className="btn btn-outline" to={`/edit-listing/${encodeURIComponent(item.id)}`}>{item.status === 'archived' ? 'Edit and resubmit' : 'Edit details'}</Link>
