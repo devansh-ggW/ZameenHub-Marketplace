@@ -7,6 +7,7 @@ import { InfoPage } from './legal-pages'
 import { ListingPage } from './listing-page'
 import { SiteFooter, SiteHeader } from './site-chrome'
 import { CookieNotice } from './cookie-notice'
+import { ReportQueuePage } from './report-queue'
 
 export default function App() {
   return <MotionProvider><ScrollProgress /><SiteHeader /><Routes>
@@ -24,6 +25,7 @@ export default function App() {
     <Route path="/list-property" element={<ListingPage />} />
     <Route path="/my-listings" element={<AccountPage kind="my-listings" />} />
     <Route path="/review-queue" element={<AccountPage kind="review-queue" />} />
+    <Route path="/report-queue" element={<ReportQueuePage />} />
     <Route path="/about" element={<InfoPage kind="about" />} />
     <Route path="/contact" element={<InfoPage kind="contact" />} />
     <Route path="/help" element={<InfoPage kind="help" />} />
