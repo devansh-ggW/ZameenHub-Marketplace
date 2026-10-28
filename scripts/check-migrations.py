@@ -98,14 +98,22 @@ def main() -> int:
     expect(db.execute("SELECT COUNT(*) FROM properties WHERE status='published' AND id='published'").fetchone()[0] == 0,
            "An edited listing remained publicly published")
 
-    # Test the exact conditional audit insert pattern used by the Worker.
-    db.execute("UPDATE properties SET status='published', updated_at=? WHERE id=? AND status='pending'", (now, "pending"))
+    # Test the concurrent-edit risk guard and the exact conditional audit insert used by the Worker.
+    blocked = db.execute("""UPDATE properties SET status='published', updated_at=?
+                            WHERE id=? AND status='pending' AND COALESCE(ai_risk_level,'not-screened')!='high' AND ai_risk_score<65""",
+                         (now, "pending"))
+    expect(blocked.rowcount == 0, "A stale low-risk review published a currently high-risk listing")
+    db.execute("""UPDATE properties SET status='published', updated_at=?
+                  WHERE id=? AND status='pending' AND (ai_risk_level='high' OR ai_risk_score>=65)""",
+               (now, "pending"))
     db.execute("""INSERT INTO property_moderation_events
                   (id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at)
-                  SELECT ?,?,?, 'pending',?,?,?,?,? WHERE changes()=1""",
-               ("event-1", "pending", "reviewer", "published", "Risk evidence reviewed by administrator", "high", 80, now))
-    expect(db.execute("SELECT COUNT(*) FROM property_moderation_events WHERE id='event-1'").fetchone()[0] == 1,
-           "Moderation audit insert did not record the changed listing")
+                  SELECT ?,?,?, 'pending',?,?,ai_risk_level,ai_risk_score,?
+                  FROM properties WHERE id=? AND status=? AND changes()=1""",
+               ("event-1", "pending", "reviewer", "published", "Risk evidence reviewed by administrator", now, "pending", "published"))
+    event = db.execute("SELECT ai_risk_level,ai_risk_score FROM property_moderation_events WHERE id='event-1'").fetchone()
+    expect(event is not None and event[0] == "high" and event[1] == 80,
+           "Moderation audit did not capture the current risk state with the status change")
 
     db.execute("INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)",
                ("session-1", "owner", "token-hash", "2026-11-01T00:00:00.000Z"))
