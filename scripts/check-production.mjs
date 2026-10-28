@@ -26,6 +26,7 @@ const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='
 const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
 const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
 if(!listingSubmitBlock||listingSubmitBlock.includes('riskLevel:risk.level')||listingSubmitBlock.includes('riskScore:risk.score')||listingSubmitBlock.includes('riskReasons:risk.reasons'))errors.push('Property submission must not expose internal AI risk scores or detailed risk reasons to the listing owner')
+if(!worker.includes("typeof parsed.score==='number'&&Number.isInteger(parsed.score)&&parsed.score>=0&&parsed.score<=100"))errors.push('AI risk scores must be validated as actual integer values from 0 to 100')
 if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
 if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
 if(!worker.includes('snapshotGuard')||!worker.includes('AND updated_at=?'))errors.push('Moderation must reject stale listing versions that changed after review-queue load')
