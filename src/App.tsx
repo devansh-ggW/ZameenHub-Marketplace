@@ -1,6 +1,6 @@
 import { Route, Routes } from 'react-router-dom'
 import { MotionProvider, ScrollProgress } from './motion'
-import { HomePage, PropertiesPage, PropertyDetailPage } from './pages'
+import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage } from './pages'
 import { AccountPage } from './account-pages'
 import { AuthPage, VerifyEmailPage, ActivateAccountPage, ForgotPasswordPage, ResetPasswordPage } from './auth-pages'
 import { InfoPage } from './legal-pages'
@@ -41,7 +41,7 @@ export default function App() {
       <Route path="/privacy" element={<InfoPage kind="privacy" />} />
       <Route path="/cookies" element={<InfoPage kind="cookies" />} />
       <Route path="/terms" element={<InfoPage kind="terms" />} />
-      <Route path="*" element={<HomePage />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
     <SiteFooter />
     <CookieNotice />
