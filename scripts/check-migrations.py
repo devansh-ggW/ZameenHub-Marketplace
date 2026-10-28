@@ -125,7 +125,7 @@ def main() -> int:
     # snapshot guard must reject publishing the newer, unreviewed title.
     snapshot = db.execute("SELECT * FROM properties WHERE id='snapshot-test' AND status='pending'").fetchone()
     db.execute("UPDATE properties SET title=?,updated_at=? WHERE id='snapshot-test' AND status='pending'",
-               ("Owner changed this title", now, "snapshot-test"))
+               ("Owner changed this title", now))
     snapshot_publish = db.execute("""UPDATE properties SET status='published',updated_at=?
         WHERE id=? AND status='pending' AND title=? AND location=? AND city=? AND price=? AND description=?
         AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=?
