@@ -380,3 +380,34 @@ img { max-width: 100%; display: block; }
   .report-card-head { flex-direction: column; }
   .report-actions .btn { flex: 1; }
 }
+
+
+/* Private owner inbox for real property leads */
+.inbox-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 26px 0; padding: 18px 20px; background: #fff; border: 1px solid var(--line); }
+.inbox-toolbar strong { font-size: 25px; letter-spacing: -.04em; }
+.inbox-toolbar span { color: var(--muted); font-size: 12px; }
+.inbox-tabs { display: flex; gap: 6px; }
+.inbox-tabs button { border: 1px solid var(--line); padding: 10px 14px; background: #fff; color: var(--muted); font-size: 12px; }
+.inbox-tabs button.active { background: var(--ink); color: white; border-color: var(--ink); }
+.inquiry-inbox { display: grid; gap: 16px; }
+.inquiry-card { border: 1px solid var(--line); background: white; padding: 24px; }
+.inquiry-card-head { display: flex; justify-content: space-between; align-items: start; gap: 18px; }
+.inquiry-card-head h2 { font-size: 23px; letter-spacing: -.04em; margin: 12px 0 4px; }
+.inquiry-card-head p { color: var(--muted); font-size: 12px; }
+.inquiry-status { display: inline-block; padding: 5px 8px; border: 1px solid var(--line); font-size: 10px; letter-spacing: .08em; font-weight: 800; text-transform: uppercase; }
+.inquiry-status-new { color: #975905; background: #fff8e8; border-color: #ead4a9; }
+.inquiry-status-read { color: #1746a2; background: #edf3ff; border-color: #c7d7f9; }
+.inquiry-status-archived { color: var(--muted); background: var(--soft); }
+.inquiry-property-link, .inquiry-sender a { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; font-size: 12px; }
+.inquiry-message { margin-top: 18px; padding: 18px; border-left: 3px solid var(--blue); background: var(--soft); line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inquiry-sender { color: var(--muted); font-size: 12px; margin: 16px 0 0; overflow-wrap: anywhere; }
+.inquiry-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.inquiry-new { border-left: 3px solid #b97812; }
+@media (max-width: 560px) {
+  .inbox-toolbar { align-items: stretch; flex-direction: column; padding: 15px; }
+  .inbox-tabs { display: grid; grid-template-columns: 1fr 1fr; }
+  .inbox-tabs button { min-height: 44px; }
+  .inquiry-card { padding: 16px; }
+  .inquiry-card-head { flex-direction: column; }
+  .inquiry-actions .btn { flex: 1; }
+}
