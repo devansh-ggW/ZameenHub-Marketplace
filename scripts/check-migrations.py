@@ -67,17 +67,6 @@ def main() -> int:
                ("reporter", "reporter@example.test", "Reporter", "user", "test-hash"))
     db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                ("other-owner", "other-owner@example.test", "Other Owner", "user", "test-hash"))
-    db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
-               ("second-admin", "second-admin@example.test", "Second Admin", "admin", "test-hash"))
-    # The same conditional deletion guard used by the Worker protects the last
-    # administrator even when two deletion requests race.
-    admin_guard = "DELETE FROM users WHERE id=? AND (role<>'admin' OR (SELECT COUNT(*) FROM users WHERE role='admin')>1)"
-    first_admin = db.execute(admin_guard, ("reviewer",))
-    expect(first_admin.rowcount == 1, "First of two administrators could not be removed")
-    last_admin = db.execute(admin_guard, ("second-admin",))
-    expect(last_admin.rowcount == 0, "The last administrator was deleted")
-    expect(db.execute("SELECT COUNT(*) FROM users WHERE role='admin'").fetchone()[0] == 1,
-           "The service was left without an administrator")
 
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('published','owner','published-home','Published home','sale','Apartment','Central','Nashik',5000000,'A detailed description of a test property','published')""")
@@ -146,6 +135,18 @@ def main() -> int:
     event = db.execute("SELECT ai_risk_level,ai_risk_score FROM property_moderation_events WHERE id='event-1'").fetchone()
     expect(event is not None and event[0] == "high" and event[1] == 80,
            "Moderation audit did not capture the current risk state with the status change")
+
+    # The same conditional deletion guard used by the Worker protects the last
+    # administrator even when two deletion requests race.
+    db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+               ("second-admin", "second-admin@example.test", "Second Admin", "admin", "test-hash"))
+    admin_guard = "DELETE FROM users WHERE id=? AND (role<>'admin' OR (SELECT COUNT(*) FROM users WHERE role='admin')>1)"
+    first_admin = db.execute(admin_guard, ("reviewer",))
+    expect(first_admin.rowcount == 1, "First of two administrators could not be removed")
+    last_admin = db.execute(admin_guard, ("second-admin",))
+    expect(last_admin.rowcount == 0, "The last administrator was deleted")
+    expect(db.execute("SELECT COUNT(*) FROM users WHERE role='admin'").fetchone()[0] == 1,
+           "The service was left without an administrator")
 
     db.execute("INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)",
                ("session-1", "owner", "token-hash", "2026-11-01T00:00:00.000Z"))
