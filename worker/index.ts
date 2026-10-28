@@ -11,7 +11,7 @@ export type Env = {
   SUPPORT_EMAIL?: string
   APP_URL?: string
 }
-type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null }
+type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
 type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; owner_id:string; owner_name?:string; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
@@ -87,12 +87,18 @@ async function totpCode(secret:string,timestamp=Date.now()) {
   const binary=((mac[offset]&127)<<24)|((mac[offset+1]&255)<<16)|((mac[offset+2]&255)<<8)|(mac[offset+3]&255)
   return String(binary%1_000_000).padStart(6,'0')
 }
-async function verifyTotp(secret:string,codeValue:unknown) {
+async function matchedTotpCounter(secret:string,codeValue:unknown):Promise<number|null> {
   const code=clean(codeValue,20).replace(/\s/g,'')
-  if(!/^\d{6}$/.test(code))return false
-  const timestamp=Date.now()
-  for(const offset of [-30000,0,30000])if(await totpCode(secret,timestamp+offset)===code)return true
-  return false
+  if(!/^\d{6}$/.test(code))return null
+  const current=Math.floor(Date.now()/30000)
+  for(const offset of [-1,0,1]){
+    const counter=current+offset
+    if(await totpCode(secret,counter*30000)===code)return counter
+  }
+  return null
+}
+async function verifyTotp(secret:string,codeValue:unknown) {
+  return (await matchedTotpCounter(secret,codeValue))!==null
 }
 async function encryptionKey(env:Env) {
   if(!env.MFA_ENCRYPTION_KEY||env.MFA_ENCRYPTION_KEY.length<32)throw new Error('MFA_ENCRYPTION_KEY must be configured as a 32-character-or-longer Cloudflare secret')
@@ -126,7 +132,10 @@ async function verifyMfaCode(db:D1Database,user:UserRow,code:unknown,env:Env) {
   }
   if(!user.mfa_secret_ciphertext||!env.MFA_ENCRYPTION_KEY)return false
   const secret=await decryptMfaSecret(user.mfa_secret_ciphertext,env)
-  return verifyTotp(secret,normalized)
+  const counter=await matchedTotpCounter(secret,normalized)
+  if(counter===null||counter<=Number(user.mfa_last_counter||0))return false
+  const consumed=await db.prepare('UPDATE users SET mfa_last_counter=?,updated_at=? WHERE id=? AND COALESCE(mfa_last_counter,0)<?').bind(counter,nowIso(),user.id,counter).run()
+  return consumed.meta.changes===1
 }
 type ListingRisk={level:'low'|'medium'|'high'|'unscored';score:number;reasons:string[];model:string}
 async function screenListingRisk(input:{title:string;location:string;city:string;purpose:string;propertyType:string;price:number;description:string},env:Env,duplicate:boolean):Promise<ListingRisk>{
@@ -184,7 +193,7 @@ const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURICompone
 const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
 async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
-  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.mfa_enabled,u.mfa_secret_ciphertext FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
+  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
   return row??null
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
@@ -358,7 +367,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid request body.')
       const email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(!await limited(db,'login-email:'+email,8,15))return fail('Too many sign-in attempts. Please wait and try again.',429)
-      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext FROM users WHERE email=?').bind(email).first<UserRow>()
+      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE email=?').bind(email).first<UserRow>()
       const valid=await verifyPassword(password,user?.password_hash||null)
       if(!user||!valid)return fail('Email or password is incorrect.',401)
       if(user.email_verified!==1)return fail('Please verify your email before signing in. Use the resend verification option if needed.',403)
@@ -379,14 +388,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const record=await db.prepare('SELECT id,user_id,attempts,expires_at FROM auth_mfa_challenges WHERE token_hash=? AND expires_at>?').bind(challengeHash,nowIso()).first<{id:string;user_id:string;attempts:number;expires_at:string}>()
       if(!record)return fail('Your two-factor sign-in has expired. Please sign in again.',401)
       if(record.attempts>=5){await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run();return fail('Too many incorrect codes. Please sign in again.',429)}
+      const attempt=await db.prepare('UPDATE auth_mfa_challenges SET attempts=attempts+1 WHERE id=? AND expires_at>? AND attempts<5').bind(record.id,nowIso()).run()
+      if(!attempt.meta.changes)return fail('Too many incorrect codes. Please sign in again.',429)
       const input=await body(request),code=clean(input?.code,40)
-      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext FROM users WHERE id=?').bind(record.user_id).first<UserRow>()
+      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE id=?').bind(record.user_id).first<UserRow>()
       let valid=false
       try { valid=!!user&&user.email_verified===1&&await verifyMfaCode(db,user,code,env) } catch { valid=false }
       if(!valid){
-        const attempts=record.attempts+1
-        if(attempts>=5)await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
-        else await db.prepare('UPDATE auth_mfa_challenges SET attempts=attempts+1 WHERE id=?').bind(record.id).run()
+        if(record.attempts+1>=5)await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
         return fail('That code is invalid or expired. Check your authenticator and try again.',401)
       }
       const token=await createSession(db,record.user_id)
@@ -418,7 +427,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const recoveryCodes=Array.from({length:10},()=>Array.from(bytes(12),b=>b.toString(16).padStart(2,'0')).join('').toUpperCase())
       const currentSessionHash=await digest(cookieToken(request))
       const statements=[
-        db.prepare('UPDATE users SET mfa_enabled=1,mfa_secret_ciphertext=?,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,updated_at=? WHERE id=?').bind(encrypted,nowIso(),user.id),
+        db.prepare('UPDATE users SET mfa_enabled=1,mfa_secret_ciphertext=?,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,mfa_last_counter=?,updated_at=? WHERE id=?').bind(encrypted,Math.floor(Date.now()/30000),nowIso(),user.id),
         db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id),
         db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').bind(user.id,currentSessionHash),
         ...await Promise.all(recoveryCodes.map(async codeValue=>db.prepare('INSERT INTO mfa_recovery_codes(id,user_id,code_hash) VALUES(?,?,?)').bind(uuid(),user.id,await digest(codeValue))))
