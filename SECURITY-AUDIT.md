@@ -15,13 +15,13 @@ This comparison uses the competitors' publicly reachable pages, not their privat
 
 | Capability | ZameenHub in this branch | Housing.com public offering | 99acres public offering |
 |---|---|---|---|
-| Basic buy/rent search | Yes; keyword/location, purpose, type, bedrooms, sort | Yes; broad buy/rent and related property search paths | Yes; property search and category pages |
+| Basic buy/rent search | Yes; keyword/location, purpose, type, bedrooms/bathrooms, min/max budget, minimum area, and sort | Yes; broad buy/rent and related property search paths | Yes; property search and category pages |
 | Saved properties and listing inquiries | Basic favorites and owner email inquiry | More mature lead/discovery flows | More mature lead/discovery flows |
 | Listing submission / review | User submissions are pending; review queue for authorized roles | Seller portal, free posting/promotional seller workflow, property price tool | Owner/broker/developer listings and builder/project catalogues |
 | Builder/developer/project catalogue | Not yet | Project and developer discovery | Builder/project pages with project types, possession details, and RERA labels where provided |
 | Price/finance tools | Not yet | EMI calculator, property value calculator, rent receipt generator, home-loan and premium services | Project/property content and tools vary by page/product; a full current logged-in product audit was not available |
 | Market content | Not yet | Property news, market guides, buying guides, research | Knowledge Centre stories and real-estate content |
-| Risk screening | This branch adds text-based AI/rule-based risk triage; it is not ownership verification | Housing's public site describes a property-verification process; do not infer their internal anti-fraud implementation from the marketing page alone | Internal fraud-prevention details not independently verified |
+| Risk screening | This branch adds text-based AI/rule-based risk triage; it is not ownership verification | Housing advertises a self-verification flow; its terms still tell users to conduct independent ownership/title checks, so this is not a guarantee all listings are genuine | Internal fraud-prevention details not independently verified |
 | Owner identity / document verification | Not automated in this branch; manual review remains required | Public verification material describes additional evidence/quality review | Not fully verified from accessible public material |
 | Photo upload / duplicate-photo screening | Not enabled in this deployment | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
 | Advanced map and filter experience | Basic filters; no map or locality autocomplete | Broader discovery experience | Broader project/locality discovery experience |
@@ -30,16 +30,20 @@ This comparison uses the competitors' publicly reachable pages, not their privat
 Public reference pages:
 - Housing.com main site: https://housing.com/
 - Housing.com seller portal: https://seller.housing.com/user-login?f=HOUSING.COM
+- Housing.com verification help article: https://support.housing.com/support/solutions/articles/4000200805-mere-listing-ko-kaise-verify-kiya-ja-sakta-hai-
+- Housing.com public terms/disclaimer: https://careers.housing.com/terms-of-use/
 - 99acres builder/project catalogue: https://builders.99acres.com/om-group-builders-and-developers-bid-110049
 - 99acres Knowledge Centre: https://webstories.99acres.com/
 
 ## Changes included in this branch
 
-- Optional authenticator-app TOTP MFA, time-limited challenge cookies, per-challenge attempt limits, and one-time recovery codes stored as hashes.
+- Optional authenticator-app TOTP MFA, time-limited challenge cookies, atomically capped attempts, one-time TOTP counter tracking to prevent replay, and one-time recovery codes stored as hashes.
 - MFA secrets encrypted at rest with AES-GCM using a Cloudflare secret named `MFA_ENCRYPTION_KEY`. Do not put that secret into GitHub, Wrangler vars, or chat.
 - MFA setup/disable requires the current password; disabling also requires the existing authenticator or an unused recovery code. Email alerts are attempted for MFA changes.
 - Account deletion requires the current password, typing `DELETE`, and a valid MFA/recovery code when MFA is enabled. Owned listings are removed as part of this action. The last administrator is protected from deleting their own account.
-- Cloudflare Workers AI listing risk triage plus deterministic red-flag and duplicate-title/location checks. Risk reasons and model metadata are saved in D1 and displayed in the moderator review queue.
+- Cloudflare Workers AI listing risk triage plus deterministic red-flag and duplicate-title/location checks. Risk reasons and model metadata are saved in D1 and shown only in the authorized moderation review queue.
+- A property-report form, an admin/moderator report queue, resolution notes, and a moderation-decision audit record. Reports do not automatically ban users or remove listings.
+- Budget, bathroom, and minimum-area filters on property search, all encoded in the URL for shareable searches.
 - Listing submission rate limits, login limits by IP and normalized email, request body size limit, strict Origin validation for state-changing requests, and additional security headers.
 - A clear cookie notice and dedicated cookie policy. The current implementation does not intentionally set analytics or advertising cookies; the notice preference uses browser local storage.
 - UI language now makes clear that “published” means approved for public display, not independently verified property ownership.
@@ -67,9 +71,9 @@ Public reference pages:
 2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
 3. **Do not advertise automated ownership verification yet.** This implementation can flag scam language and exact duplicates, not establish property title, prove identity, validate a sale mandate, or verify that photos depict the claimed property. Add evidence-backed owner/agent verification and a clear audit trail before using a “verified owner/property” badge.
 4. **Enable safe image upload.** R2 is currently commented out and the listing flow explicitly says photos are not enabled. Provision storage, enforce file type/size limits, use non-guessable keys, reject active content, and test public delivery before enabling uploads.
-5. **Add user reporting and a reviewer audit log.** A dedicated report-listing flow, resolution statuses, moderation notes, and immutable reviewer-event records would improve feedback and accountability.
+5. **Exercise the new user-reporting and moderation-audit flow.** A property report form, report queue, resolution notes, and moderation-event table are now included. Test duplicate reports, role restrictions, concurrent status changes, and data retention after account deletion.
 6. **Complete listing management.** Owners need safe edit, archive/unpublish, and duplicate handling. Editing a published listing should re-enter moderation when material fields change.
-7. **Improve discovery parity gradually.** Add minimum/maximum price, area and bathroom filters, locality autocomplete/map, amenities/furnishing/possession filters, listing/project/builder profiles, and a saved-search alert only as reliable data and providers become available.
+7. **Improve discovery parity gradually.** Basic budget, bathroom, and minimum-area filters are now included. Remaining gaps are locality autocomplete/map, amenities/furnishing/possession filters, listing/project/builder profiles, and saved-search alerts; add them only as reliable data and providers become available.
 8. **Add practical property tools.** EMI calculator, property-value research, rent receipt tools, and editorial guides are useful competitor gaps but need tested calculations and clear disclaimers; do not publish fabricated price estimates or market statistics.
 9. **Legal review is still a launch blocker.** The operator's legal identity, contact address, governing law/jurisdiction, data-retention periods, and complaint/grievance process must be completed and reviewed for the actual business and applicable Indian requirements. The policy text in the repo cannot invent these facts.
 10. **Run live end-to-end tests.** A static smoke check does not prove email delivery, MFA interoperability with common authenticator apps, D1 migration success, AI quota availability, multi-cookie handling, production deployment, or account-deletion behavior. Test with non-production accounts and a D1 backup first.
