@@ -44,11 +44,15 @@ def main() -> int:
                ("reviewer", "reviewer@example.test", "Reviewer", "admin", "test-hash"))
     db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                ("reporter", "reporter@example.test", "Reporter", "user", "test-hash"))
+    db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+               ("other-owner", "other-owner@example.test", "Other Owner", "user", "test-hash"))
 
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('published','owner','published-home','Published home','sale','Apartment','Central','Nashik',5000000,'A detailed description of a test property','published')""")
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status,ai_risk_level,ai_risk_score)
                   VALUES('pending','owner','pending-home','Pending home','rent','Apartment','West','Nashik',20000,'A detailed description of another test property','pending','high',80)""")
+    db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
+                  VALUES('other-property','other-owner','other-home','Other home','sale','Apartment','East','Nashik',3000000,'A detailed description of another owner's test property','published')""")
 
     db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
                   VALUES('report-1','published','reporter','suspected_fraud','Specific evidence for the report','open',?)""", (now,))
@@ -59,6 +63,40 @@ def main() -> int:
         pass
     else:
         raise AssertionError("The unique open-report constraint did not prevent duplicate reports")
+
+    # Test the actual owner-inbox query and owner-only status update used by the Worker.
+    db.execute("""INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)
+                  VALUES('inquiry-owner','published','reporter','buyer@example.test','I want to arrange a viewing.','new',?)""", (now,))
+    db.execute("""INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)
+                  VALUES('inquiry-other','other-property','reporter','buyer2@example.test','Please send the details.','new',?)""", (now,))
+    inbox_sql = """SELECT i.id FROM inquiries i JOIN properties p ON p.id=i.property_id
+                   WHERE p.owner_id=? ORDER BY CASE i.status WHEN 'new' THEN 0 WHEN 'read' THEN 1 ELSE 2 END, i.created_at DESC LIMIT 200"""
+    expect([row["id"] for row in db.execute(inbox_sql, ("owner",))] == ["inquiry-owner"],
+           "Owner inbox returned another account's inquiry")
+    expect([row["id"] for row in db.execute(inbox_sql, ("other-owner",))] == ["inquiry-other"],
+           "Second owner's inbox did not remain isolated")
+    db.execute("""UPDATE inquiries SET status='archived' WHERE id=? AND EXISTS
+                  (SELECT 1 FROM properties p WHERE p.id=inquiries.property_id AND p.owner_id=?)""",
+               ("inquiry-owner", "other-owner"))
+    expect(db.execute("SELECT status FROM inquiries WHERE id='inquiry-owner'").fetchone()[0] == "new",
+           "A different owner changed an inquiry they do not own")
+    db.execute("""UPDATE inquiries SET status='read' WHERE id=? AND EXISTS
+                  (SELECT 1 FROM properties p WHERE p.id=inquiries.property_id AND p.owner_id=?)""",
+               ("inquiry-owner", "owner"))
+    expect(db.execute("SELECT status FROM inquiries WHERE id='inquiry-owner'").fetchone()[0] == "read",
+           "Listing owner could not mark their inquiry as read")
+
+    # Material listing edits are owner-scoped and force the listing back into review.
+    db.execute("UPDATE properties SET title=?,status='pending',updated_at=? WHERE id=? AND owner_id=?",
+               ("Updated published home", now, "published", "other-owner"))
+    expect(db.execute("SELECT title,status FROM properties WHERE id='published'").fetchone()[:] == ("Published home","published"),
+           "A non-owner changed a listing")
+    db.execute("UPDATE properties SET title=?,status='pending',updated_at=? WHERE id=? AND owner_id=?",
+               ("Updated published home", now, "published", "owner"))
+    expect(db.execute("SELECT title,status FROM properties WHERE id='published'").fetchone()[:] == ("Updated published home","pending"),
+           "A material owner edit did not return the listing to pending")
+    expect(db.execute("SELECT COUNT(*) FROM properties WHERE status='published' AND id='published'").fetchone()[0] == 0,
+           "An edited listing remained publicly published")
 
     # Test the exact conditional audit insert pattern used by the Worker.
     db.execute("UPDATE properties SET status='published', updated_at=? WHERE id=? AND status='pending'", (now, "pending"))
