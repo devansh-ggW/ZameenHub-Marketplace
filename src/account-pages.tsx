@@ -59,6 +59,16 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
     setItems(current => current.filter(currentItem => currentItem.id !== id))
   }
 
+  async function archiveListing(id: string) {
+    if (!window.confirm('Archive this listing? It will no longer appear in public search. You can edit and resubmit it later.')) return
+    setWorkingId(id); setError(''); setNotice('')
+    const result = await apiRequest<{ id: string; status: 'archived'; message: string }>(`/api/my/properties/${encodeURIComponent(id)}/archive`, { method: 'POST', body: '{}' })
+    setWorkingId('')
+    if (!result.ok) { setError(result.error); return }
+    setNotice(result.data.message)
+    setItems(current => current.map(item => item.id === id ? { ...item, status: 'archived' } : item))
+  }
+
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
   return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Only authorized moderators and admins can approve a submission for public discovery.' : kind === 'my-listings' ? 'Your submissions appear here immediately. They become visible in Browse properties only after approval.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
     {loading ? <p className="status-message">Loading your account…</p> : <>
@@ -70,6 +80,10 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
         {kind === 'my-listings' && <div className={`listing-status status-${item.status}`}>
           <strong>{item.status === 'pending' ? 'Pending review' : item.status === 'published' ? 'Published' : item.status === 'rejected' ? 'Rejected' : item.status === 'archived' ? 'Archived' : 'Listing status'}</strong>
           <p>{item.status === 'pending' ? 'Saved successfully. This listing is private and will not appear in public search until approved.' : item.status === 'published' ? 'This listing is approved and available in public property search.' : item.status === 'rejected' ? 'This listing was not approved. Contact support if you need help.' : item.status === 'archived' ? 'This listing is archived and is not shown in public search.' : 'Check back here for the latest review status.'}</p>
+        </div>}
+        {kind === 'my-listings' && <div className="listing-actions listing-management-actions">
+          <Link className="btn btn-outline" to={`/edit-listing/${encodeURIComponent(item.id)}`}>{item.status === 'archived' ? 'Edit and resubmit' : 'Edit details'}</Link>
+          {item.status !== 'archived' && <button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void archiveListing(item.id)}>{workingId === item.id ? 'Archiving…' : 'Archive listing'}</button>}
         </div>}
         {kind === 'review-queue' && <div className={`ai-risk-card ai-risk-${item.aiRiskLevel ?? 'unscored'}`}><strong>AI risk screen: {item.aiRiskLevel ?? 'not-screened'} · {item.aiRiskScore ?? 0}/100</strong><p>Risk scoring is a triage signal, not proof of fraud or ownership. Check the evidence before making a decision.</p>{item.aiRiskReasons?.length ? <ul>{item.aiRiskReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul> : <p>No specific text flags were returned.</p>}</div>}
         {kind === 'review-queue' && <div className="review-actions"><button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item, 'published')}>Approve</button><button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item, 'rejected')}>Reject</button></div>}
