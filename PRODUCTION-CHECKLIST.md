@@ -52,3 +52,11 @@
 - [ ] Verify the cookie banner and /cookies policy against the actual production scripts; update policy if analytics or marketing tools are added.
 - [ ] Read [SECURITY-AUDIT.md](./SECURITY-AUDIT.md) and complete every launch blocker listed there.
 - [ ] Pin direct package versions and run frozen-lockfile install, typecheck, production build and smoke tests in CI.
+
+
+## Discovery, calculator and SEO checks
+
+- [ ] Run the EMI calculation tests; verify zero-interest and nonzero-rate examples and the estimate disclaimer.
+- [ ] Confirm sitemap.xml contains only public pages and robots.txt disallows private account/moderation routes from indexing.
+- [ ] After property inventory is real and published, consider a generated sitemap for published listing URLs; do not include pending or rejected listings.
+- [ ] Add map/autocomplete and any property value estimates only with a real, permitted data source and transparent limitations.
