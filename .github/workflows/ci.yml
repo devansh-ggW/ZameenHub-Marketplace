@@ -1,7 +1,7 @@
 name: ZameenHub CI
 on:
   push:
-    branches: ["main", "feat/production-auth-upgrade"]
+    branches: ["main", "feat/production-auth-upgrade", "feat/security-mfa-ai-hardening"]
   pull_request:
     branches: ["main"]
 jobs:
