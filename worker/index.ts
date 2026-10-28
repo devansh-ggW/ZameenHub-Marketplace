@@ -1,3 +1,4 @@
+import { base32Encode, matchedTotpCounter } from './totp'
 type AiBinding = {
   run(model: string, input: { messages: Array<{ role: 'system' | 'user'; content: string }>; max_tokens?: number; temperature?: number }): Promise<unknown>
 }
@@ -63,39 +64,6 @@ async function verifyPassword(password:string,stored:string|null) {
   if(actual.length!==target.length)return false
   let mismatch=0;for(let i=0;i<actual.length;i++)mismatch|=actual[i]^target[i]
   return mismatch===0
-}
-const base32Alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
-function base32Encode(value:Uint8Array) {
-  let bits=0,buffer=0,out=''
-  for(const byte of value){buffer=(buffer<<8)|byte;bits+=8;while(bits>=5){bits-=5;out+=base32Alphabet[(buffer>>bits)&31]}}
-  if(bits>0)out+=base32Alphabet[(buffer<<(5-bits))&31]
-  return out
-}
-function base32Decode(value:string) {
-  const source=value.toUpperCase().replace(/=+$/,'').replace(/\s/g,'')
-  let bits=0,buffer=0;const out:number[]=[]
-  for(const char of source){const digit=base32Alphabet.indexOf(char);if(digit<0)throw new Error('Invalid authenticator secret');buffer=(buffer<<5)|digit;bits+=5;if(bits>=8){bits-=8;out.push((buffer>>bits)&255)}}
-  return new Uint8Array(out)
-}
-async function totpCode(secret:string,timestamp=Date.now()) {
-  let counter=Math.floor(timestamp/30000)
-  const message=new Uint8Array(8)
-  for(let i=7;i>=0;i--){message[i]=counter%256;counter=Math.floor(counter/256)}
-  const key=await crypto.subtle.importKey('raw',base32Decode(secret),{name:'HMAC',hash:'SHA-1'},false,['sign'])
-  const mac=new Uint8Array(await crypto.subtle.sign('HMAC',key,message))
-  const offset=mac[mac.length-1]&15
-  const binary=((mac[offset]&127)<<24)|((mac[offset+1]&255)<<16)|((mac[offset+2]&255)<<8)|(mac[offset+3]&255)
-  return String(binary%1_000_000).padStart(6,'0')
-}
-async function matchedTotpCounter(secret:string,codeValue:unknown):Promise<number|null> {
-  const code=clean(codeValue,20).replace(/\s/g,'')
-  if(!/^\d{6}$/.test(code))return null
-  const current=Math.floor(Date.now()/30000)
-  for(const offset of [-1,0,1]){
-    const counter=current+offset
-    if(await totpCode(secret,counter*30000)===code)return counter
-  }
-  return null
 }
 async function encryptionKey(env:Env) {
   if(!env.MFA_ENCRYPTION_KEY||env.MFA_ENCRYPTION_KEY.length<32)throw new Error('MFA_ENCRYPTION_KEY must be configured as a 32-character-or-longer Cloudflare secret')
