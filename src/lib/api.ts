@@ -33,11 +33,11 @@ export async function getProperty(slug: string): Promise<ApiResponse<Property>> 
   }
 }
 
-export async function submitInquiry(payload: { propertyId: string; message: string; email: string }): Promise<ApiResponse<{ reference: string }>> {
+export async function submitInquiry(payload: { propertyId: string; message: string; email: string }): Promise<ApiResponse<{ reference: string; notificationSent?: boolean }>> {
   if (!payload.email.includes('@') || payload.message.trim().length < 12) return { ok: false, error: 'Please enter a valid email and a little more detail.' }
   try {
     const response = await fetch('/api/inquiries', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(payload) })
-    return readJson<{ reference: string }>(response)
+    return readJson<{ reference: string; notificationSent?: boolean }>(response)
   } catch {
     return { ok: false, error: 'Inquiry delivery is not configured. Your message was not sent.' }
   }
