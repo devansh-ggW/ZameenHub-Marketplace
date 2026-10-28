@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS property_moderation_events (
   property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
   reviewer_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   prior_status TEXT NOT NULL,
-  new_status TEXT NOT NULL CHECK (new_status IN ('published', 'rejected')),
+  new_status TEXT NOT NULL CHECK (new_status IN ('published', 'rejected', 'archived')),
   review_note TEXT NOT NULL DEFAULT '',
   ai_risk_level TEXT NOT NULL DEFAULT 'not-screened',
   ai_risk_score INTEGER NOT NULL DEFAULT 0 CHECK (ai_risk_score BETWEEN 0 AND 100),
