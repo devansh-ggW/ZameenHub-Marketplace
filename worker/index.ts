@@ -340,11 +340,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(user.mfa_enabled===1){
         if(!env.MFA_ENCRYPTION_KEY)return fail('Two-factor sign-in is temporarily unavailable. Please contact support.',503)
         const challenge=randomToken()
+        await db.prepare('DELETE FROM auth_mfa_challenges WHERE expires_at<=?').bind(nowIso()).run()
         await db.prepare('INSERT INTO auth_mfa_challenges(id,user_id,token_hash,attempts,expires_at) VALUES(?,?,?,0,?)').bind(uuid(),user.id,await digest(challenge),future(5)).run()
-        return ok({mfaRequired:true},200,{'Set-Cookie':mfaChallengeCookie(challenge,300)})
+        return okWithCookies({mfaRequired:true},200,[sessionCookie('',0),mfaChallengeCookie(challenge,300)])
       }
       const token=await createSession(db,user.id)
-      return ok({user:userView(user),mfaRequired:false},200,{'Set-Cookie':sessionCookie(token,60*24*14)})
+      return okWithCookies({user:userView(user),mfaRequired:false},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/verify'&&method==='POST') {
       if(!await authLimit(request,db,'mfa-verify',8))return fail('Too many verification attempts. Please wait before trying again.',429)
@@ -426,7 +427,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/auth/reset-password'&&method==='POST') {
       if(!await authLimit(request,db,'reset',5))return fail('Too many attempts. Please wait before trying again.',429)
-      const input=await body(request),token=clean(input?.token,200),password=clean(input?.password,128)
+      const input=await body(request),token=clean(input?.token,200),password=passwordValue(input?.password)
       if(password.length<8||password.length>128)return fail('Choose a password between 8 and 128 characters.')
       const record=await db.prepare('SELECT user_id FROM password_reset_tokens WHERE token_hash=? AND expires_at>?').bind(await digest(token),nowIso()).first<{user_id:string}>()
       if(!record)return fail('This password-reset link is invalid or expired. Request a new one.',400)
