@@ -492,12 +492,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/properties'&&method==='GET') {
-      const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),beds=safeInt(url.searchParams.get('beds'),0,100),sort=url.searchParams.get('sort')
+      const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),bedsRaw=url.searchParams.get('beds'),bathsRaw=url.searchParams.get('baths'),minPriceRaw=url.searchParams.get('minPrice'),maxPriceRaw=url.searchParams.get('maxPrice'),minAreaRaw=url.searchParams.get('minArea'),beds=bedsRaw?safeInt(bedsRaw,0,100):null,baths=bathsRaw?safeInt(bathsRaw,0,100):null,minPrice=minPriceRaw?safeInt(minPriceRaw,0,1_000_000_000):null,maxPrice=maxPriceRaw?safeInt(maxPriceRaw,0,1_000_000_000):null,minArea=minAreaRaw?safeInt(minAreaRaw,0,100_000_000):null,sort=url.searchParams.get('sort')
       const viewer=await getUser(request,env); let sql="SELECT p.*, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
       if(q){sql+=' AND (p.location LIKE ? OR p.city LIKE ? OR p.title LIKE ?)';const term='%'+q.replace(/[%_]/g,'')+'%';args.push(term,term,term)}
       if(purpose==='sale'||purpose==='rent'){sql+=' AND p.purpose=?';args.push(purpose)}
       if(type){sql+=' AND p.property_type=?';args.push(type)}
       if(beds!==null&&beds>0){sql+=' AND p.bedrooms>=?';args.push(beds)}
+      if(baths!==null&&baths>0){sql+=' AND p.bathrooms>=?';args.push(baths)}
+      if(minPrice!==null){sql+=' AND p.price>=?';args.push(minPrice)}
+      if(maxPrice!==null){sql+=' AND p.price<=?';args.push(maxPrice)}
+      if(minArea!==null&&minArea>0){sql+=' AND p.area>=?';args.push(minArea)}
       sql+=sort==='price-asc'?' ORDER BY p.price ASC':sort==='price-desc'?' ORDER BY p.price DESC':' ORDER BY p.created_at DESC'
       sql+=' LIMIT 100'
       const result=await db.prepare(sql).bind(...args).all<PropertyRow>()
@@ -555,7 +559,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid report request.')
       const propertyId=clean(input.propertyId,80),reason=clean(input.reason,40),details=clean(input.details,1200)
       const reasons=['suspected_fraud','incorrect_price','duplicate','unavailable','misleading_details','other']
-      if(!propertyId||!reasons.includes(reason)||details.length>1200)return fail('Choose a report reason and provide valid details.')
+      if(!propertyId||!reasons.includes(reason)||details.trim().length<10||details.length>1200)return fail('Choose a report reason and provide at least 10 characters of specific detail.')
       const property=await db.prepare("SELECT id,owner_id FROM properties WHERE id=? AND status='published'").bind(propertyId).first<{id:string;owner_id:string}>()
       if(!property)return fail('This property is not currently available to report.',404)
       if(property.owner_id===user.id)return fail('You cannot report your own listing.',403)
