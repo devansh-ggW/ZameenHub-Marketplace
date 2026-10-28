@@ -3,18 +3,28 @@ import path from 'node:path'
 import process from 'node:process'
 const root=process.cwd()
 const required=[
-  'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/legal-pages.tsx',
-  'src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','public/_headers','wrangler.toml'
+  'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
+  'src/cookie-notice.tsx','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
 const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
-const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), wrangler=read('wrangler.toml')
-for(const route of ['/list-property','/privacy','/terms','/verify-email','/reset-password','/review-queue'])if(!app.includes(route))errors.push('App router missing route '+route)
-for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/properties','/api/favorites','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
+const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), wrangler=read('wrangler.toml')
+for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
+for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/properties','/api/favorites','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
 for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
 if(!wrangler.includes('run_worker_first = ["/api/*"]'))errors.push('Wrangler assets must route /api/* through the Worker before SPA fallback')
+if(!wrangler.includes('[ai]') || !wrangler.includes('binding = "AI"'))errors.push('Cloudflare Workers AI binding is missing')
+for(const marker of ['mfa_enabled','mfa_secret_ciphertext','ai_risk_level','ai_risk_score','auth_mfa_challenges','mfa_recovery_codes'])if(!securityMigration.includes(marker))errors.push('Security migration missing '+marker)
+if(!worker.includes('screenListingRisk(')||!worker.includes('@cf/meta/llama-3.2-1b-instruct'))errors.push('Worker listing-risk screening is not connected to the configured AI model')
+if(!worker.includes('sameOrigin(request,url)')||!worker.includes('Request origin could not be validated.'))errors.push('Worker must reject state-changing requests with an invalid/missing Origin')
+if(!worker.includes('new TextEncoder().encode(raw).byteLength>32768'))errors.push('Worker request bodies must be size-limited')
+if(!worker.includes("status:p.status,verified:false"))errors.push('A moderated listing must not be mislabelled as independently ownership-verified')
+if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
+if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
+if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
+if(!read('public/_headers').includes('Strict-Transport-Security:'))errors.push('Static pages should include HSTS')
 if(wrangler.includes('REPLACE_WITH_CONFIGURED_D1_DATABASE_ID'))errors.push('Wrangler still contains a placeholder D1 database ID')
 if(wrangler.includes('RESEND_API_KEY'))errors.push('Do not store RESEND_API_KEY in wrangler.toml; use a Cloudflare secret')
 if(!read('src/legal-pages.tsx').includes('dewifystores@gmail.com'))errors.push('Support email missing from legal/contact pages')
@@ -26,4 +36,4 @@ if(!worker.includes('href=\"${safeUrl}\"'))errors.push('Email HTML must include 
 if(!worker.includes('copy and open this link in your browser'))errors.push('Email HTML must expose the action URL as a visible clickable fallback')
 if(!worker.includes('html,text})'))errors.push('Resend payload must include both HTML and plain-text email bodies')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
-console.log('Static production smoke checks passed. This does not replace a build, live email test, database migration test, or end-to-end test.')
+console.log('Static production smoke checks passed. These checks verify wiring, not live AI quota, cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')
