@@ -536,11 +536,20 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(reviewMatch&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
-      const input=await body(request),status=clean(input?.status,20)
+      if(!await authLimit(request,db,'moderation',30)||!await limited(db,'moderation-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
+      const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000)
       if(status!=='published'&&status!=='rejected')return fail('Unsupported review status.')
-      const result=await db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'").bind(status,nowIso(),decodeURIComponent(reviewMatch[1])).run()
-      if(!result.meta.changes)return fail('Listing was not pending or could not be found.',404)
-      return ok({status})
+      const id=decodeURIComponent(reviewMatch[1])
+      const pending=await db.prepare("SELECT id,status,ai_risk_level,ai_risk_score FROM properties WHERE id=? AND status='pending'").bind(id).first<{id:string;status:string;ai_risk_level:string;ai_risk_score:number}>()
+      if(!pending)return fail('Listing was not pending or could not be found.',404)
+      const highRisk=pending.ai_risk_level==='high'||pending.ai_risk_score>=65
+      if(status==='published'&&highRisk&&!(user.role==='admin'&&input?.overrideRisk===true&&reviewNote.trim().length>=20)) {
+        return fail('This listing has high-risk signals. An administrator must record at least 20 characters of evidence-based review notes to override the block.',409)
+      }
+      const result=await db.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=? AND status='pending'").bind(status,nowIso(),id).run()
+      if(!result.meta.changes)return fail('Listing was already reviewed or could not be found.',409)
+      await db.prepare('INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,ai_risk_level,ai_risk_score,created_at) VALUES(?,?,?,\'pending\',?,?,?,?,?)').bind(uuid(),id,user.id,status,reviewNote,pending.ai_risk_level||'not-screened',Number(pending.ai_risk_score)||0,nowIso()).run()
+      return ok({status,auditRecorded:true,highRiskOverride:status==='published'&&highRisk})
     }
     if(path==='/api/inquiries'&&method==='POST') {
       if(!await authLimit(request,db,'inquiry',12))return fail('Too many requests. Please wait and try again.',429)
