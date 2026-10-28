@@ -62,7 +62,6 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     if (!result.ok) { setError(result.error); return }
     setNotice('Your account and your submitted property listings have been deleted.')
     navigate('/', { replace: true })
-    window.location.reload()
   }
 
   return <section className="form-card account-security" aria-labelledby="account-security-title">
