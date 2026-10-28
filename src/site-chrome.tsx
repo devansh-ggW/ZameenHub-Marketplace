@@ -29,7 +29,7 @@ export function SiteHeader() {
       {user && <NavLink to="/saved">Saved properties</NavLink>}
       {user && <NavLink to="/my-listings">My listings</NavLink>}
       {user && <NavLink to="/profile">Account</NavLink>}
-      {user && ['admin','moderator'].includes(user.role) && <NavLink to="/review-queue">Review queue</NavLink>}
+      {user && ['admin','moderator'].includes(user.role) && <><NavLink to="/review-queue">Review queue</NavLink><NavLink to="/report-queue">Listing reports</NavLink></>}
       <NavLink to="/about">About</NavLink>
       {user ? <>
         <NavLink className="mobile-menu-link mobile-menu-list" to="/list-property">List a property <ArrowUpRight size={15} /></NavLink>
