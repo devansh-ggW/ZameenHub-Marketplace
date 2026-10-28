@@ -5,12 +5,12 @@ const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
   'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
 const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
-const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html')
+const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), mediaMigration=read('migrations/0004_media_verification.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html')
 for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/tools/emi-calculator','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
 for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/my/inquiries','/api/inquiries','/api/properties','/api/favorites','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
 for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
@@ -21,8 +21,8 @@ if(!worker.includes('screenListingRisk(')||!worker.includes('@cf/meta/llama-3.2-
 if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('status=\'pending\'')||!worker.includes("status:'archived'"))errors.push('Owner edit/archive routes must be wired and edits must re-enter review')
 if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('inquiries SET status=? WHERE id=? AND EXISTS'))errors.push('Owner inquiry inbox must restrict each message to the listing owner')
 if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.includes('INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)')||!worker.includes('sendEmail(env,property.owner_email'))errors.push('Public inquiry submission must persist a lead and attempt owner email notification')
-if(!worker.includes('propertyView(p,[],true)'))errors.push('Detailed AI risk signals must only be sent to the moderator review queue')
-if((worker.split('propertyView(p,[],true)').length-1)!==1||!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')"))errors.push('The detailed property risk serializer must only be used by the authorized moderation queue')
+if(!worker.includes('withProperty(db,p,true,true)'))errors.push('Moderation queue must include risk signals and private evidence references')
+if((worker.split('withProperty(db,p,true,true)').length-1)!==1||!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')"))errors.push('Detailed risk signals and evidence references must only be exposed in the authorized moderation queue')
 if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage }')||!app.includes('<Route path="*" element={<NotFoundPage />} />'))errors.push('Unknown routes must use the dedicated not-found page, not the homepage')
 const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
 const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
@@ -85,7 +85,16 @@ const faviconLine=indexHtml.split(String.fromCharCode(10)).find(line=>line.inclu
 const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
 if(!faviconHref)errors.push('HTML must declare a favicon href')
 else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.slice(1))))errors.push('HTML favicon target does not exist: '+faviconHref)
-if(!worker.includes("status:p.status,verified:false"))errors.push('A moderated listing must not be mislabelled as independently ownership-verified')
+if(!worker.includes("verified:verificationStatus==='verified'"))errors.push('Public verified status must reflect a separate evidence review, not publication alone')
+if(!worker.includes("if(path==='/api/account/profile'&&method==='PATCH')")||!worker.includes('UPDATE users SET profile_image_url=?'))errors.push('Profile image URL must be saved through the authenticated profile API')
+if(!worker.includes('sanitizeImageUrls')||!worker.includes('value.length>5')||!worker.includes('property_media_max_five_images')||!worker.includes('sanitizeVideoUrl'))errors.push('Property URL media must enforce five-image limit and supported HTTPS video links')
+if(!worker.includes("verification_status='verified'")&&!worker.includes('nextVerificationStatus=verifyEvidence?\'verified\''))errors.push('Evidence-reviewed status must be saved only through moderator action')
+if(!worker.includes("media_type='image'")||!worker.includes("media_type='video'"))errors.push('Media records must separate images and video in D1')
+for(const marker of ['profile_image_url','verification_status','property_media','property_media_max_five_images','property_media_one_video','verification_reviewed_by'])if(!mediaMigration.includes(marker))errors.push('Media/verification migration missing '+marker)
+if(!read('src/listing-page.tsx').includes('Add another photo URL')||!read('src/edit-listing-page.tsx').includes('Add another photo URL'))errors.push('Create/edit forms must allow owners to manage up to five property photo URLs')
+if(!pages.includes('<PropertyVideo src={property.videoUrl}'))errors.push('Property detail page must render the saved property video')
+if(!read('src/account-pages.tsx').includes('/api/account/profile')||!read('src/account-pages.tsx').includes('profile-image-url'))errors.push('Account profile must let users save and remove profile image URLs')
+if(!read('src/account-pages.tsx').includes('verifyEvidence'))errors.push('Moderators need an explicit evidence-review decision instead of automatic verification')
 if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
 if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
 if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
