@@ -21,6 +21,7 @@ export type Property = {
   description: string
   amenities: string[]
   featured?: boolean
+  favorite?: boolean
   verified?: boolean
   status: ListingStatus
   ownerName: string
