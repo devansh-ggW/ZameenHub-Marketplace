@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { SectionKicker } from './components'
 import type { Property, PropertyType } from './lib/data'
 import { apiRequest, getSession } from './lib/auth'
+import { PROPERTY_AMENITIES } from './lib/property-options'
 
 export function EditListingPage() {
   const { id = '' } = useParams()
@@ -22,6 +23,7 @@ export function EditListingPage() {
   const [bathrooms, setBathrooms] = useState('0')
   const [area, setArea] = useState('0')
   const [description, setDescription] = useState('')
+  const [amenities, setAmenities] = useState<string[]>([])
 
   useEffect(() => {
     let active = true
@@ -51,6 +53,7 @@ export function EditListingPage() {
       setBathrooms(String(item.bathrooms))
       setArea(String(item.area))
       setDescription(item.description)
+      setAmenities(item.amenities.filter(amenity => (PROPERTY_AMENITIES as readonly string[]).includes(amenity)))
       setLoading(false)
     }
     void load()
@@ -75,12 +78,12 @@ export function EditListingPage() {
       body: JSON.stringify({
         title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType,
         price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea,
-        description: description.trim(),
+        description: description.trim(), amenities,
       }),
     })
     setSaving(false)
     if (!result.ok) { setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), status: 'pending' } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: 'pending' } : current)
     setNotice(result.data.message)
   }
 
@@ -102,6 +105,7 @@ export function EditListingPage() {
         <div className="form-field"><label htmlFor="edit-baths">Bathrooms</label><input className="form-control" id="edit-baths" type="number" min="0" max="100" step="1" value={bathrooms} onChange={e => setBathrooms(e.target.value)} /></div>
         <div className="form-field"><label htmlFor="edit-area">Area (sq ft)</label><input className="form-control" id="edit-area" type="number" min="0" max="100000000" step="1" value={area} onChange={e => setArea(e.target.value)} /></div>
         <div className="form-field full"><label htmlFor="edit-description">Description</label><textarea className="form-control" id="edit-description" required minLength={20} maxLength={8000} value={description} onChange={e => setDescription(e.target.value)} /><small>Keep the description accurate and do not include passwords, identity documents, or another person's private data.</small></div>
+        <div className="form-field full"><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset></div>
       </div>
       {error && <p className="status-message error" role="alert">{error}</p>}
       {notice && <p className="status-message success" role="status">{notice}</p>}
