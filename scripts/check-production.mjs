@@ -4,14 +4,14 @@ import process from 'node:process'
 const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
-  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
+  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
   'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
 const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
 const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml')
-for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
+for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/tools/emi-calculator','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
 for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/my/inquiries','/api/properties','/api/favorites','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
 for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
 if(!wrangler.includes('run_worker_first = ["/api/*"]'))errors.push('Wrangler assets must route /api/* through the Worker before SPA fallback')
@@ -37,6 +37,8 @@ if(!worker.includes('p.price>=?')||!worker.includes('p.price<=?')||!worker.inclu
 if(!pages.includes("setMinPrice")||!pages.includes("setMaxPrice")||!pages.includes("setMinArea"))errors.push('Buyer-side budget and area filter controls are missing')
 if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage must load real public listings from the property API')
 if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
+if(!read('src/emi-calculator-page.tsx').includes('calculateEmi(')||!read('src/lib/emi.ts').includes('monthlyRate'))errors.push('EMI calculator must use the tested monthly-repayment formula')
+if(!read('src/site-chrome.tsx').includes('to="/tools/emi-calculator"'))errors.push('EMI calculator must be reachable from primary navigation')
 if(vite.includes('sourcemap: true'))errors.push('Production source maps should not be publicly emitted')
 try {
   const parsed=JSON.parse(packageJson)
