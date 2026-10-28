@@ -4,20 +4,21 @@ import process from 'node:process'
 const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
-  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
+  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','worker/index.ts',
   'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
 const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
 const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml')
-for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
+for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
 for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/properties','/api/favorites','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
 for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
 if(!wrangler.includes('run_worker_first = ["/api/*"]'))errors.push('Wrangler assets must route /api/* through the Worker before SPA fallback')
 if(!wrangler.includes('[ai]') || !wrangler.includes('binding = "AI"'))errors.push('Cloudflare Workers AI binding is missing')
 for(const marker of ['mfa_enabled','mfa_last_counter','mfa_secret_ciphertext','ai_risk_level','ai_risk_score','auth_mfa_challenges','mfa_recovery_codes','property_reports','property_moderation_events'])if(!securityMigration.includes(marker))errors.push('Security migration missing '+marker)
 if(!worker.includes('screenListingRisk(')||!worker.includes('@cf/meta/llama-3.2-1b-instruct'))errors.push('Worker listing-risk screening is not connected to the configured AI model')
+if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('status=\'pending\'')||!worker.includes("status:'archived'"))errors.push('Owner edit/archive routes must be wired and edits must re-enter review')
 if(!worker.includes('propertyView(p,[],true)'))errors.push('Detailed AI risk signals must only be sent to the moderator review queue')
 if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
 if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
