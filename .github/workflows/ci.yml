@@ -19,6 +19,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod
       - run: python3 scripts/check-migrations.py
+      - run: node --experimental-strip-types scripts/test-totp.mjs
       - run: pnpm build
       - run: pnpm test:smoke
       - run: pnpm dlx wrangler@4.154.0 deploy --dry-run
