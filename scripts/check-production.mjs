@@ -22,6 +22,10 @@ if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('st
 if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('inquiries SET status=? WHERE id=? AND EXISTS'))errors.push('Owner inquiry inbox must restrict each message to the listing owner')
 if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.includes('INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)')||!worker.includes('sendEmail(env,property.owner_email'))errors.push('Public inquiry submission must persist a lead and attempt owner email notification')
 if(!worker.includes('propertyView(p,[],true)'))errors.push('Detailed AI risk signals must only be sent to the moderator review queue')
+const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
+const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
+const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
+if(!listingSubmitBlock||listingSubmitBlock.includes('riskLevel:risk.level')||listingSubmitBlock.includes('riskScore:risk.score')||listingSubmitBlock.includes('riskReasons:risk.reasons'))errors.push('Property submission must not expose internal AI risk scores or detailed risk reasons to the listing owner')
 if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
 if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
 if(!worker.includes('snapshotGuard')||!worker.includes('AND updated_at=?'))errors.push('Moderation must reject stale listing versions that changed after review-queue load')
