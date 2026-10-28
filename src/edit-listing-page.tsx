@@ -24,6 +24,10 @@ export function EditListingPage() {
   const [area, setArea] = useState('0')
   const [description, setDescription] = useState('')
   const [amenities, setAmenities] = useState<string[]>([])
+  const [imageUrls, setImageUrls] = useState<string[]>([''])
+  const [videoUrl, setVideoUrl] = useState('')
+  const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
+  const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
 
   useEffect(() => {
     let active = true
@@ -54,6 +58,10 @@ export function EditListingPage() {
       setArea(String(item.area))
       setDescription(item.description)
       setAmenities(item.amenities.filter(amenity => (PROPERTY_AMENITIES as readonly string[]).includes(amenity)))
+      setImageUrls(item.gallery.length ? item.gallery : [''])
+      setVideoUrl(item.videoUrl || '')
+      setVerificationEvidenceType(item.verificationEvidenceType || 'none')
+      setVerificationEvidenceUrl(item.verificationEvidenceUrl || '')
       setLoading(false)
     }
     void load()
@@ -78,12 +86,12 @@ export function EditListingPage() {
       body: JSON.stringify({
         title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType,
         price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea,
-        description: description.trim(), amenities,
+        description: description.trim(), amenities, images: imageUrls.map(url => url.trim()).filter(Boolean), videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(),
       }),
     })
     setSaving(false)
     if (!result.ok) { setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: 'pending' } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: 'pending', gallery: imageUrls.map(url => url.trim()).filter(Boolean), image: imageUrls.map(url => url.trim()).filter(Boolean)[0] || '', videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: verificationEvidenceUrl.trim() ? 'submitted' : 'unverified', verified: false } : current)
     setNotice(result.data.message)
   }
 
@@ -93,7 +101,7 @@ export function EditListingPage() {
   return <main className="page-shell"><div className="container">
     <div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Edit your listing.</h1><p>Save corrections to your property details. Every edit returns the listing to pending review so changed information is checked before it is public again.</p></div>
     {property && <form className="form-card edit-listing-form" onSubmit={submit}>
-      <div className="edit-listing-meta"><span>Current status: <strong>{property.status}</strong></span><span>Reference: <code>{property.id}</code></span></div>
+      <div className="edit-listing-meta"><span>Current status: <strong>{property.status}</strong></span><span>Evidence review: <strong>{property.verificationStatus || 'unverified'}</strong></span><span>Reference: <code>{property.id}</code></span></div>
       <div className="form-grid">
         <div className="form-field"><label htmlFor="edit-purpose">Purpose</label><select className="form-control" id="edit-purpose" value={purpose} onChange={e => setPurpose(e.target.value as 'sale' | 'rent')}><option value="sale">For sale</option><option value="rent">For rent</option></select></div>
         <div className="form-field"><label htmlFor="edit-type">Property type</label><select className="form-control" id="edit-type" value={propertyType} onChange={e => setPropertyType(e.target.value as PropertyType)}>{(['Apartment','House','Villa','Studio','Plot'] as PropertyType[]).map(type => <option key={type} value={type}>{type}</option>)}</select></div>
@@ -106,6 +114,8 @@ export function EditListingPage() {
         <div className="form-field"><label htmlFor="edit-area">Area (sq ft)</label><input className="form-control" id="edit-area" type="number" min="0" max="100000000" step="1" value={area} onChange={e => setArea(e.target.value)} /></div>
         <div className="form-field full"><label htmlFor="edit-description">Description</label><textarea className="form-control" id="edit-description" required minLength={20} maxLength={8000} value={description} onChange={e => setDescription(e.target.value)} /><small>Keep the description accurate and do not include passwords, identity documents, or another person's private data.</small></div>
         <div className="form-field full"><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset></div>
+        <section className="media-editor full" aria-labelledby="edit-property-media-heading"><h3 id="edit-property-media-heading">Property photos and video</h3><p className="muted">Public HTTPS URLs are saved in D1; files stay with your chosen host. No uploads or R2 storage. Up to five photos and one video.</p><div className="media-url-list">{imageUrls.map((imageUrl, index) => <div className="media-url-row" key={index}><div className="form-field"><label htmlFor={`edit-property-image-${index}`}>Photo URL {index + 1}</label><input className="form-control" id={`edit-property-image-${index}`} type="url" maxLength={1500} value={imageUrl} onChange={event => setImageUrls(current => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} placeholder="https://example.com/property-photo.jpg" /></div><button className="btn btn-outline media-remove" type="button" onClick={() => setImageUrls(current => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove photo URL ${index + 1}`}>Remove</button></div>)}</div>{imageUrls.length < 5 && <button className="btn btn-outline" type="button" onClick={() => setImageUrls(current => current.length < 5 ? [...current, ''] : current)}>Add another photo URL</button>}<div className="form-field"><label htmlFor="edit-property-video">Video URL (optional)</label><input className="form-control" id="edit-property-video" type="url" maxLength={1500} value={videoUrl} onChange={event => setVideoUrl(event.target.value)} placeholder="YouTube, Vimeo, or direct .mp4/.webm URL" /></div></section>
+        <section className="verification-editor full" aria-labelledby="edit-evidence-heading"><h3 id="edit-evidence-heading">Property verification evidence</h3><p className="muted">Optional public official-record reference. Reviewers can inspect it, but the URL or automated screening alone does not prove ownership. Do not share private identity documents, Aadhaar/PAN numbers, or private file links.</p><div className="form-field"><label htmlFor="edit-evidence-type">Evidence type</label><select className="form-control" id="edit-evidence-type" value={verificationEvidenceType} onChange={event => setVerificationEvidenceType(event.target.value)}><option value="none">No evidence reference yet</option><option value="official_record">Official public land/property record</option><option value="property_tax_record">Public property-tax record</option><option value="registry_reference">Registration/registry reference</option><option value="other_public_record">Other public record</option></select></div><div className="form-field"><label htmlFor="edit-evidence-url">Public evidence URL</label><input className="form-control" id="edit-evidence-url" type="url" maxLength={1500} value={verificationEvidenceUrl} onChange={event => setVerificationEvidenceUrl(event.target.value)} placeholder="https://official-record-portal.example/record" /><small>Saving edits resets any prior evidence review and returns the listing to pending review.</small></div></section>
       </div>
       {error && <p className="status-message error" role="alert">{error}</p>}
       {notice && <p className="status-message success" role="status">{notice}</p>}
