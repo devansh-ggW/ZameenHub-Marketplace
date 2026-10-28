@@ -1,5 +1,6 @@
 -- Security and listing-risk screening additions. Apply this migration before deploying the updated Worker.
 ALTER TABLE users ADD COLUMN mfa_enabled INTEGER NOT NULL DEFAULT 0 CHECK (mfa_enabled IN (0, 1));
+ALTER TABLE users ADD COLUMN mfa_last_counter INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN mfa_secret_ciphertext TEXT;
 ALTER TABLE users ADD COLUMN mfa_pending_secret_ciphertext TEXT;
 ALTER TABLE users ADD COLUMN mfa_pending_expires_at TEXT;
