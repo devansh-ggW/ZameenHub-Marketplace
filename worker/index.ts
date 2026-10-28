@@ -234,7 +234,7 @@ async function body(request:Request) {
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
 function propertyView(p:PropertyRow,images:string[]=[]) {
-  return {id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',image:images[0]||'',gallery:images,description:p.description,amenities:parseArray(p.amenities_json),status:p.status,verified:p.status==='published',favorite:!!p.favorite}
+  return {id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',image:images[0]||'',gallery:images,description:p.description,amenities:parseArray(p.amenities_json),status:p.status,verified:false,favorite:!!p.favorite,aiRiskLevel:p.ai_risk_level||'not-screened',aiRiskScore:Number(p.ai_risk_score)||0,aiRiskReasons:parseArray(p.ai_risk_reasons_json||'[]'),aiScreenedAt:p.ai_screened_at||undefined,aiModel:p.ai_model||'not-screened'}
 }
 function parseArray(s:string){try{const a=JSON.parse(s);return Array.isArray(a)?a.filter(x=>typeof x==='string').slice(0,50):[]}catch{return []}}
 async function propertyImages(db:D1Database,id:string) {
@@ -438,6 +438,24 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ])
       return ok({message:'Password updated. All existing sessions have been signed out; sign in with your new password.'})
     }
+    if(path==='/api/account/delete'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before deleting your account.',401)
+      const input=await body(request)
+      if(input?.confirmText!=='DELETE')return fail('Type DELETE to confirm account deletion.')
+      const password=passwordValue(input?.password)
+      if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
+      if(user.mfa_enabled===1){
+        let valid=false
+        try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }
+        if(!valid)return fail('Enter a valid authenticator or unused recovery code to confirm account deletion.',401)
+      }
+      // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
+      await db.batch([
+        db.prepare('DELETE FROM properties WHERE owner_id=?').bind(user.id),
+        db.prepare('DELETE FROM users WHERE id=?').bind(user.id)
+      ])
+      return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
+    }
     if(path==='/api/properties'&&method==='GET') {
       const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),beds=safeInt(url.searchParams.get('beds'),0,100),sort=url.searchParams.get('sort')
       const viewer=await getUser(request,env); let sql="SELECT p.*, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
@@ -460,13 +478,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/properties'&&method==='POST') {
       const user=await requireUser(request,env)
       if(!user)return fail('Sign in with a verified email before listing a property.',401)
+      if(!await authLimit(request,db,'listing',6)||!await limited(db,'listing-user:'+user.id,4,60))return fail('Too many listing submissions. Please wait before submitting another property.',429)
       const input=await body(request);if(!input)return fail('Invalid listing request.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
-      await db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description).run()
-      return ok({id,status:'pending'},201)
+      const duplicate=await db.prepare("SELECT id FROM properties WHERE lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(title,location,city).first<{id:string}>()
+      const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
+      await db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model).run()
+      return ok({id,status:'pending',riskLevel:risk.level,riskScore:risk.score,riskReasons:risk.reasons,reviewMessage:risk.level==='high'?'This listing has been flagged for additional fraud checks. It remains private until review.':'Automated risk screening is complete. This is not proof of ownership; your listing remains private until review.'},201)
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
