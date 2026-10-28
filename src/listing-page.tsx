@@ -49,7 +49,7 @@ export function ListingPage() {
       body: JSON.stringify({ title: title.trim(), location: locationText.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: Number(bedrooms), bathrooms: Number(bathrooms), area: Number(area || 0), description: description.trim(), amenities: [] }),
     })
     setBusy(false)
-    if (result.ok) setNotice('Your listing has been submitted for review. It will not appear publicly until approved.')
+    if (result.ok) setNotice(result.data.reviewMessage ?? 'Your listing has been submitted for review. It will not appear publicly until approved.')
     else if (result.status === 401) navigate('/login?next=' + encodeURIComponent('/list-property'), { replace: true })
     else setError(result.error)
   }
