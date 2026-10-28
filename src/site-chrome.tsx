@@ -24,11 +24,14 @@ export function SiteHeader() {
   return <header className="site-header"><div className="container nav">
     <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
     <nav className={'nav-links ' + (open ? 'open' : '')} aria-label="Primary navigation">
+      <NavLink to="/">Home</NavLink>
       <NavLink to="/properties">Browse properties</NavLink>
+      <NavLink to="/tools/emi-calculator">EMI calculator</NavLink>
       {user && <NavLink to="/saved">Saved properties</NavLink>}
       {user && <NavLink to="/my-listings">My listings</NavLink>}
+      {user && <NavLink to="/inquiries">Inquiries</NavLink>}
       {user && <NavLink to="/profile">Account</NavLink>}
-      {user && ['admin','moderator'].includes(user.role) && <NavLink to="/review-queue">Review queue</NavLink>}
+      {user && ['admin','moderator'].includes(user.role) && <><NavLink to="/review-queue">Review queue</NavLink><NavLink to="/report-queue">Listing reports</NavLink></>}
       <NavLink to="/about">About</NavLink>
       {user ? <>
         <NavLink className="mobile-menu-link mobile-menu-list" to="/list-property">List a property <ArrowUpRight size={15} /></NavLink>
@@ -50,8 +53,8 @@ export function SiteHeader() {
 export function SiteFooter() {
   return <footer className="footer"><div className="container footer-grid">
     <div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. Published listings reflect marketplace review status; buyers and renters should independently verify information before a transaction.</p><p><strong>Customer support</strong><br /><a href="mailto:dewifystores@gmail.com">dewifystores@gmail.com</a></p></div>
-    <div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div>
+    <div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/tools/emi-calculator">EMI calculator</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div>
     <div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact support</Link><br /><Link to="/help">Help centre</Link></div>
-    <div><h4>Legal</h4><Link to="/privacy">Privacy policy</Link><br /><Link to="/terms">Terms and conditions</Link></div>
+    <div><h4>Legal</h4><Link to="/privacy">Privacy policy</Link><br /><Link to="/cookies">Cookie policy</Link><br /><Link to="/terms">Terms and conditions</Link></div>
   </div><div className="container footer-bottom"><span>© {new Date().getFullYear()} ZameenHub</span><span>Discover responsibly. Verify independently.</span></div></footer>
 }

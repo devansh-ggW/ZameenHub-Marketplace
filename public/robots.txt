@@ -1,0 +1,19 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /login
+Disallow: /signup
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /activate-account
+Disallow: /verify-email
+Disallow: /profile
+Disallow: /saved
+Disallow: /my-listings
+Disallow: /edit-listing/
+Disallow: /list-property
+Disallow: /inquiries
+Disallow: /review-queue
+Disallow: /report-queue
+
+Sitemap: https://zameenhub.dewify.shop/sitemap.xml

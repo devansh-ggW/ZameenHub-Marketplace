@@ -23,9 +23,23 @@ export type Property = {
   featured?: boolean
   favorite?: boolean
   verified?: boolean
+  verificationStatus?: 'unverified' | 'submitted' | 'in_review' | 'verified' | 'rejected'
+  verificationEvidenceType?: string
+  verificationEvidenceUrl?: string
+  verificationSubmittedAt?: string
+  verificationReviewedAt?: string
+  verificationNote?: string
+  videoUrl?: string
   status: ListingStatus
   ownerName: string
+  ownerProfileImageUrl?: string
   ownerRole: string
+  aiRiskLevel?: 'low' | 'medium' | 'high' | 'unscored' | 'not-screened'
+  aiRiskScore?: number
+  aiRiskReasons?: string[]
+  aiScreenedAt?: string
+  aiModel?: string
+  reviewMessage?: string
 }
 
 // These are editorial architectural images for brand composition only.

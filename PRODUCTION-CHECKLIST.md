@@ -10,7 +10,8 @@
 - [ ] Run pnpm build, pnpm test:smoke, and review the final source diff. The smoke check is a wiring check, not a live integration test.
 - [ ] Review Privacy Policy and Terms with the actual operator identity, address, governing law, grievance process, and real data-retention practices.
 - [ ] Confirm the Worker CPU budget/plan can support PBKDF2 password hashing; test registration and login on the deployed plan and inspect CPU-limit errors.
-- [ ] Photo uploads are not enabled by this release. Configure and test R2 upload, validation and public delivery before promising property photo uploads.
+- [ ] Apply `migrations/0004_media_verification.sql` only after backing up the intended D1 database. Confirm profile image URLs, five-image cap, one-video cap, evidence fields and moderation audit columns exist.
+- [ ] URL-based media is not an upload system: owners can reference up to five public HTTPS image URLs, one supported HTTPS video URL and a profile image URL. Files remain on third-party hosts, so check host permissions, link durability and content-policy rights.
 
 ## End-to-end production tests
 
@@ -39,3 +40,39 @@
 - [ ] Use a verified sender address on the exact Resend-verified domain.
 - [ ] Keep RESEND_API_KEY secret.
 - [ ] Have a qualified local professional review legal pages for the real business and jurisdiction.
+
+
+## Additional checks for MFA and AI risk screening
+
+- [ ] Back up production D1 and apply pending migrations through `migrations/0004_media_verification.sql` **before** deploying Worker code that references the new schema.
+- [ ] Add `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret (at least 32 random characters); do not commit it or place it in public vars.
+- [ ] Confirm `[ai]` / `binding = "AI"` is active for the Worker and check the Workers AI usage dashboard.
+- [ ] Configure and test authenticator MFA enrolment, invalid/expired TOTP, one-time recovery codes, rate limits, MFA disable alerts and delete-account confirmation.
+- [ ] Verify account deletion revokes sessions and deletes owned property listings; confirm the final administrator cannot self-delete.
+- [ ] Verify suspicious submissions remain pending and expose AI risk evidence only in the authorized moderation queue.
+- [ ] Verify the cookie banner and /cookies policy against the actual production scripts; update policy if analytics or marketing tools are added.
+- [ ] Read [SECURITY-AUDIT.md](./SECURITY-AUDIT.md) and complete every launch blocker listed there.
+- [ ] Pin direct package versions and run frozen-lockfile install, typecheck, production build and smoke tests in CI.
+- [ ] Verify concurrent reuse attempts for email verification, legacy activation and password reset accept each token only once; confirm sign-up responses do not reveal whether an email is already registered.
+- [ ] Confirm listing submitters cannot retrieve AI risk scores/reasons from the response or public property API; only the authorized review queue should contain detailed risk evidence.
+- [ ] Test that oversized request bodies are canceled while streaming and that no API mutation succeeds with a missing or mismatched Origin.
+
+
+## Discovery, calculator and SEO checks
+
+- [ ] Run the EMI calculation tests; verify zero-interest and nonzero-rate examples and the estimate disclaimer.
+- [ ] Confirm sitemap.xml contains only public pages and robots.txt disallows private account/moderation routes from indexing.
+- [ ] After property inventory is real and published, consider a generated sitemap for published listing URLs; do not include pending or rejected listings.
+- [ ] Add map/autocomplete and any property value estimates only with a real, permitted data source and transparent limitations.
+
+
+## Media and evidence-review checks
+
+- [ ] Profile image URL can be saved, cleared, and is returned only in authenticated profile/session or public property-owner context.
+- [ ] New and edited listings accept no more than five unique public HTTPS image URLs and one supported video URL. Invalid, local, credential-bearing, and non-HTTPS URLs are rejected.
+- [ ] Gallery thumbnails and detail-page video render from saved URLs; broken third-party links degrade gracefully.
+- [ ] Evidence reference URL and review note are private from public listing APIs and visible only to the owner and authorized review queue.
+- [ ] A listing becomes public only through existing moderator approval. Evidence Reviewed is only set by an authorized moderator after opening the reference and documenting what was checked. AI risk scoring alone never sets it.
+- [ ] Test the property media SQL triggers directly in D1/SQLite: a sixth image and a second video must be rejected.
+- [ ] Confirm public inquiry saves to D1 and attempts owner email notification after a listing is published.
+- [ ] Review public-record verification steps with a qualified local professional. There is no universal automated property title API configured in this release.
