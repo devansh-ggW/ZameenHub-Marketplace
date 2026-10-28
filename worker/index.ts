@@ -204,8 +204,10 @@ async function authLimit(request:Request,db:D1Database,route:string,max=8) {
 }
 async function issueToken(db:D1Database,userId:string,purpose:'verify'|'activate',minutes=30) {
   const token=randomToken()
-  await db.prepare('DELETE FROM email_verification_tokens WHERE user_id=? AND purpose=?').bind(userId,purpose).run()
-  await db.prepare('INSERT INTO email_verification_tokens(id,user_id,token_hash,purpose,expires_at) VALUES(?,?,?,?,?)').bind(uuid(),userId,await digest(token),purpose,future(minutes)).run()
+  await db.batch([
+    db.prepare('DELETE FROM email_verification_tokens WHERE user_id=? AND purpose=?').bind(userId,purpose),
+    db.prepare('INSERT INTO email_verification_tokens(id,user_id,token_hash,purpose,expires_at) VALUES(?,?,?,?,?)').bind(uuid(),userId,await digest(token),purpose,future(minutes))
+  ])
   return token
 }
 async function createSession(db:D1Database,userId:string) {
@@ -340,11 +342,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'verify',8))return fail('Too many attempts. Please wait before trying again.',429)
       const input=await body(request),token=clean(input?.token,200);if(!token)return fail('Verification token is missing.')
       const tokenHash=await digest(token)
-      const record=await db.prepare("SELECT user_id FROM email_verification_tokens WHERE token_hash=? AND purpose='verify' AND expires_at>?").bind(tokenHash,nowIso()).first<{user_id:string}>()
+      const record=await db.prepare("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='verify' AND expires_at>? RETURNING user_id").bind(tokenHash,nowIso()).first<{user_id:string}>()
       if(!record)return fail('This verification link is invalid or expired. Request a new one.',400)
       await db.batch([
         db.prepare('UPDATE users SET email_verified=1,email_verified_at=?,updated_at=? WHERE id=?').bind(nowIso(),nowIso(),record.user_id),
-        db.prepare('DELETE FROM email_verification_tokens WHERE user_id=?').bind(record.user_id)
+        db.prepare("DELETE FROM email_verification_tokens WHERE user_id=? AND purpose='verify'").bind(record.user_id)
       ])
       return ok({message:'Email verified. You can now sign in.'})
     }
@@ -352,12 +354,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'activate',5))return fail('Too many attempts. Please wait before trying again.',429)
       const input=await body(request),token=clean(input?.token,200),password=passwordValue(input?.password)
       if(password.length<8||password.length>128||input?.acceptedTerms!==true)return fail('Choose a password of at least 8 characters and accept the Terms.')
-      const record=await db.prepare("SELECT user_id FROM email_verification_tokens WHERE token_hash=? AND purpose='activate' AND expires_at>?").bind(await digest(token),nowIso()).first<{user_id:string}>()
+      const record=await db.prepare("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='activate' AND expires_at>? RETURNING user_id").bind(await digest(token),nowIso()).first<{user_id:string}>()
       if(!record)return fail('This activation link is invalid or expired. Request a new one.',400)
       const hash=await passwordHash(password)
       await db.batch([
-        db.prepare('UPDATE users SET password_hash=?,email_verified=1,email_verified_at=?,terms_accepted_at=?,updated_at=? WHERE id=?').bind(hash,nowIso(),nowIso(),nowIso(),record.user_id),
-        db.prepare('DELETE FROM email_verification_tokens WHERE user_id=?').bind(record.user_id)
+        db.prepare('UPDATE users SET password_hash=?,email_verified=1,email_verified_at=?,terms_accepted_at=?,updated_at=? WHERE id=? AND password_hash IS NULL').bind(hash,nowIso(),nowIso(),nowIso(),record.user_id),
+        db.prepare("DELETE FROM email_verification_tokens WHERE user_id=? AND purpose='activate'").bind(record.user_id)
       ])
       return ok({message:'Your account is activated. Sign in to continue.'})
     }
@@ -496,7 +498,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'reset',5))return fail('Too many attempts. Please wait before trying again.',429)
       const input=await body(request),token=clean(input?.token,200),password=passwordValue(input?.password)
       if(password.length<8||password.length>128)return fail('Choose a password between 8 and 128 characters.')
-      const record=await db.prepare('SELECT user_id FROM password_reset_tokens WHERE token_hash=? AND expires_at>?').bind(await digest(token),nowIso()).first<{user_id:string}>()
+      const record=await db.prepare('DELETE FROM password_reset_tokens WHERE token_hash=? AND expires_at>? RETURNING user_id').bind(await digest(token),nowIso()).first<{user_id:string}>()
       if(!record)return fail('This password-reset link is invalid or expired. Request a new one.',400)
       const hash=await passwordHash(password)
       await db.batch([
