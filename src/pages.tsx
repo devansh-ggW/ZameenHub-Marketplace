@@ -51,6 +51,7 @@ export function PropertiesPage() {
   const [minPrice, setMinPrice] = useState(searchParams.get('minPrice') ?? '')
   const [maxPrice, setMaxPrice] = useState(searchParams.get('maxPrice') ?? '')
   const [minArea, setMinArea] = useState(searchParams.get('minArea') ?? '')
+  const [maxArea, setMaxArea] = useState(searchParams.get('maxArea') ?? '')
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>(() => (searchParams.get('amenities') ?? '').split(',').filter(value => (PROPERTY_AMENITIES as readonly string[]).includes(value)))
 
   function apply(event?: FormEvent) {
@@ -64,6 +65,7 @@ export function PropertiesPage() {
     if (minPrice) next.set('minPrice', minPrice)
     if (maxPrice) next.set('maxPrice', maxPrice)
     if (minArea) next.set('minArea', minArea)
+    if (maxArea) next.set('maxArea', maxArea)
     if (selectedAmenities.length) next.set('amenities', selectedAmenities.join(','))
     if (sort !== 'newest') next.set('sort', sort)
     setSearchParams(next)
@@ -71,7 +73,7 @@ export function PropertiesPage() {
 
   function clearAll() {
     setQ(''); setPurpose(''); setType(''); setBeds(''); setBaths('')
-    setMinPrice(''); setMaxPrice(''); setMinArea(''); setSort('newest'); setSelectedAmenities([])
+    setMinPrice(''); setMaxPrice(''); setMinArea(''); setMaxArea(''); setSort('newest'); setSelectedAmenities([])
     setSearchParams({})
   }
 
@@ -85,6 +87,7 @@ export function PropertiesPage() {
     setMinPrice(searchParams.get('minPrice') ?? '')
     setMaxPrice(searchParams.get('maxPrice') ?? '')
     setMinArea(searchParams.get('minArea') ?? '')
+    setMaxArea(searchParams.get('maxArea') ?? '')
     setSelectedAmenities((searchParams.get('amenities') ?? '').split(',').filter(value => (PROPERTY_AMENITIES as readonly string[]).includes(value)))
   }, [searchParams])
 
@@ -111,6 +114,7 @@ export function PropertiesPage() {
       <div className="filter-item"><label htmlFor="beds">Bedrooms</label><select id="beds" value={beds} onChange={e => setBeds(e.target.value)}><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></div>
       <div className="filter-item"><label htmlFor="baths">Bathrooms</label><select id="baths" value={baths} onChange={e => setBaths(e.target.value)}><option value="">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></div>
       <div className="filter-item"><label htmlFor="min-area">Minimum area (sq ft)</label><input id="min-area" type="number" min="0" max="100000000" step="1" value={minArea} onChange={e => setMinArea(e.target.value)} placeholder="Any size" /></div>
+      <div className="filter-item"><label htmlFor="max-area">Maximum area (sq ft)</label><input id="max-area" type="number" min="0" max="100000000" step="1" value={maxArea} onChange={e => setMaxArea(e.target.value)} placeholder="No maximum" /></div>
       <div className="filter-item"><label htmlFor="sort">Sort</label><select id="sort" value={sort} onChange={e => setSort(e.target.value)}><option value="newest">Newest</option><option value="price-asc">Price: low to high</option><option value="price-desc">Price: high to low</option></select></div>
       <details className="filter-amenities"><summary>Amenities{selectedAmenities.length ? ` · ${selectedAmenities.length} selected` : ''}</summary><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={selectedAmenities.includes(amenity)} onChange={event => setSelectedAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></details>
       <button className="btn btn-primary" type="submit">Apply filters</button>
