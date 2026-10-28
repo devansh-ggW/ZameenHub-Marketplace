@@ -512,6 +512,38 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       await db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model).run()
       return ok({id,status:'pending',riskLevel:risk.level,riskScore:risk.score,riskReasons:risk.reasons,reviewMessage:risk.level==='high'?'This listing has been flagged for additional fraud checks. It remains private until review.':'Automated risk screening is complete. This is not proof of ownership; your listing remains private until review.'},201)
     }
+    const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
+    if(archiveMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage your listings.',401)
+      if(!await authLimit(request,db,'listing-manage',10)||!await limited(db,'listing-manage-user:'+user.id,12,60))return fail('Too many listing changes. Please wait before trying again.',429)
+      const id=decodeURIComponent(archiveMatch[1])
+      const result=await db.prepare("UPDATE properties SET status='archived',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),id,user.id).run()
+      if(!result.meta.changes)return fail('Listing could not be found in your account.',404)
+      return ok({id,status:'archived',message:'Your listing is archived and no longer appears in public search.'})
+    }
+    const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
+    if(ownedPropertyMatch&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
+      const property=await db.prepare('SELECT * FROM properties WHERE id=? AND owner_id=?').bind(decodeURIComponent(ownedPropertyMatch[1]),user.id).first<PropertyRow>()
+      if(!property)return fail('Listing not found in your account.',404)
+      return ok(await withProperty(db,property))
+    }
+    if(ownedPropertyMatch&&method==='PATCH') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to edit your listings.',401)
+      if(!await authLimit(request,db,'listing-edit',8)||!await limited(db,'listing-edit-user:'+user.id,10,60))return fail('Too many listing edits. Please wait before trying again.',429)
+      const id=decodeURIComponent(ownedPropertyMatch[1])
+      const current=await db.prepare('SELECT id,owner_id,status FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string;owner_id:string;status:string}>()
+      if(!current)return fail('Listing not found in your account.',404)
+      const input=await body(request);if(!input)return fail('Invalid listing update.')
+      const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000)
+      const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
+      if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
+      const duplicate=await db.prepare("SELECT id FROM properties WHERE id<>? AND lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(id,title,location,city).first<{id:string}>()
+      const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
+      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,risk.level,risk.score,JSON.stringify(risk.reasons),nowIso(),risk.model,nowIso(),id,user.id).run()
+      if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
+      return ok({id,status:'pending',riskLevel:risk.level,riskScore:risk.score,riskReasons:risk.reasons,message:'Changes saved. The listing is pending review and will remain private until approved.'})
+    }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
       const result=await db.prepare('SELECT * FROM properties WHERE owner_id=? ORDER BY created_at DESC LIMIT 100').bind(user.id).all<PropertyRow>()
