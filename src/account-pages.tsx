@@ -51,6 +51,12 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
       if (note.trim().length < 20) { setError('Approval cancelled. Record at least 20 characters of review notes to override a high-risk flag.'); return }
       overrideRisk = true; reviewNote = note.trim()
     }
+    if (status === 'rejected') {
+      const note = window.prompt('Record the specific, evidence-based reason this listing is being rejected (at least 8 characters):')
+      if (note === null) return
+      if (note.trim().length < 8) { setError('Rejection cancelled. Add at least 8 characters of evidence-based notes.'); return }
+      reviewNote = note.trim()
+    }
     setWorkingId(id); setNotice(''); setError('')
     const result = await apiRequest<{ status: string; auditRecorded?: boolean }>(`/api/admin/properties/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status, overrideRisk, reviewNote }) })
     setWorkingId('')
