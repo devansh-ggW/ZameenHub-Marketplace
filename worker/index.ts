@@ -422,12 +422,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const pending=await db.prepare('SELECT mfa_pending_secret_ciphertext,mfa_pending_expires_at FROM users WHERE id=?').bind(user.id).first<{mfa_pending_secret_ciphertext:string|null;mfa_pending_expires_at:string|null}>()
       if(!pending?.mfa_pending_secret_ciphertext||!pending.mfa_pending_expires_at||Date.parse(pending.mfa_pending_expires_at)<=Date.now())return fail('Your authenticator setup expired. Start setup again.',400)
       const secret=await decryptMfaSecret(pending.mfa_pending_secret_ciphertext,env)
-      if(!await verifyTotp(secret,code))return fail('That authenticator code is invalid. Check the code and try again.',400)
+      const setupCounter=await matchedTotpCounter(secret,code)
+      if(setupCounter===null)return fail('That authenticator code is invalid. Check the code and try again.',400)
       const encrypted=pending.mfa_pending_secret_ciphertext
       const recoveryCodes=Array.from({length:10},()=>Array.from(bytes(12),b=>b.toString(16).padStart(2,'0')).join('').toUpperCase())
       const currentSessionHash=await digest(cookieToken(request))
       const statements=[
-        db.prepare('UPDATE users SET mfa_enabled=1,mfa_secret_ciphertext=?,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,mfa_last_counter=?,updated_at=? WHERE id=?').bind(encrypted,Math.floor(Date.now()/30000),nowIso(),user.id),
+        db.prepare('UPDATE users SET mfa_enabled=1,mfa_secret_ciphertext=?,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,mfa_last_counter=?,updated_at=? WHERE id=?').bind(encrypted,setupCounter,nowIso(),user.id),
         db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id),
         db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').bind(user.id,currentSessionHash),
         ...await Promise.all(recoveryCodes.map(async codeValue=>db.prepare('INSERT INTO mfa_recovery_codes(id,user_id,code_hash) VALUES(?,?,?)').bind(uuid(),user.id,await digest(codeValue))))
