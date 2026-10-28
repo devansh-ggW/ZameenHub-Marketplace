@@ -97,9 +97,6 @@ async function matchedTotpCounter(secret:string,codeValue:unknown):Promise<numbe
   }
   return null
 }
-async function verifyTotp(secret:string,codeValue:unknown) {
-  return (await matchedTotpCounter(secret,codeValue))!==null
-}
 async function encryptionKey(env:Env) {
   if(!env.MFA_ENCRYPTION_KEY||env.MFA_ENCRYPTION_KEY.length<32)throw new Error('MFA_ENCRYPTION_KEY must be configured as a 32-character-or-longer Cloudflare secret')
   const material=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(env.MFA_ENCRYPTION_KEY))
