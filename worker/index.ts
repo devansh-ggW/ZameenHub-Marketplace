@@ -691,6 +691,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
       return ok({status,priorStatus,auditRecorded:true,highRiskOverride:status==='published'&&adminRiskOverride})
     }
+    if(path==='/api/support'&&method==='POST') {
+      if(!await authLimit(request,db,'support',8))return fail('Too many requests. Please wait and try again.',429)
+      const input=await body(request),email=normalizeEmail(clean(input?.email,254)),message=clean(input?.message,4000)
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||message.length<12)return fail('Enter a valid email and a message of at least 12 characters.')
+      const supportTitle='Support request',supportBody=`From: ${email.replace(/[<>]/g,'')}\n\n${message.replace(/[<>]/g,'')}`,supportUrl=env.APP_URL||url.origin
+      const sent=await sendEmail(env,env.SUPPORT_EMAIL||'dewifystores@gmail.com','ZameenHub support request',emailHtml(supportTitle,supportBody,supportUrl,'Open support site'),emailText(supportTitle,supportBody,supportUrl,'Open support site'))
+      if(!sent)return fail('Support email could not be delivered. Please email dewifystores@gmail.com directly.',503)
+      return ok({message:'Your support request was sent. We will follow up at the email you provided.'},201)
+    }
     return fail('Route not found.',404)
   } catch(error) {
     console.error('ZameenHub API error',error instanceof Error?error.message:'unknown error')
