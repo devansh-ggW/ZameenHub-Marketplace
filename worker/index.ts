@@ -572,7 +572,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<{id:string;property_id:string;reporter_id:string|null;reason:string;details:string;status:string;created_at:string;resolved_by:string|null;resolved_at:string|null;resolution_note:string;property_title:string;property_slug:string;property_city:string}>()
       return ok(result.results)
     }
-    const reportMatch=path.match(/^\\/api\\/admin\\/reports\\/([^/]+)$/)
+    const reportMatch=path.match(/^\/api\/admin\/reports\/([^/]+)$/)
     if(reportMatch&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to update reports.',403)
