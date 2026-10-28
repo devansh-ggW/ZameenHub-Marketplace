@@ -28,3 +28,19 @@ CREATE TABLE IF NOT EXISTS mfa_recovery_codes (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_mfa_recovery_user ON mfa_recovery_codes(user_id, used_at);
+
+
+-- Audit trail for administrative decisions, including overrides of high-risk flags.
+CREATE TABLE IF NOT EXISTS property_moderation_events (
+  id TEXT PRIMARY KEY,
+  property_id TEXT NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  reviewer_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  prior_status TEXT NOT NULL,
+  new_status TEXT NOT NULL CHECK (new_status IN ('published', 'rejected')),
+  review_note TEXT NOT NULL DEFAULT '',
+  ai_risk_level TEXT NOT NULL DEFAULT 'not-screened',
+  ai_risk_score INTEGER NOT NULL DEFAULT 0 CHECK (ai_risk_score BETWEEN 0 AND 100),
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_property_moderation_events_property ON property_moderation_events(property_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_property_moderation_events_reviewer ON property_moderation_events(reviewer_id, created_at DESC);
