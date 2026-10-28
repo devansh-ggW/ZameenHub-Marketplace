@@ -180,15 +180,23 @@ function emailText(title:string,body:string,url:string,button:string) {
   return `ZameenHub\n\n${title}\n\n${body}\n\n${button}:\n${url}\n\nIf you did not request this, you can ignore this email. Never share this link with anyone.\n\nSupport: dewifystores@gmail.com`
 }
 async function limited(db:D1Database,key:string,max=8,windowMinutes=15) {
-  const keyHash=await digest(key), now=Date.now(), windowMs=windowMinutes*60_000
-  const row=await db.prepare('SELECT window_started_at,request_count FROM auth_rate_limits WHERE key_hash=?').bind(keyHash).first<{window_started_at:string;request_count:number}>()
-  if(!row||now-Date.parse(row.window_started_at)>windowMs) {
-    await db.prepare('INSERT INTO auth_rate_limits(key_hash,window_started_at,request_count) VALUES(?,?,1) ON CONFLICT(key_hash) DO UPDATE SET window_started_at=excluded.window_started_at,request_count=1').bind(keyHash,nowIso()).run()
-    return true
+  const keyHash=await digest(key), now=Date.now(), current=nowIso()
+  const cutoff=new Date(now-windowMinutes*60_000).toISOString()
+  // Increment and check in one SQLite statement. The former SELECT-then-UPDATE
+  // approach allowed parallel requests to all pass against the same stale count.
+  const row=await db.prepare(`INSERT INTO auth_rate_limits(key_hash,window_started_at,request_count)
+    VALUES(?,?,1)
+    ON CONFLICT(key_hash) DO UPDATE SET
+      window_started_at=CASE WHEN auth_rate_limits.window_started_at<=? THEN excluded.window_started_at ELSE auth_rate_limits.window_started_at END,
+      request_count=CASE WHEN auth_rate_limits.window_started_at<=? THEN 1 ELSE auth_rate_limits.request_count+1 END
+    RETURNING request_count`).bind(keyHash,current,cutoff,cutoff).first<{request_count:number}>()
+  // The keys are hashed and contain no request payloads; remove old windows
+  // occasionally so arbitrary email/IP attempts cannot grow this table forever.
+  if(bytes(1)[0]<2) {
+    const old=new Date(now-7*24*60*60_000).toISOString()
+    await db.prepare('DELETE FROM auth_rate_limits WHERE window_started_at<?').bind(old).run()
   }
-  if(row.request_count>=max)return false
-  await db.prepare('UPDATE auth_rate_limits SET request_count=request_count+1 WHERE key_hash=?').bind(keyHash).run()
-  return true
+  return !!row&&row.request_count<=max
 }
 async function authLimit(request:Request,db:D1Database,route:string,max=8) {
   const ip=request.headers.get('CF-Connecting-IP')||'unknown'
@@ -333,9 +341,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(!await limited(db,'login-email:'+email,8,15))return fail('Too many sign-in attempts. Please wait and try again.',429)
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE email=?').bind(email).first<UserRow>()
-      const valid=await verifyPassword(password,user?.password_hash||null)
+      // Match the PBKDF2 work for unknown emails to reduce account-enumeration
+      // through response timing. The dummy expected digest is intentionally invalid.
+      const dummyHash='pbkdf2$100000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+      const valid=await verifyPassword(password,user?.password_hash||dummyHash)
       if(!user||!valid)return fail('Email or password is incorrect.',401)
       if(user.email_verified!==1)return fail('Please verify your email before signing in. Use the resend verification option if needed.',403)
+      const previousToken=cookieToken(request)
+      if(previousToken)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await digest(previousToken)).run()
+      const previousChallenge=requestCookie(request,'zh_mfa')
+      if(previousChallenge)await db.prepare('DELETE FROM auth_mfa_challenges WHERE token_hash=?').bind(await digest(previousChallenge)).run()
       if(user.mfa_enabled===1){
         const challenge=randomToken()
         await db.prepare('DELETE FROM auth_mfa_challenges WHERE expires_at<=?').bind(nowIso()).run()
@@ -411,9 +426,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       let valid=false
       try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }
       if(!valid)return fail('Enter a valid authenticator or unused recovery code.',401)
+      const currentSessionHash=await digest(cookieToken(request))
       await db.batch([
         db.prepare('UPDATE users SET mfa_enabled=0,mfa_secret_ciphertext=NULL,mfa_pending_secret_ciphertext=NULL,mfa_pending_expires_at=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id),
-        db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id)
+        db.prepare('DELETE FROM mfa_recovery_codes WHERE user_id=?').bind(user.id),
+        db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').bind(user.id,currentSessionHash),
+        db.prepare('DELETE FROM auth_mfa_challenges WHERE user_id=?').bind(user.id)
       ])
       await sendEmail(env,user.email,'Two-factor authentication disabled on ZameenHub',emailHtml('Two-factor authentication disabled','Authenticator-based two-factor authentication was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'),emailText('Two-factor authentication disabled','Authenticator-based two-factor authentication was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'))
       return ok({enabled:false})
@@ -443,7 +461,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       await db.batch([
         db.prepare('UPDATE users SET password_hash=?,updated_at=? WHERE id=?').bind(hash,nowIso(),record.user_id),
         db.prepare('DELETE FROM password_reset_tokens WHERE user_id=?').bind(record.user_id),
-        db.prepare('DELETE FROM sessions WHERE user_id=?').bind(record.user_id)
+        db.prepare('DELETE FROM sessions WHERE user_id=?').bind(record.user_id),
+        db.prepare('DELETE FROM auth_mfa_challenges WHERE user_id=?').bind(record.user_id)
       ])
       return ok({message:'Password updated. All existing sessions have been signed out; sign in with your new password.'})
     }
@@ -467,12 +486,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const accountRateKeys=await Promise.all([
         'login-email:'+user.email,'listing-user:'+user.id,'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id
       ].map(key=>digest(key)))
-      await db.batch([
-        db.prepare('DELETE FROM inquiries WHERE sender_id=?').bind(user.id),
-        db.prepare('DELETE FROM properties WHERE owner_id=?').bind(user.id),
-        db.prepare('DELETE FROM users WHERE id=?').bind(user.id),
+      // Keep the last-admin guard inside the atomic batch as well: two admins
+      // attempting deletion at once must not both observe a count of two.
+      const canDeleteAdmin=`(role<>'admin' OR (SELECT COUNT(*) FROM users WHERE role='admin')>1)`
+      const deletion=await db.batch([
+        db.prepare(`DELETE FROM inquiries WHERE sender_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
+        db.prepare(`DELETE FROM properties WHERE owner_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
+        db.prepare(`DELETE FROM users WHERE id=? AND ${canDeleteAdmin}`).bind(user.id),
         ...accountRateKeys.map(key=>db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=?').bind(key))
       ])
+      if(!deletion[2]?.meta?.changes)return fail('The last administrator cannot delete this account. Assign another trusted administrator first.',409)
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/properties'&&method==='GET') {
