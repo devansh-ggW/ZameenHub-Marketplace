@@ -77,7 +77,13 @@ def main() -> int:
                   VALUES('pending','owner','pending-home','Pending home','rent','Apartment','West','Nashik',20000,'A detailed description of another test property','pending','high',80)""")
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('other-property','other-owner','other-home','Other home','sale','Apartment','East','Nashik',3000000,'A detailed description of another owner property','published')""")
-    db.execute("UPDATE properties SET amenities_json=? WHERE id='published'", ('["Parking","Lift"]',))
+    db.execute("UPDATE properties SET amenities_json=?,area=1200 WHERE id='published'", ('["Parking","Lift"]',))
+    db.execute("UPDATE properties SET area=1800 WHERE id='other-property'")
+    area_range_query = "SELECT id FROM properties WHERE status='published' AND area>=? AND area<=? ORDER BY id"
+    expect([row["id"] for row in db.execute(area_range_query, (1000, 1500))] == ["published"],
+           "Area-range filtering did not return the expected property")
+    expect([row["id"] for row in db.execute(area_range_query, (2000, 3000))] == [],
+           "Area-range filtering returned an out-of-range property")
     amenity_query = """SELECT p.id FROM properties p WHERE p.status='published'
                        AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(p.amenities_json) THEN p.amenities_json ELSE '[]' END) AS item WHERE item.value=?)"""
     expect([row["id"] for row in db.execute(amenity_query, ("Parking",))] == ["published"],
