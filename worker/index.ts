@@ -23,7 +23,7 @@ const randomToken=()=>b64(bytes(32))
 const nowIso=()=>new Date().toISOString()
 const future=(minutes:number)=>new Date(Date.now()+minutes*60_000).toISOString()
 const normalizeEmail=(s:string)=>s.trim().toLowerCase()
-function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('/')||s.startsWith('//')||s.includes('\\\\'))return '';try{const u=new URL(s,'https://zameenhub.invalid');return u.origin==='https://zameenhub.invalid'?u.pathname+u.search+u.hash:''}catch{return ''}}
+function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('/')||s.startsWith('//')||s.includes('\\'))return '';try{const u=new URL(s,'https://zameenhub.invalid');return u.origin==='https://zameenhub.invalid'?u.pathname+u.search+u.hash:''}catch{return ''}}
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
 const passwordValue=(v:unknown)=>typeof v==='string'?v.slice(0,128):''
 const safeInt=(v:unknown,min=0,max=100_000_000)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>=min&&n<=max?n:null}
