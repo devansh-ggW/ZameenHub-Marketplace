@@ -957,11 +957,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const status=clean(input.status,20),note=clean(input.resolutionNote,1200),reportId=decodeURIComponent(reportMatch[1])
       if(!['reviewing','resolved','dismissed'].includes(status))return fail('Unsupported report status.')
       if(['resolved','dismissed'].includes(status)&&note.trim().length<8)return fail('Add a resolution note of at least 8 characters before closing a report.')
-      const old=await db.prepare("SELECT id FROM property_reports WHERE id=? AND status IN ('open','reviewing')").bind(reportId).first<{id:string}>()
+      const old=await db.prepare("SELECT r.id,r.property_id,p.title FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.id=? AND r.status IN ('open','reviewing')").bind(reportId).first<{id:string;property_id:string;title:string}>()
       if(!old)return fail('Report was already handled or could not be found.',404)
-      const result=await db.prepare("UPDATE property_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:nowIso(),note,reportId).run()
-      if(!result.meta.changes)return fail('Report was already handled or could not be found.',409)
-      return ok({id:reportId,status})
+      const reviewTime=nowIso(),eventAction=status==='reviewing'?'report_reviewing':status==='resolved'?'report_resolved':'report_dismissed'
+      const audit=await db.batch([
+        db.prepare("UPDATE property_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:reviewTime,note,reportId),
+        db.prepare("INSERT INTO admin_action_events(id,admin_id,action,target_id,target_label,reason,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),user.id,eventAction,reportId,old.title+' · report',note||'Report assigned for review.',reviewTime)
+      ])
+      if(!audit[0]?.meta?.changes)return fail('Report was already handled or could not be found.',409)
+      if(!audit[1]?.meta?.changes)return fail('The report status changed, but its audit entry could not be saved. Contact support.',500)
+      return ok({id:reportId,status,auditRecorded:true})
     }
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
