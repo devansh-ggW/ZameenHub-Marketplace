@@ -699,7 +699,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const duplicate=await db.prepare("SELECT id FROM properties WHERE lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
-      const autoPublished=risk.level==='low'&&risk.model==='@cf/meta/llama-3.2-1b-instruct'&&!duplicate
+      const autoPublished=risk.level==='low'&&risk.model.startsWith('@cf/meta/llama-')&&!duplicate
       const initialStatus=autoPublished?'published':'pending'
       const createdAt=nowIso()
       const statements=[
@@ -712,7 +712,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         : evidence.status==='submitted'
           ? 'Submitted for review. AI could not safely auto-publish this listing, so it remains private until review. A supplied record link is not automatically verified.'
           : 'Submitted for review. AI could not safely auto-publish this listing. Add a public evidence reference in Edit details if you have one; AI screening is not proof of ownership.'
-      return ok({id,status:initialStatus,aiScreened:risk.model==='@cf/meta/llama-3.2-1b-instruct',message},201)
+      return ok({id,status:initialStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message},201)
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
@@ -745,13 +745,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const duplicate=await db.prepare("SELECT id FROM properties WHERE id<>? AND lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(id,title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
-      const autoPublished=risk.level==='low'&&risk.model==='@cf/meta/llama-3.2-1b-instruct'&&!duplicate
+      const autoPublished=risk.level==='low'&&risk.model.startsWith('@cf/meta/llama-')&&!duplicate
       const nextStatus=autoPublished?'published':'pending'
       const updateTime=nowIso()
       const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,verification_status=?,verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=?,updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),updateTime,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt,nextStatus,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       await savePropertyMedia(db,id,mediaImages,videoUrl)
-      return ok({id,status:nextStatus,aiScreened:risk.model==='@cf/meta/llama-3.2-1b-instruct',message:autoPublished?'Changes saved and the listing passed Cloudflare AI screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
+      return ok({id,status:nextStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message:autoPublished?'Changes saved and the listing passed Cloudflare AI screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
