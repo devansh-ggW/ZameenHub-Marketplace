@@ -128,7 +128,7 @@ export function MessagesPage() {
           </div>
           <form className="chat-composer" onSubmit={sendMessage}>
             <label htmlFor="chat-message">Message</label>
-            <textarea id="chat-message" className="form-control" required maxLength={2000} rows={3} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Ask about availability, location, or arrange a viewing…" />
+            <textarea id="chat-message" className="form-control" required maxLength={2000} rows={5} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Ask about availability, location, or arrange a viewing…" />
             <div className="chat-composer-footer"><small>{draft.trim().length}/2000 · Messages are visible only to conversation participants.</small><button className="btn btn-primary" disabled={sending || !draft.trim()}>{sending ? 'Sending…' : 'Send message'}</button></div>
           </form>
         </>}
