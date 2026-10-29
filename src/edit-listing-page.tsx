@@ -99,7 +99,7 @@ export function EditListingPage() {
   if (error && !property) return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Could not load this listing.</h1><p>{error}</p><Link className="btn btn-outline" to="/my-listings">Back to my listings</Link></div></div></main>
 
   return <main className="page-shell"><div className="container">
-    <div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Edit your listing.</h1><p>Save corrections to your property details. Every edit returns the listing to pending review so changed information is checked before it is public again.</p></div>
+    <div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Edit your listing.</h1><p>Save corrections to your property details. Each edit re-runs Cloudflare AI screening. Low-risk, non-duplicate edits may publish automatically; other edits stay private for review. Evidence-review status resets after every edit.</p></div>
     {property && <form className="form-card edit-listing-form" onSubmit={submit}>
       <div className="edit-listing-meta"><span>Current status: <strong>{property.status}</strong></span><span>Evidence review: <strong>{property.verificationStatus || 'unverified'}</strong></span><span>Reference: <code>{property.id}</code></span></div>
       <div className="form-grid">
