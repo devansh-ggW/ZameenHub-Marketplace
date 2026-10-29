@@ -539,3 +539,6 @@ img { max-width: 100%; display: block; }
   .chat-composer-footer { align-items: stretch; flex-direction: column; }
   .chat-composer-footer .btn { width: 100%; }
 }
+
+.ai-screened-note { margin: 12px 0 18px; padding: 12px 14px; background: #eef4ff; border-left: 3px solid var(--blue); color: #23477f; font-size: 12px; line-height: 1.65; }
+.chat-start-card { margin: 16px 0; }
