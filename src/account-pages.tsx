@@ -90,6 +90,16 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
     setItems(current => current.map(item => item.id === id ? { ...item, status: 'archived' } : item))
   }
 
+  async function deleteListing(id: string) {
+    if (!window.confirm('Permanently delete this property? This cannot be undone. Its listing, saved entries, inquiries, reports and associated chats will be removed.')) return
+    setWorkingId(id); setError(''); setNotice('')
+    const result = await apiRequest<{ id: string; deleted: boolean; message: string }>(`/api/my/properties/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    setWorkingId('')
+    if (!result.ok) { setError(result.error); return }
+    setNotice(result.data.message)
+    setItems(current => current.filter(item => item.id !== id))
+  }
+
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
   return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Only authorized moderators and admins can approve a submission for public discovery.' : kind === 'my-listings' ? 'Listings that pass Cloudflare AI’s low-risk screen may publish automatically; other submissions remain private for review. AI screening is not proof of ownership.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
     {loading ? <p className="status-message">Loading your account…</p> : <>
@@ -104,7 +114,8 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
         </div>}
         {kind === 'my-listings' && <div className="listing-actions listing-management-actions">
           <Link className="btn btn-outline" to={`/edit-listing/${encodeURIComponent(item.id)}`}>{item.status === 'archived' ? 'Edit and resubmit' : 'Edit details'}</Link>
-          {item.status !== 'archived' && <button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void archiveListing(item.id)}>{workingId === item.id ? 'Archiving…' : 'Archive listing'}</button>}
+          {item.status !== 'archived' && <button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void archiveListing(item.id)}>{workingId === item.id ? 'Working…' : 'Archive listing'}</button>}
+          <button className="btn-danger" disabled={workingId === item.id} onClick={() => void deleteListing(item.id)}>{workingId === item.id ? 'Working…' : 'Delete property'}</button>
         </div>}
         {kind === 'review-queue' && <><div className="verification-evidence-card"><strong>Evidence review: {item.verificationStatus || 'unverified'}</strong>{item.verificationEvidenceUrl ? <><p>Type: {item.verificationEvidenceType || 'public record reference'}</p><a href={item.verificationEvidenceUrl} target="_blank" rel="noopener noreferrer">Open submitted evidence reference ↗</a><p className="muted">Check the source and whether its details match this listing. Do not award the badge based on an AI score or URL alone.</p></> : <p className="muted">No evidence URL supplied. The listing can be reviewed for publication without an evidence-reviewed badge.</p>}</div><div className={`ai-risk-card ai-risk-${item.aiRiskLevel ?? 'unscored'}`}><strong>AI risk screen: {item.aiRiskLevel ?? 'not-screened'} · {item.aiRiskScore ?? 0}/100</strong><p>Risk scoring is a triage signal, not proof of fraud or ownership. Check the evidence before making a decision.</p>{item.aiRiskReasons?.length ? <ul>{item.aiRiskReasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul> : <p>No specific text flags were returned.</p>}</div></>}
         {kind === 'review-queue' && <div className="review-actions"><button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item, 'published')}>Approve & publish</button>{!!item.verificationEvidenceUrl && <button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item, 'published', true)}>Approve + mark evidence reviewed</button>}<button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item, 'rejected')}>Reject</button></div>}
