@@ -198,8 +198,8 @@ export function PropertyDetailPage() {
         <div className="detail-section"><SectionKicker>Features</SectionKicker><div className="amenities">{property.amenities.map(amenity => <span className="amenity" key={amenity}><Check size={13} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--blue)' }} />{amenity}</span>)}</div></div>
       </div>
       <aside className="detail-panel">
-        <div className="eyebrow">{property.verified ? 'Verified listing' : 'Published listing'}</div>
-        {property.verified && <p className="verification-badge">Evidence reference reviewed</p>}
+        <div className="eyebrow">Published listing</div>
+        <p className={'verification-badge ' + (property.verified ? 'verified' : 'unverified')}>{property.verified ? 'Verified by ZameenHub' : 'Unverified · awaiting manual verification'}</p>
         <h1>{property.title}</h1>
         <div className="muted">{property.location}</div>
         <div className="detail-price">{formatPrice(property.price, property.purpose, property.pricePeriod)}</div>
