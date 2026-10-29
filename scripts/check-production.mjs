@@ -24,6 +24,8 @@ if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.include
 if(!worker.includes('withProperty(db,p,true,true)'))errors.push('Moderation queue must include risk signals and private evidence references')
 if((worker.split('withProperty(db,p,true,true)').length-1)!==1||!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')"))errors.push('Detailed risk signals and evidence references must only be exposed in the authorized moderation queue')
 if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage }')||!app.includes('<Route path="*" element={<NotFoundPage />} />'))errors.push('Unknown routes must use the dedicated not-found page, not the homepage')
+if(!read('src/App.tsx').includes('import { MessagesPage }')||!read('src/App.tsx').includes('path="/messages"'))errors.push('Private property chat route is missing')
+if(!read('src/components.tsx').includes('const isPublished = property.status === \'published\'')||!read('src/components.tsx').includes('{isPublished && <FavoriteButton'))errors.push('Private listing cards must not show unusable public links or favorites')
 const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
 const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
 const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
@@ -101,6 +103,7 @@ if(!pages.includes('<PropertyVideo src={property.videoUrl}'))errors.push('Proper
 if(!read('src/account-pages.tsx').includes('/api/account/profile')||!read('src/account-pages.tsx').includes('profile-image-url'))errors.push('Account profile must let users save and remove profile image URLs')
 if(!read('src/account-pages.tsx').includes('verifyEvidence'))errors.push('Moderators need an explicit evidence-review decision instead of automatic verification')
 if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
+if(!read('src/account-security.tsx').includes('Show password')||!read('src/account-security.tsx').includes('Hide password')||!read('src/account-security.tsx').includes('delete-account-password'))errors.push('MFA and delete-account password fields must expose accessible show/hide controls')
 if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
 if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
 if(!read('public/_headers').includes('Strict-Transport-Security:'))errors.push('Static pages should include HSTS')
