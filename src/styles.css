@@ -548,3 +548,25 @@ img { max-width: 100%; display: block; }
 .password-toggle { flex: 0 0 auto; border: 1px solid var(--line); background: #fff; color: var(--ink); min-width: 60px; padding: 0 12px; font-size: 12px; font-weight: 800; cursor: pointer; }
 .password-toggle:hover { background: var(--soft); }
 .password-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+
+/* Cookie consent controls */
+.cookie-notice { display: block; max-height: min(80vh, 620px); overflow-y: auto; border-radius: 8px; }
+.cookie-notice-main { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.cookie-notice-main > div:first-child { min-width: 0; }
+.cookie-notice-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.cookie-notice-actions .btn { min-height: 42px; white-space: nowrap; }
+.cookie-preferences { display: grid; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.cookie-preference-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.cookie-preference-row p { margin: 5px 0 0; }
+.cookie-preference-row label { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; font-size: 12px; font-weight: 700; }
+.cookie-preference-row input { accent-color: var(--blue); }
+.cookie-settings-trigger { position: fixed; z-index: 149; left: 12px; bottom: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.96); color: var(--ink); box-shadow: 0 4px 18px rgba(10,22,39,.14); padding: 9px 12px; border-radius: 4px; font-size: 11px; font-weight: 800; }
+.cookie-settings-trigger:hover { background: var(--soft); }
+@media (max-width: 760px) {
+  .cookie-notice-main { display: block; }
+  .cookie-notice-actions { display: grid; grid-template-columns: 1fr; margin-top: 14px; }
+  .cookie-notice-actions .btn { width: 100%; }
+  .cookie-preference-row { align-items: flex-start; }
+  .cookie-settings-trigger { left: 8px; bottom: 8px; }
+}
