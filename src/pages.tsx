@@ -211,8 +211,12 @@ export function PropertyDetailPage() {
           <h2>Chat with the owner</h2>
           <p className="muted" style={{ fontSize: 13 }}>Ask questions and continue the conversation in your private ZameenHub inbox. Sign-in is required to reduce spam.</p>
           {!chatOpen ? <button className="btn btn-primary" type="button" style={{ width: '100%' }} onClick={() => {
+            if (!viewerAuthenticated) {
+              navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
+              return
+            }
             setChatOpen(true)
-            if (!viewerAuthenticated) setChatError('Sign in or create an account to start a private chat.')
+            setChatError('')
           }}>{viewerAuthenticated ? 'Start private chat' : 'Sign in to chat'}</button> : <form onSubmit={startChat}>
             <div className="form-field"><label htmlFor="chat-first-message">Your message</label><textarea className="form-control" id="chat-first-message" required maxLength={2000} rows={3} value={chatDraft} onChange={event => setChatDraft(event.target.value)} placeholder="Hi, is this property available? Could I arrange a viewing?" /></div>
             {chatError && <p className="status-message error" role="alert">{chatError}</p>}
