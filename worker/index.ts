@@ -7,6 +7,7 @@ export type Env = {
   R2?: R2Bucket
   AI?: AiBinding
   MFA_ENCRYPTION_KEY?: string
+  TURNSTILE_SECRET_KEY?: string
   RESEND_API_KEY?: string
   RESEND_FROM_EMAIL?: string
   SUPPORT_EMAIL?: string
@@ -152,7 +153,7 @@ async function screenListingRisk(input:{title:string;location:string;city:string
     }
   }
   const uniqueReasons=[...new Set(reasons)].slice(0,5)
-  if(!modelAvailable&&uniqueReasons.length===0)uniqueReasons.push('Cloudflare AI screening unavailable; manual review is required')
+  if(!modelAvailable&&uniqueReasons.length===0)uniqueReasons.push('Automated screening unavailable; manual review is required')
   const level:ListingRisk['level']=score>=65?'high':score>=30?'medium':modelAvailable?'low':'unscored'
   return {level,score,reasons:uniqueReasons,model}
 }
@@ -209,6 +210,20 @@ async function limited(db:D1Database,key:string,max=8,windowMinutes=15) {
 async function authLimit(request:Request,db:D1Database,route:string,max=8) {
   const ip=request.headers.get('CF-Connecting-IP')||'unknown'
   return limited(db,route+':'+ip,max,15)
+}
+async function verifyTurnstile(request:Request,env:Env,tokenValue:unknown,action:'signup'|'login'):Promise<boolean>{
+  const token=clean(tokenValue,4096)
+  if(!env.TURNSTILE_SECRET_KEY||!token)return false
+  try{
+    const data=new URLSearchParams({secret:env.TURNSTILE_SECRET_KEY,response:token})
+    const remoteIp=request.headers.get('CF-Connecting-IP')
+    if(remoteIp)data.set('remoteip',remoteIp)
+    const response=await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify',{method:'POST',body:data})
+    if(!response.ok)return false
+    const result=await response.json() as {success?:boolean;hostname?:string;action?:string}
+    const expectedHost=env.APP_URL?new URL(env.APP_URL).hostname:new URL(request.url).hostname
+    return result.success===true&&result.hostname===expectedHost&&result.action===action
+  }catch{return false}
 }
 async function issueToken(db:D1Database,userId:string,purpose:'verify'|'activate',minutes=30) {
   const token=randomToken()
@@ -401,6 +416,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const nextPath=safeNextPath(input.next)
       const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
+      if(!env.TURNSTILE_SECRET_KEY)return fail('Bot verification is not configured on this deployment. Please contact support.',503)
+      if(!await verifyTurnstile(request,env,input.turnstileToken,'signup'))return fail('Please complete the bot verification and try again.',403)
       if(!await limited(db,'register-email:'+email,3,60))return fail('Too many account setup requests for this email. Please wait before trying again.',429)
 
       // Do the same password-hash work for new and existing addresses, and
@@ -479,6 +496,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'login',8))return fail('Too many sign-in attempts. Please wait and try again.',429)
       const input=await body(request);if(!input)return fail('Invalid request body.')
       const email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
+      if(!env.TURNSTILE_SECRET_KEY)return fail('Bot verification is not configured on this deployment. Please contact support.',503)
+      if(!await verifyTurnstile(request,env,input.turnstileToken,'login'))return fail('Please complete the bot verification and try again.',403)
       if(!await limited(db,'login-email:'+email,8,15))return fail('Too many sign-in attempts. Please wait and try again.',429)
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE email=?').bind(email).first<UserRow>()
       // Match the PBKDF2 work for unknown emails to reduce account-enumeration
@@ -708,7 +727,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ]
       await db.batch(statements)
       const message=autoPublished
-        ? 'Cloudflare AI screening passed and your listing is now published. This is an automated content-risk check, not proof of ownership; the evidence status remains separate.'
+        ? 'Automated screening passed and your listing is now published. This is an automated content-risk check, not proof of ownership; the evidence status remains separate.'
         : evidence.status==='submitted'
           ? 'Submitted for review. AI could not safely auto-publish this listing, so it remains private until review. A supplied record link is not automatically verified.'
           : 'Submitted for review. AI could not safely auto-publish this listing. Add a public evidence reference in Edit details if you have one; AI screening is not proof of ownership.'
@@ -772,7 +791,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,verification_status=?,verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=?,updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),updateTime,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt,nextStatus,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       await savePropertyMedia(db,id,mediaImages,videoUrl)
-      return ok({id,status:nextStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message:autoPublished?'Changes saved and the listing passed Cloudflare AI screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
+      return ok({id,status:nextStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message:autoPublished?'Changes saved and the listing passed automated screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
