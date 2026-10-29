@@ -91,6 +91,30 @@ def main() -> int:
     db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                ("other-owner", "other-owner@example.test", "Other Owner", "user", "test-hash"))
 
+    # Existing accounts default to active and retain the option to enable email MFA.
+    security_defaults = db.execute("SELECT is_banned,mfa_email_enabled FROM users WHERE id='owner'").fetchone()
+    expect(security_defaults[:] == (0, 0), "Existing accounts should default to not suspended with email MFA disabled")
+    db.execute("""INSERT INTO auth_email_mfa_codes(id,user_id,purpose,salt,code_hash,attempts,expires_at,created_at)
+                  VALUES('email-code-one','owner','setup','random-salt','peppered-hash',0,'2026-10-30T00:00:00.000Z',?)""", (now,))
+    try:
+        db.execute("""INSERT INTO auth_email_mfa_codes(id,user_id,purpose,salt,code_hash,attempts,expires_at,created_at)
+                      VALUES('email-code-two','owner','setup','another-salt','another-hash',0,'2026-10-30T00:00:00.000Z',?)""", (now,))
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("Email MFA allowed more than one active code record per user and purpose")
+    try:
+        db.execute("UPDATE auth_email_mfa_codes SET attempts=6 WHERE id='email-code-one'")
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("Email MFA accepted more than five attempts")
+    db.execute("""INSERT INTO admin_action_events(id,admin_id,action,target_id,target_label,reason,created_at)
+                  VALUES('admin-event-test','reviewer','user_banned','owner','owner@example.test','Repeated abuse after review',?)""", (now,))
+    expect(db.execute("SELECT action,target_label,reason FROM admin_action_events WHERE id='admin-event-test'").fetchone()[:] ==
+           ("user_banned", "owner@example.test", "Repeated abuse after review"),
+           "Administrator action audit event did not persist")
+
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status)
                   VALUES('published','owner','published-home','Published home','sale','Apartment','Central','Nashik',5000000,'A detailed description of a test property','published')""")
     db.execute("""INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,description,status,ai_risk_level,ai_risk_score)
