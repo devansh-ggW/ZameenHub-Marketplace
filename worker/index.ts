@@ -688,7 +688,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         if(user.mfa_enabled===1){try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }}
         if(!valid&&user.mfa_email_enabled===1){
           const emailMatch=await inspectEmailMfaCode(db,user.id,'delete',input?.emailCode)
-          if(emailMatch){const consumed=await db.prepare(\"DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='delete' AND code_hash=? AND expires_at>? AND attempts<=5 RETURNING id\").bind(emailMatch.id,user.id,emailMatch.codeHash,nowIso()).first<{id:string}>();valid=!!consumed}
+          if(emailMatch){const consumed=await db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='delete' AND code_hash=? AND expires_at>? AND attempts<=5 RETURNING id").bind(emailMatch.id,user.id,emailMatch.codeHash,nowIso()).first<{id:string}>();valid=!!consumed}
         }
         if(!valid)return fail('Enter a valid authenticator/recovery code or request an email code to confirm account deletion.',401)
       }
