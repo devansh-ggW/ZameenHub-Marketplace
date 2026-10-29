@@ -34,12 +34,6 @@ export type Property = {
   ownerName: string
   ownerProfileImageUrl?: string
   ownerRole: string
-  aiScreened?: boolean
-  aiRiskLevel?: 'low' | 'medium' | 'high' | 'unscored' | 'not-screened'
-  aiRiskScore?: number
-  aiRiskReasons?: string[]
-  aiScreenedAt?: string
-  aiModel?: string
   reviewMessage?: string
 }
 
