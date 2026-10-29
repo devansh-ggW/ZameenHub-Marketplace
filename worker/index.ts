@@ -800,7 +800,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/my/inquiries'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your inquiries.',401)
-      if(!await authLimit(request,db,'inquiry-inbox',20)||!await limited(db,'inquiry-inbox-user:'+user.id,60,60))return fail('Too many inbox requests. Please try again shortly.',429)
+      if(!await authLimit(request,db,'inquiry-inbox',120)||!await limited(db,'inquiry-inbox-user:'+user.id,240,60))return fail('The inbox is receiving too many requests. Please wait briefly and try again.',429)
       const result=await db.prepare("SELECT i.id,i.property_id,i.sender_id,i.email,i.message,i.status,i.created_at,p.title AS property_title,p.slug AS property_slug,p.city AS property_city FROM inquiries i JOIN properties p ON p.id=i.property_id WHERE p.owner_id=? ORDER BY CASE i.status WHEN 'new' THEN 0 WHEN 'read' THEN 1 ELSE 2 END, i.created_at DESC LIMIT 200").bind(user.id).all<{id:string;property_id:string;sender_id:string|null;email:string;message:string;status:string;created_at:string;property_title:string;property_slug:string;property_city:string}>()
       return ok(result.results)
     }
@@ -945,14 +945,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
 
     if(path==='/api/conversations'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your messages.',401)
-      if(!await authLimit(request,db,'conversation-list',30)||!await limited(db,'conversation-list-user:'+user.id,90,60))return fail('Too many inbox requests. Please try again shortly.',429)
+      if(!await authLimit(request,db,'conversation-list',120)||!await limited(db,'conversation-list-user:'+user.id,240,60))return fail('The inbox is receiving too many requests. Please wait briefly and try again.',429)
       const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,c.last_message_at AS lastMessageAt,
         CASE WHEN c.buyer_id=? THEN 'buyer' ELSE 'owner' END AS role,
         CASE WHEN c.buyer_id=? THEN uo.name ELSE ub.name END AS otherUserName,
-        COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
-        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unreadCount
+        COALESCE((SELECT CASE WHEN m.deleted_for_everyone_at IS NOT NULL THEN 'This message was deleted' ELSE m.body END FROM property_messages m LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=? WHERE m.conversation_id=c.id AND h.message_id IS NULL ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
+        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)) AS unreadCount
         FROM property_conversations c JOIN properties p ON p.id=c.property_id JOIN users ub ON ub.id=c.buyer_id JOIN users uo ON uo.id=c.owner_id
-        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
+        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
       return ok(result.results)
     }
     if(path==='/api/conversations'&&method==='POST') {
