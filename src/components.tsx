@@ -32,7 +32,8 @@ export function PropertyCard({ property }: { property: Property }) {
         ? <Link to={`/properties/${property.slug}`} className="property-image-link" aria-label={`View property: ${property.title}`}><ImageWithFallback src={property.image} alt={`${property.title}, ${property.location}`} /></Link>
         : <div className="property-image-link"><ImageWithFallback src={property.image} alt={`${property.title}, ${property.location}`} /></div>}
       <span className="property-badge">{property.purpose === 'sale' ? 'For sale' : 'For rent'}</span>
-      {property.verified && <span className="property-verified-badge" title="A moderator reviewed the submitted public evidence reference">Evidence reviewed</span>}
+      {property.verified && <span className="property-verified-badge" title="A reviewer inspected a submitted public evidence reference">Evidence reviewed</span>}
+      {property.aiScreened && <span className="property-ai-badge" title="Cloudflare AI screening passed; this is not proof of ownership">AI screened</span>}
       {isPublished && <FavoriteButton propertyId={property.id} initial={property.favorite ?? false} />}
     </div>
     <div className="property-content">
