@@ -50,7 +50,7 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     const result = await apiRequest<MfaSetup>('/api/auth/mfa/setup', { method: 'POST', body: JSON.stringify({ password: setupPassword }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
-    setSetup(result.data); setSetupPassword(''); setSetupCode('')
+    setSetup(result.data); setSetupCode('')
     setNotice('Add this key to your authenticator app, then enter its current six-digit code to confirm setup.')
   }
 
