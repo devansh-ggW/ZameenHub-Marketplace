@@ -265,7 +265,7 @@ function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includeRisk=f
     verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
     ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',
     favorite:!!p.favorite,
-    aiScreened:!!p.ai_screened_at&&p.ai_model==='@cf/meta/llama-3.2-1b-instruct',
+    aiScreened:!!p.ai_screened_at&&(p.ai_model||'').startsWith('@cf/meta/llama-'),
     ...(includePrivateVerification ? {
       verificationEvidenceType:p.verification_evidence_type||'none',
       verificationEvidenceUrl:p.verification_evidence_url||'',
