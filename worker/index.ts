@@ -148,8 +148,8 @@ async function issueEmailMfaCode(db:D1Database,env:Env,user:UserRow,url:URL,purp
   return true
 }
 async function inspectEmailMfaCode(db:D1Database,userId:string,purpose:EmailMfaPurpose,rawCode:unknown):Promise<{id:string;codeHash:string}|null> {
-  const code=clean(rawCode,20).replace(/\\s/g,'')
-  if(!/^\\d{6}$/.test(code))return null
+  const code=clean(rawCode,20).replace(/\s/g,'')
+  if(!/^\d{6}$/.test(code))return null
   const update=await db.prepare("UPDATE auth_email_mfa_codes SET attempts=attempts+1 WHERE id=(SELECT id FROM auth_email_mfa_codes WHERE user_id=? AND purpose=? AND expires_at>? LIMIT 1) AND expires_at>? AND attempts<5").bind(userId,purpose,nowIso(),nowIso()).run()
   if(!update.meta.changes)return null
   const row=await db.prepare('SELECT id,salt,code_hash,attempts FROM auth_email_mfa_codes WHERE user_id=? AND purpose=? AND expires_at>? LIMIT 1').bind(userId,purpose,nowIso()).first<EmailMfaCode>()
@@ -839,6 +839,25 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/favorites'&&method==='GET') {
 
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
+      const result=await db.prepare("SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' ORDER BY f.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow>()
+      return ok(await Promise.all(result.results.map(p=>withProperty(db,p))))
+    }
+    const favoriteMatch=path.match(/^\/api\/favorites\/([^/]+)$/)
+    if(favoriteMatch) {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to save properties.',401)
+      const id=decodeURIComponent(favoriteMatch[1])
+      if(method==='GET') {
+        const row=await db.prepare("SELECT 1 AS saved FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND f.property_id=? AND p.status='published'").bind(user.id,id).first<{saved:number}>()
+        return ok({saved:!!row})
+      }
+      if(method==='POST') {
+        const p=await db.prepare("SELECT id FROM properties WHERE id=? AND status='published'").bind(id).first<{id:string}>();if(!p)return fail('Property not found.',404)
+        await db.prepare('INSERT OR IGNORE INTO favorites(user_id,property_id) VALUES(?,?)').bind(user.id,id).run()
+        return ok({saved:true})
+      }
+      if(method==='DELETE') {await db.prepare('DELETE FROM favorites WHERE user_id=? AND property_id=?').bind(user.id,id).run();return ok({saved:false})}
+    }
     if(path==='/api/admin/overview'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(user.role!=='admin')return fail('Administrator access required.',403)
@@ -862,7 +881,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare("SELECT id,email,name,role,email_verified,mfa_enabled,mfa_email_enabled,is_banned,banned_reason,created_at FROM users WHERE (?='' OR email LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE) ORDER BY created_at DESC LIMIT 100").bind(q,like,like).all<{id:string;email:string;name:string;role:string;email_verified:number;mfa_enabled:number;mfa_email_enabled:number;is_banned:number;banned_reason:string;created_at:string}>()
       return ok(result.results)
     }
-    const adminUserMatch=path.match(/^\\/api\\/admin\\/users\\/([^/]+)$/)
+    const adminUserMatch=path.match(/^\/api\/admin\/users\/([^/]+)$/)
     if(adminUserMatch&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(user.role!=='admin')return fail('Administrator access required.',403)
@@ -879,7 +898,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(action==='unban'&&target.is_banned!==1)return fail('This account is not suspended.',409)
       const now=nowIso(),nextBanned=action==='ban'?1:0
       const changed=await db.batch([
-        db.prepare('UPDATE users SET is_banned=?,banned_reason=?,banned_at=?,banned_by=?,updated_at=? WHERE id=? AND role<>\\'admin\\' AND is_banned=?').bind(nextBanned,action==='ban'?reason:'',action==='ban'?now:null,action==='ban'?user.id:null,now,id,action==='ban'?0:1),
+        db.prepare('UPDATE users SET is_banned=?,banned_reason=?,banned_at=?,banned_by=?,updated_at=? WHERE id=? AND role<>\'admin\' AND is_banned=?').bind(nextBanned,action==='ban'?reason:'',action==='ban'?now:null,action==='ban'?user.id:null,now,id,action==='ban'?0:1),
         db.prepare('INSERT INTO admin_action_events(id,admin_id,action,target_id,target_label,reason,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1').bind(uuid(),user.id,action==='ban'?'user_banned':'user_unbanned',id,target.email,reason,now),
         db.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),
         db.prepare('DELETE FROM auth_mfa_challenges WHERE user_id=?').bind(id),
@@ -903,27 +922,6 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(user.role!=='admin')return fail('Administrator access required.',403)
       const result=await db.prepare('SELECT e.id,e.admin_id,u.email AS admin_email,e.action,e.target_id,e.target_label,e.reason,e.created_at FROM admin_action_events e LEFT JOIN users u ON u.id=e.admin_id ORDER BY e.created_at DESC LIMIT 100').all<{id:string;admin_id:string|null;admin_email:string|null;action:string;target_id:string;target_label:string;reason:string;created_at:string}>()
       return ok(result.results)
-    }
-
-    
-      const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
-      const result=await db.prepare("SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' ORDER BY f.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow>()
-      return ok(await Promise.all(result.results.map(p=>withProperty(db,p))))
-    }
-    const favoriteMatch=path.match(/^\/api\/favorites\/([^/]+)$/)
-    if(favoriteMatch) {
-      const user=await requireUser(request,env);if(!user)return fail('Sign in to save properties.',401)
-      const id=decodeURIComponent(favoriteMatch[1])
-      if(method==='GET') {
-        const row=await db.prepare("SELECT 1 AS saved FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND f.property_id=? AND p.status='published'").bind(user.id,id).first<{saved:number}>()
-        return ok({saved:!!row})
-      }
-      if(method==='POST') {
-        const p=await db.prepare("SELECT id FROM properties WHERE id=? AND status='published'").bind(id).first<{id:string}>();if(!p)return fail('Property not found.',404)
-        await db.prepare('INSERT OR IGNORE INTO favorites(user_id,property_id) VALUES(?,?)').bind(user.id,id).run()
-        return ok({saved:true})
-      }
-      if(method==='DELETE') {await db.prepare('DELETE FROM favorites WHERE user_id=? AND property_id=?').bind(user.id,id).run();return ok({saved:false})}
     }
     if(path==='/api/reports'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before reporting a property.',401)
