@@ -29,13 +29,20 @@ def main() -> int:
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
         "property_moderation_events", "property_media", "property_conversations", "property_messages",
+        "auth_email_mfa_codes", "admin_action_events",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
 
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
-    expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext", "profile_image_url"} <= user_columns,
-           "MFA user columns are incomplete")
+    expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext", "profile_image_url", "mfa_email_enabled", "is_banned", "banned_reason", "banned_at", "banned_by"} <= user_columns,
+           "MFA/admin user columns are incomplete")
+    email_code_columns = {row["name"] for row in db.execute("PRAGMA table_info(auth_email_mfa_codes)")}
+    expect({"user_id", "purpose", "salt", "code_hash", "attempts", "expires_at"} <= email_code_columns,
+           "Email MFA codes must be hashed, limited, and expiring")
+    admin_event_columns = {row["name"] for row in db.execute("PRAGMA table_info(admin_action_events)")}
+    expect({"admin_id", "action", "target_id", "target_label", "reason", "created_at"} <= admin_event_columns,
+           "Administrator action audit columns are incomplete")
     moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
     expect({"owner_message", "review_note", "new_status", "verification_decision"} <= moderation_columns,
            "Moderation audit must separate private internal notes from owner-facing feedback")
