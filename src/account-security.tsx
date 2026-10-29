@@ -23,12 +23,14 @@ function PasswordInput({ id, label, value, onChange, autoComplete = 'current-pas
 export function AccountSecurity({ user }: { user: AppUser }) {
   const navigate = useNavigate()
   const [enabled, setEnabled] = useState(user.mfaEnabled)
+  const [authenticatorEnabled, setAuthenticatorEnabled] = useState(user.mfaAuthenticatorEnabled)
+  const [emailEnabled, setEmailEnabled] = useState(user.mfaEmailEnabled)
   const [mfaConfigured, setMfaConfigured] = useState<boolean | null>(null)
 
   useEffect(() => {
     let active = true
-    void apiRequest<{ enabled: boolean; configured: boolean }>('/api/auth/mfa/status').then(result => {
-      if (active && result.ok) { setEnabled(result.data.enabled); setMfaConfigured(result.data.configured) }
+    void apiRequest<{ enabled: boolean; authenticatorEnabled: boolean; emailEnabled: boolean; configured: boolean }>('/api/auth/mfa/status').then(result => {
+      if (active && result.ok) { setEnabled(result.data.enabled); setAuthenticatorEnabled(result.data.authenticatorEnabled); setEmailEnabled(result.data.emailEnabled); setMfaConfigured(result.data.configured) }
     })
     return () => { active = false }
   }, [])
@@ -36,6 +38,13 @@ export function AccountSecurity({ user }: { user: AppUser }) {
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([])
   const [setupPassword, setSetupPassword] = useState('')
   const [setupCode, setSetupCode] = useState('')
+  const [emailSetupPassword, setEmailSetupPassword] = useState('')
+  const [emailSetupCode, setEmailSetupCode] = useState('')
+  const [emailSetupSent, setEmailSetupSent] = useState(false)
+  const [emailDisablePassword, setEmailDisablePassword] = useState('')
+  const [emailDisableCode, setEmailDisableCode] = useState('')
+  const [emailDisableSent, setEmailDisableSent] = useState(false)
+  const [deleteEmailCodeSent, setDeleteEmailCodeSent] = useState(false)
   const [disablePassword, setDisablePassword] = useState('')
   const [disableCode, setDisableCode] = useState('')
   const [deletePassword, setDeletePassword] = useState('')
@@ -60,7 +69,7 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     const result = await apiRequest<{ enabled: boolean; recoveryCodes: string[] }>('/api/auth/mfa/enable', { method: 'POST', body: JSON.stringify({ password: setupPassword, code: setupCode }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
-    setEnabled(true); setSetup(null); setRecoveryCodes(result.data.recoveryCodes); setSetupCode(''); setSetupPassword('')
+    setEnabled(true); setAuthenticatorEnabled(true); setSetup(null); setRecoveryCodes(result.data.recoveryCodes); setSetupCode(''); setSetupPassword('')
     setNotice('Two-factor authentication is enabled. Save your recovery codes now; they will not be shown again.')
   }
 
@@ -69,8 +78,55 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     const result = await apiRequest<{ enabled: boolean }>('/api/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ password: disablePassword, code: disableCode }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
-    setEnabled(false); setDisablePassword(''); setDisableCode(''); setRecoveryCodes([])
-    setNotice('Two-factor authentication has been disabled.')
+    setAuthenticatorEnabled(false); setEnabled(emailEnabled); setDisablePassword(''); setDisableCode(''); setRecoveryCodes([])
+    setNotice(emailEnabled ? 'Authenticator verification was disabled. Email two-step verification remains active.' : 'Two-factor authentication has been disabled.')
+  }
+
+  async function requestEmailCode(purpose: 'setup' | 'disable' | 'delete', password: string) {
+    setBusy(true); setError(''); setNotice('')
+    const result = await apiRequest<{ sent: boolean; emailHint: string; expiresInMinutes: number }>('/api/auth/mfa/email/action-code', {
+      method: 'POST', body: JSON.stringify({ purpose, password }),
+    })
+    setBusy(false)
+    if (!result.ok) { setError(result.error); return false }
+    setNotice('A one-time code was sent to ' + result.data.emailHint + '. It expires in ' + result.data.expiresInMinutes + ' minutes.')
+    return true
+  }
+
+  async function beginEmailSetup(event: FormEvent) {
+    event.preventDefault()
+    if (await requestEmailCode('setup', emailSetupPassword)) { setEmailSetupSent(true); setEmailSetupCode('') }
+  }
+
+  async function enableEmailMfa(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setNotice('')
+    const result = await apiRequest<{ enabled: boolean; emailEnabled: boolean; authenticatorEnabled: boolean }>('/api/auth/mfa/email/enable', {
+      method: 'POST', body: JSON.stringify({ password: emailSetupPassword, code: emailSetupCode }),
+    })
+    setBusy(false)
+    if (!result.ok) { setError(result.error); return }
+    setEmailEnabled(true); setEnabled(true); setEmailSetupSent(false); setEmailSetupPassword(''); setEmailSetupCode('')
+    setNotice('Email two-step verification is enabled. A code will be required when you sign in.')
+  }
+
+  async function beginEmailDisable(event: FormEvent) {
+    event.preventDefault()
+    if (await requestEmailCode('disable', emailDisablePassword)) { setEmailDisableSent(true); setEmailDisableCode('') }
+  }
+
+  async function disableEmailMfa(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setNotice('')
+    const result = await apiRequest<{ enabled: boolean; emailEnabled: boolean; authenticatorEnabled: boolean }>('/api/auth/mfa/email/disable', {
+      method: 'POST', body: JSON.stringify({ password: emailDisablePassword, code: emailDisableCode }),
+    })
+    setBusy(false)
+    if (!result.ok) { setError(result.error); return }
+    setEmailEnabled(false); setEnabled(authenticatorEnabled); setEmailDisablePassword(''); setEmailDisableCode(''); setEmailDisableSent(false)
+    setNotice(authenticatorEnabled ? 'Email verification was disabled. Your authenticator app remains active.' : 'Email two-step verification has been disabled.')
+  }
+
+  async function sendDeleteEmailCode() {
+    if (await requestEmailCode('delete', deletePassword)) { setDeleteEmailCodeSent(true); setDeleteCode('') }
   }
 
   async function copyRecoveryCodes() {
@@ -82,7 +138,7 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     event.preventDefault()
     if (deleteConfirmation !== 'DELETE') { setError('Type DELETE exactly to confirm.'); return }
     setBusy(true); setError(''); setNotice('')
-    const result = await apiRequest<{ deleted: boolean }>('/api/account/delete', { method: 'POST', body: JSON.stringify({ password: deletePassword, confirmText: deleteConfirmation, ...(enabled ? { code: deleteCode } : {}) }) })
+    const result = await apiRequest<{ deleted: boolean }>('/api/account/delete', { method: 'POST', body: JSON.stringify({ password: deletePassword, confirmText: deleteConfirmation, ...(authenticatorEnabled ? { code: deleteCode } : {}), ...(emailEnabled && !authenticatorEnabled && deleteEmailCodeSent ? { emailCode: deleteCode } : {}) }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
     setNotice('Your account and your submitted property listings have been deleted.')
@@ -91,11 +147,12 @@ export function AccountSecurity({ user }: { user: AppUser }) {
 
   return <section className="form-card account-security" aria-labelledby="account-security-title">
     <h2 id="account-security-title">Security and account</h2>
-    <p className="muted">Protect sign-in with an authenticator app and manage your account data.</p>
-    <div className="security-status"><strong>Two-factor authentication</strong><span className={enabled ? 'security-pill on' : 'security-pill'}>{enabled ? 'Enabled' : 'Optional · not enabled'}</span></div>
-    {!enabled && mfaConfigured === false && <p className="status-message error" role="status">Two-factor setup is not configured on the server yet. The site administrator must add a Cloudflare Worker Secret named MFA_ENCRYPTION_KEY (at least 32 characters) under Settings → Variables and Secrets, then retry.</p>}
-    {enabled && mfaConfigured === false && <p className="status-message error" role="status">The encryption secret is missing. If authenticator codes fail, use an unused recovery code to sign in and contact the site administrator before changing security settings.</p>}
-    {!enabled && !setup && <form onSubmit={beginSetup}>
+    <p className="muted">Choose email one-time codes, an authenticator app, or both. If one method is unavailable, another enabled method can be used at sign-in.</p>
+    <div className="security-status"><strong>Two-step verification</strong><span className={enabled ? 'security-pill on' : 'security-pill'}>{enabled ? 'Enabled' : 'Optional · not enabled'}</span></div>
+    <div className="mfa-method-status"><span>Authenticator app <strong>{authenticatorEnabled ? 'Enabled' : 'Off'}</strong></span><span>Email codes <strong>{emailEnabled ? 'Enabled' : 'Off'}</strong></span></div>
+    {!authenticatorEnabled && !emailEnabled && mfaConfigured === false && <p className="status-message error" role="status">Authenticator setup is unavailable until the site administrator configures MFA_ENCRYPTION_KEY. Email-based verification can be enabled separately when Resend email delivery is configured.</p>}
+    {authenticatorEnabled && mfaConfigured === false && <p className="status-message error" role="status">The authenticator encryption secret is missing. Use an enabled email code or an unused recovery code to sign in and contact the site administrator before changing authenticator settings.</p>}
+    {!authenticatorEnabled && !setup && <form onSubmit={beginSetup}>
       <p>Use an authenticator app that supports time-based one-time passwords (TOTP). ZameenHub will show you a setup key; the secret is encrypted at rest.</p>
       <PasswordInput id="mfa-setup-password" label="Current password" value={setupPassword} onChange={setSetupPassword} />
       <button className="btn btn-primary" disabled={busy}>{busy ? 'Starting setup…' : 'Set up authenticator'}</button>
@@ -114,9 +171,11 @@ export function AccountSecurity({ user }: { user: AppUser }) {
         <button className="btn btn-outline" type="button" disabled={busy} onClick={() => { setSetup(null); setSetupPassword(''); setSetupCode(''); setError(''); setNotice('Setup cancelled.') }}>Cancel</button>
       </form>
     </div>}
-    {enabled && <form onSubmit={disableMfa} className="security-subsection">
+    {!emailEnabled && <div className="security-subsection"><h3>Enable email verification</h3><p>A one-time code will be sent to your verified email address through the site's Resend email service.</p>{!emailSetupSent ? <form onSubmit={beginEmailSetup}><PasswordInput id="mfa-email-setup-password" label="Current password" value={emailSetupPassword} onChange={setEmailSetupPassword} /><button className="btn btn-primary" disabled={busy}>{busy ? 'Sending code…' : 'Send setup code'}</button></form> : <form onSubmit={enableEmailMfa}><p className="muted">Enter the six-digit code from your email to finish enabling this method.</p><div className="form-field"><label htmlFor="mfa-email-setup-code">Email setup code</label><input className="form-control" id="mfa-email-setup-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={emailSetupCode} onChange={event => setEmailSetupCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></div><button className="btn btn-primary" disabled={busy}>{busy ? 'Verifying…' : 'Enable email verification'}</button><button className="btn btn-outline" type="button" disabled={busy} onClick={() => { setEmailSetupSent(false); setEmailSetupCode(''); setEmailSetupPassword('') }}>Cancel</button></form>}</div>}
+    {emailEnabled && <div className="security-subsection"><h3>Disable email verification</h3><p>Confirm your password and the code sent to your verified email address. Your authenticator method, if enabled, remains active.</p>{!emailDisableSent ? <form onSubmit={beginEmailDisable}><PasswordInput id="mfa-email-disable-password" label="Current password" value={emailDisablePassword} onChange={setEmailDisablePassword} /><button className="btn btn-outline" disabled={busy}>{busy ? 'Sending code…' : 'Send disable confirmation code'}</button></form> : <form onSubmit={disableEmailMfa}><PasswordInput id="mfa-email-disable-password-confirm" label="Current password" value={emailDisablePassword} onChange={setEmailDisablePassword} /><div className="form-field"><label htmlFor="mfa-email-disable-code">Email confirmation code</label><input className="form-control" id="mfa-email-disable-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={emailDisableCode} onChange={event => setEmailDisableCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></div><button className="btn btn-danger" disabled={busy}>{busy ? 'Updating…' : 'Confirm and disable email codes'}</button><button className="btn btn-outline" type="button" disabled={busy} onClick={() => { setEmailDisableSent(false); setEmailDisableCode(''); setEmailDisablePassword('') }}>Cancel</button></form>}</div>}
+    {authenticatorEnabled && <form onSubmit={disableMfa} className="security-subsection">
       <h3>Disable two-factor authentication</h3>
-      <p>Confirm your password and an authenticator or unused recovery code. Disabling this removes the second sign-in step.</p>
+      <p>Confirm your password and an authenticator or unused recovery code. Email verification, if enabled, will remain available.</p>
       <PasswordInput id="mfa-disable-password" label="Current password" value={disablePassword} onChange={setDisablePassword} />
       <div className="form-field"><label htmlFor="mfa-disable-code">Authenticator or recovery code</label><input className="form-control" id="mfa-disable-code" autoComplete="one-time-code" required value={disableCode} onChange={e => setDisableCode(e.target.value)} /></div>
       <button className="btn btn-outline" disabled={busy}>{busy ? 'Updating…' : 'Disable two-factor authentication'}</button>
@@ -130,12 +189,13 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     </div>}
     <div className="danger-zone">
       <h3>Delete account</h3>
-      <p>This permanently deletes your account and the property listings you submitted. This action cannot be undone. If two-factor authentication is enabled, you must also confirm with its code.</p>
+      <p>This permanently deletes your account and the property listings you submitted. This action cannot be undone. If two-step verification is enabled, confirm with an authenticator/recovery code or, for email-only accounts, a one-time email code.</p>
       <form onSubmit={deleteAccount}>
         <PasswordInput id="delete-account-password" label="Current password" value={deletePassword} onChange={setDeletePassword} />
-        {enabled && <div className="form-field"><label htmlFor="delete-account-code">Authenticator or unused recovery code</label><input className="form-control" id="delete-account-code" required value={deleteCode} onChange={e => setDeleteCode(e.target.value)} /></div>}
+        {authenticatorEnabled && <div className="form-field"><label htmlFor="delete-account-code">Authenticator or unused recovery code</label><input className="form-control" id="delete-account-code" required value={deleteCode} onChange={e => setDeleteCode(e.target.value)} /></div>}
+        {!authenticatorEnabled && emailEnabled && <>{!deleteEmailCodeSent && <button className="btn btn-outline" type="button" disabled={busy || deletePassword.length < 8} onClick={() => void sendDeleteEmailCode()}>{busy ? 'Sending code…' : 'Send account deletion code'}</button>}{deleteEmailCodeSent && <div className="form-field"><label htmlFor="delete-account-code">Email deletion code</label><input className="form-control" id="delete-account-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={deleteCode} onChange={e => setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 6))} /></div>}</>}
         <div className="form-field"><label htmlFor="delete-account-confirmation">Type DELETE to confirm</label><input className="form-control" id="delete-account-confirmation" required autoComplete="off" value={deleteConfirmation} onChange={e => setDeleteConfirmation(e.target.value)} /></div>
-        <button className="btn btn-danger" disabled={busy || deleteConfirmation !== 'DELETE'}>{busy ? 'Deleting…' : 'Permanently delete account'}</button>
+        <button className="btn btn-danger" disabled={busy || deleteConfirmation !== 'DELETE' || (authenticatorEnabled && !deleteCode.trim()) || (!authenticatorEnabled && emailEnabled && (!deleteEmailCodeSent || !deleteCode.trim()))}>{busy ? 'Deleting…' : 'Permanently delete account'}</button>
       </form>
     </div>
     {error && <p className="status-message error" role="alert">{error}</p>}
