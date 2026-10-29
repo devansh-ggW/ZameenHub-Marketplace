@@ -25,5 +25,3 @@ APP_URL = "https://zameenhub.dewify.shop"
 RESEND_FROM_EMAIL = "ZameenHub <verify@zameenhub.dewify.shop>"
 SUPPORT_EMAIL = "dewifystores@gmail.com"
 
-[ai]
-binding = "AI"
