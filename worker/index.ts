@@ -257,6 +257,7 @@ function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includeRisk=f
     verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
     ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',
     favorite:!!p.favorite,
+    aiScreened:!!p.ai_screened_at&&p.ai_model==='@cf/meta/llama-3.2-1b-instruct',
     ...(includePrivateVerification ? {
       verificationEvidenceType:p.verification_evidence_type||'none',
       verificationEvidenceUrl:p.verification_evidence_url||'',
@@ -373,6 +374,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/auth/session'&&method==='GET') {
       const user=await getUser(request,env)
       return ok(user?{authenticated:true,user:userView(user)}:{authenticated:false})
+    }
+    if(path==='/api/auth/mfa/status'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before checking two-factor setup.',401)
+      return ok({enabled:user.mfa_enabled===1,configured:typeof env.MFA_ENCRYPTION_KEY==='string'&&env.MFA_ENCRYPTION_KEY.length>=32})
     }
     if(path==='/api/auth/logout'&&method==='POST') {
       const token=cookieToken(request)
@@ -682,13 +687,20 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const duplicate=await db.prepare("SELECT id FROM properties WHERE lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
+      const autoPublished=risk.level==='low'&&risk.model==='@cf/meta/llama-3.2-1b-instruct'&&!duplicate
+      const initialStatus=autoPublished?'published':'pending'
       const createdAt=nowIso()
       const statements=[
-        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),createdAt,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt),
+        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),createdAt,risk.model,initialStatus,evidence.status,evidence.type,evidence.url,evidence.submittedAt),
         ...mediaInsertStatements(db,id,mediaImages,videoUrl)
       ]
       await db.batch(statements)
-      return ok({id,status:'pending',message:evidence.status==='submitted'?'Submitted for review. The listing stays private until an authorized reviewer approves it; a supplied record link is not automatically verified.':'Submitted for review. Add a public record reference in the edit screen if you want the team to review evidence. Automated screening is not proof of ownership.'},201)
+      const message=autoPublished
+        ? 'Cloudflare AI screening passed and your listing is now published. This is an automated content-risk check, not proof of ownership; the evidence status remains separate.'
+        : evidence.status==='submitted'
+          ? 'Submitted for review. AI could not safely auto-publish this listing, so it remains private until review. A supplied record link is not automatically verified.'
+          : 'Submitted for review. AI could not safely auto-publish this listing. Add a public evidence reference in Edit details if you have one; AI screening is not proof of ownership.'
+      return ok({id,status:initialStatus,aiScreened:risk.model==='@cf/meta/llama-3.2-1b-instruct',message},201)
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
@@ -721,11 +733,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const duplicate=await db.prepare("SELECT id FROM properties WHERE id<>? AND lower(title)=lower(?) AND lower(location)=lower(?) AND lower(city)=lower(?) AND status IN ('pending','published') LIMIT 1").bind(id,title,location,city).first<{id:string}>()
       const risk=await screenListingRisk({title,location,city,purpose,propertyType,price,description},env,!!duplicate)
+      const autoPublished=risk.level==='low'&&risk.model==='@cf/meta/llama-3.2-1b-instruct'&&!duplicate
+      const nextStatus=autoPublished?'published':'pending'
       const updateTime=nowIso()
-      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,verification_status=?,verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),updateTime,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
+      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,verification_status=?,verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=?,updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),updateTime,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt,nextStatus,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       await savePropertyMedia(db,id,mediaImages,videoUrl)
-      return ok({id,status:'pending',message:'Changes saved. The listing is pending review. Any prior evidence review is reset when listing details change.'})
+      return ok({id,status:nextStatus,aiScreened:risk.model==='@cf/meta/llama-3.2-1b-instruct',message:autoPublished?'Changes saved and the listing passed Cloudflare AI screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
@@ -875,6 +889,81 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const mailBody=`Property: ${property.title}\nCity: ${property.city}\nFrom: ${email}\n\nMessage:\n${message}\n\nReference: ${reference}`
       const notificationSent=await sendEmail(env,property.owner_email,'New ZameenHub property inquiry',emailHtml(mailTitle,mailBody,listingUrl,'View property'),emailText(mailTitle,mailBody,listingUrl,'View property'))
       return ok({reference,notificationSent},201)
+    }
+
+    if(path==='/api/conversations'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to view your messages.',401)
+      if(!await authLimit(request,db,'conversation-list',30)||!await limited(db,'conversation-list-user:'+user.id,90,60))return fail('Too many inbox requests. Please try again shortly.',429)
+      const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,c.last_message_at AS lastMessageAt,
+        CASE WHEN c.buyer_id=? THEN 'buyer' ELSE 'owner' END AS role,
+        CASE WHEN c.buyer_id=? THEN uo.name ELSE ub.name END AS otherUserName,
+        COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
+        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unreadCount
+        FROM property_conversations c JOIN properties p ON p.id=c.property_id JOIN users ub ON ub.id=c.buyer_id JOIN users uo ON uo.id=c.owner_id
+        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
+      return ok(result.results)
+    }
+    if(path==='/api/conversations'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in with a verified email to chat with a property owner.',401)
+      if(!await authLimit(request,db,'conversation-start',8)||!await limited(db,'conversation-start-user:'+user.id,12,60))return fail('Too many chat requests. Please wait before starting another conversation.',429)
+      const input=await body(request);if(!input)return fail('Invalid chat request.')
+      const propertyId=clean(input.propertyId,80),message=clean(input.message,2000)
+      if(!propertyId||!message.trim()||message.length>2000)return fail('Choose a property and write a message (maximum 2,000 characters).')
+      const property=await db.prepare("SELECT id,owner_id FROM properties WHERE id=? AND status='published'").bind(propertyId).first<{id:string;owner_id:string}>()
+      if(!property)return fail('This property is not currently available for chat.',404)
+      if(property.owner_id===user.id)return fail('You cannot start a chat with yourself about your own listing.',403)
+      if(!await limited(db,'conversation-first-message:'+user.id+':'+propertyId,3,60))return fail('You recently started a chat about this property. Please wait before sending another.',429)
+      let conversation=await db.prepare('SELECT id FROM property_conversations WHERE property_id=? AND buyer_id=?').bind(propertyId,user.id).first<{id:string}>()
+      if(!conversation) {
+        const id=uuid(),timestamp=nowIso()
+        await db.prepare("INSERT OR IGNORE INTO property_conversations(id,property_id,buyer_id,owner_id,created_at,updated_at,last_message_at,status) VALUES(?,?,?,?,?,?,?,'open')").bind(id,propertyId,user.id,property.owner_id,timestamp,timestamp,timestamp).run()
+        conversation=await db.prepare('SELECT id FROM property_conversations WHERE property_id=? AND buyer_id=?').bind(propertyId,user.id).first<{id:string}>()
+      }
+      if(!conversation)return fail('Could not start the conversation. Please retry.',500)
+      const timestamp=nowIso()
+      await db.batch([
+        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES(?,?,?,?,?)').bind(uuid(),conversation.id,user.id,message.trim(),timestamp),
+        db.prepare("UPDATE property_conversations SET status='open',updated_at=?,last_message_at=? WHERE id=?").bind(timestamp,timestamp,conversation.id)
+      ])
+      return ok({id:conversation.id},201)
+    }
+    const conversationMessagesMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages$/)
+    if(conversationMessagesMatch&&(method==='GET'||method==='POST')) {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to access private messages.',401)
+      const id=decodeURIComponent(conversationMessagesMatch[1])
+      const conversation=await db.prepare('SELECT id,buyer_id,owner_id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(id,user.id,user.id).first<{id:string;buyer_id:string;owner_id:string;status:string}>()
+      if(!conversation)return fail('Conversation not found.',404)
+      if(method==='GET') {
+        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt
+          FROM property_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=?
+          ORDER BY m.created_at DESC LIMIT 100`).bind(id).all<{id:string;senderId:string;senderName:string;body:string;createdAt:string;readAt:string|null}>()
+        return ok(result.results.reverse())
+      }
+      if(conversation.status!=='open')return fail('This conversation is closed.',409)
+      if(!await authLimit(request,db,'conversation-message',20)||!await limited(db,'conversation-message-user:'+user.id,80,60))return fail('You are sending messages too quickly. Wait a moment and retry.',429)
+      const input=await body(request);if(!input)return fail('Invalid message.')
+      const message=clean(input.message,2000).trim()
+      if(!message||message.length>2000)return fail('Write a message of 1–2,000 characters.')
+      const timestamp=nowIso(),messageId=uuid()
+      await db.batch([
+        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES(?,?,?,?,?)').bind(messageId,id,user.id,message,timestamp),
+        db.prepare('UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status=\'open\'').bind(timestamp,timestamp,id)
+      ])
+      return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null},201)
+    }
+    const conversationReadMatch=path.match(/^\/api\/conversations\/([^/]+)\/read$/)
+    if(conversationReadMatch&&method==='PATCH') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to update message read status.',401)
+      const id=decodeURIComponent(conversationReadMatch[1])
+      const conversation=await db.prepare('SELECT id,buyer_id,owner_id FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(id,user.id,user.id).first<{id:string;buyer_id:string;owner_id:string}>()
+      if(!conversation)return fail('Conversation not found.',404)
+      const timestamp=nowIso()
+      await db.batch([
+        db.prepare('UPDATE property_messages SET read_at=? WHERE conversation_id=? AND sender_id<>? AND read_at IS NULL').bind(timestamp,id,user.id),
+        db.prepare('UPDATE property_conversations SET buyer_last_read_at=? WHERE id=? AND buyer_id=?').bind(timestamp,id,user.id),
+        db.prepare('UPDATE property_conversations SET owner_last_read_at=? WHERE id=? AND owner_id=?').bind(timestamp,id,user.id)
+      ])
+      return ok({read:true})
     }
     if(path==='/api/support'&&method==='POST') {
       if(!await authLimit(request,db,'support',8))return fail('Too many requests. Please wait and try again.',429)
