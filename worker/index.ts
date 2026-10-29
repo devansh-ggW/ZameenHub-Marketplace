@@ -1024,9 +1024,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const conversation=await db.prepare('SELECT id,buyer_id,owner_id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(id,user.id,user.id).first<{id:string;buyer_id:string;owner_id:string;status:string}>()
       if(!conversation)return fail('Conversation not found.',404)
       if(method==='GET') {
-        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt
-          FROM property_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=?
-          ORDER BY m.created_at DESC LIMIT 100`).bind(id).all<{id:string;senderId:string;senderName:string;body:string;createdAt:string;readAt:string|null}>()
+        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt,
+          m.edited_at AS editedAt,m.deleted_for_everyone_at AS deletedAt,m.reply_to_message_id AS replyToMessageId,
+          CASE WHEN rm.id IS NULL THEN '' WHEN rm.deleted_for_everyone_at IS NOT NULL OR rh.message_id IS NOT NULL THEN 'Message unavailable' ELSE rm.body END AS replyToBody,
+          COALESCE(ru.name,'') AS replyToSenderName,m.forwarded_from_message_id AS forwardedFromMessageId
+          FROM property_messages m JOIN users u ON u.id=m.sender_id
+          LEFT JOIN property_messages rm ON rm.id=m.reply_to_message_id
+          LEFT JOIN users ru ON ru.id=rm.sender_id
+          LEFT JOIN property_message_hidden rh ON rh.message_id=rm.id AND rh.user_id=?
+          LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=?
+          WHERE m.conversation_id=? AND h.message_id IS NULL
+          ORDER BY m.created_at DESC LIMIT 100`).bind(user.id,user.id,id).all<{id:string;senderId:string;senderName:string;body:string;createdAt:string;readAt:string|null;editedAt:string|null;deletedAt:string|null;replyToMessageId:string|null;replyToBody:string;replyToSenderName:string;forwardedFromMessageId:string|null}>()
         return ok(result.results.reverse())
       }
       if(conversation.status!=='open')return fail('This conversation is closed.',409)
