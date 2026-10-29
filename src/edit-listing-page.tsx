@@ -91,7 +91,7 @@ export function EditListingPage() {
     })
     setSaving(false)
     if (!result.ok) { setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, gallery: imageUrls.map(url => url.trim()).filter(Boolean), image: imageUrls.map(url => url.trim()).filter(Boolean)[0] || '', videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: verificationEvidenceUrl.trim() ? 'submitted' : 'unverified', verified: false } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, gallery: imageUrls.map(url => url.trim()).filter(Boolean), image: imageUrls.map(url => url.trim()).filter(Boolean)[0] || '', videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
     setNotice(result.data.message)
   }
 
@@ -101,7 +101,7 @@ export function EditListingPage() {
   return <main className="page-shell"><div className="container">
     <div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Edit your listing.</h1><p>Save corrections to your property details. Changes go live immediately; because details changed, the listing becomes Unverified until an administrator checks it again.</p></div>
     {property && <form className="form-card edit-listing-form" onSubmit={submit}>
-      <div className="edit-listing-meta"><span>Current status: <strong>{property.status}</strong></span><span>Evidence review: <strong>{property.verified ? 'verified' : property.verificationStatus || 'awaiting review'}</strong></span><span>Reference: <code>{property.id}</code></span></div>
+      <div className="edit-listing-meta"><span>Current status: <strong>{property.status}</strong></span><span>Verification status: <strong>{property.verified ? 'Verified' : 'Unverified · awaiting manual verification'}</strong></span><span>Reference: <code>{property.id}</code></span></div>
       <div className="form-grid">
         <div className="form-field"><label htmlFor="edit-purpose">Purpose</label><select className="form-control" id="edit-purpose" value={purpose} onChange={e => setPurpose(e.target.value as 'sale' | 'rent')}><option value="sale">For sale</option><option value="rent">For rent</option></select></div>
         <div className="form-field"><label htmlFor="edit-type">Property type</label><select className="form-control" id="edit-type" value={propertyType} onChange={e => setPropertyType(e.target.value as PropertyType)}>{(['Apartment','House','Villa','Studio','Plot'] as PropertyType[]).map(type => <option key={type} value={type}>{type}</option>)}</select></div>
