@@ -15,13 +15,13 @@ export function SiteHeader() {
   const location = useLocation()
   useEffect(() => setOpen(false), [location.pathname])
   return <header className="site-header"><div className="container nav">
-    <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
+    <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.png" alt="" /><span>ZameenHub</span></Link>
     <nav className={`nav-links ${open ? 'open' : ''}`} aria-label="Primary"><NavLink to="/properties">Browse properties</NavLink><NavLink to="/saved">Saved</NavLink><NavLink to="/about">About</NavLink></nav>
     <div className="nav-actions"><Link className="btn btn-outline" to="/login">Sign in</Link><Link className="btn btn-primary" to="/list-property">List a property <ArrowUpRight size={15} /></Link><button className="icon-btn mobile-toggle" onClick={() => setOpen(!open)} aria-label={open ? 'Close menu' : 'Open menu'}>{open ? <X size={18} /> : <Menu size={18} />}</button></div>
   </div></header>
 }
 
-export function SiteFooter() { return <footer className="footer"><div className="container footer-grid"><div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. The marketplace stays truthful: only verified records returned by the configured property service are shown.</p></div><div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div><div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact</Link><br /><Link to="/help">Help centre</Link></div><div><h4>Legal</h4><Link to="/privacy">Privacy</Link><br /><Link to="/terms">Terms</Link></div></div><div className="container footer-bottom"><span>© 2026 ZameenHub</span><span>Only verified property records appear here</span></div></footer> }
+export function SiteFooter() { return <footer className="footer"><div className="container footer-grid"><div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.png" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. The marketplace stays truthful: only verified records returned by the configured property service are shown.</p></div><div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div><div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact</Link><br /><Link to="/help">Help centre</Link></div><div><h4>Legal</h4><Link to="/privacy">Privacy</Link><br /><Link to="/terms">Terms</Link></div></div><div className="container footer-bottom"><span>© 2026 ZameenHub</span><span>Only verified property records appear here</span></div></footer> }
 
 export function PropertyCard({ property }: { property: Property }) {
   const isPublished = property.status === 'published'
