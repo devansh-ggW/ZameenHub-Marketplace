@@ -109,7 +109,6 @@ export function AccountSecurity({ user }: { user: AppUser }) {
       <p><a href={setup.otpAuthUri}>Open in an authenticator app</a></p>
       <h3>2. Confirm it works</h3>
       <form onSubmit={enableMfa}>
-        <PasswordInput id="mfa-confirm-password" label="Confirm current password" value={setupPassword} onChange={setSetupPassword} />
         <div className="form-field"><label htmlFor="mfa-setup-code">Six-digit authenticator code</label><input className="form-control" id="mfa-setup-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={setupCode} onChange={e => setSetupCode(e.target.value.replace(/\D/g, '').slice(0, 6))} /></div>
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Verifying…' : 'Enable two-factor authentication'}</button>
         <button className="btn btn-outline" type="button" disabled={busy} onClick={() => { setSetup(null); setSetupPassword(''); setSetupCode(''); setError(''); setNotice('Setup cancelled.') }}>Cancel</button>
