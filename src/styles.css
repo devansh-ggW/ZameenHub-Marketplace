@@ -548,3 +548,72 @@ img { max-width: 100%; display: block; }
 .password-toggle { flex: 0 0 auto; border: 1px solid var(--line); background: #fff; color: var(--ink); min-width: 60px; padding: 0 12px; font-size: 12px; font-weight: 800; cursor: pointer; }
 .password-toggle:hover { background: var(--soft); }
 .password-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+
+/* Cookie consent controls */
+.cookie-notice { display: block; max-height: min(80vh, 620px); overflow-y: auto; border-radius: 8px; }
+.cookie-notice-main { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.cookie-notice-main > div:first-child { min-width: 0; }
+.cookie-notice-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.cookie-notice-actions .btn { min-height: 42px; white-space: nowrap; }
+.cookie-preferences { display: grid; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.cookie-preference-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.cookie-preference-row p { margin: 5px 0 0; }
+.cookie-preference-row label { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; font-size: 12px; font-weight: 700; }
+.cookie-preference-row input { accent-color: var(--blue); }
+.cookie-settings-trigger { position: fixed; z-index: 149; left: 12px; bottom: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.96); color: var(--ink); box-shadow: 0 4px 18px rgba(10,22,39,.14); padding: 9px 12px; border-radius: 4px; font-size: 11px; font-weight: 800; }
+.cookie-settings-trigger:hover { background: var(--soft); }
+@media (max-width: 760px) {
+  .cookie-notice-main { display: block; }
+  .cookie-notice-actions { display: grid; grid-template-columns: 1fr; margin-top: 14px; }
+  .cookie-notice-actions .btn { width: 100%; }
+  .cookie-preference-row { align-items: flex-start; }
+  .cookie-settings-trigger { left: 8px; bottom: 8px; }
+}
+
+
+/* Larger chat workspace and contextual message actions */
+.messages-layout { min-height: 680px; }
+.chat-messages { min-height: 420px; max-height: min(68vh, 760px); }
+.chat-composer-input { min-height: 150px; resize: vertical; line-height: 1.65; }
+.chat-message-meta { position: relative; }
+.chat-message-options { position: relative; margin-left: auto; flex: 0 0 auto; }
+.chat-message-options summary { display: grid; place-items: center; list-style: none; cursor: pointer; width: 30px; height: 28px; border: 1px solid transparent; border-radius: 4px; color: var(--muted); }
+.chat-message-options summary::-webkit-details-marker { display: none; }
+.chat-message-options summary:hover, .chat-message-options[open] summary { background: #fff; border-color: var(--line); color: var(--ink); }
+.chat-message-options-menu { position: absolute; z-index: 40; top: calc(100% + 4px); right: 0; min-width: 190px; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line); background: #fff; box-shadow: 0 10px 26px rgba(10,22,39,.18); }
+.chat-message-options-menu button { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 10px; border: 0; background: #fff; color: var(--ink); font-size: 12px; }
+.chat-message-options-menu button:hover { background: var(--soft); }
+.chat-message-options-menu button:disabled { opacity: .55; cursor: not-allowed; }
+.chat-message-options-menu .danger-action { color: #9f3028; }
+.chat-message-label { display: flex; align-items: center; gap: 5px; margin-top: 8px; color: var(--muted); font-size: 10px; font-weight: 800; }
+.chat-reply-context { display: grid; gap: 4px; margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--blue); background: rgba(255,255,255,.72); }
+.chat-reply-context strong { font-size: 10px; color: var(--muted); }
+.chat-reply-context span { font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-message.deleted { border-style: dashed; background: #f6f7f8; color: var(--muted); }
+.chat-deleted-text { color: var(--muted) !important; font-style: italic; }
+.chat-edited-mark { color: var(--muted); font-size: 10px; }
+.chat-composer-context { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin-bottom: 12px; border-left: 3px solid var(--blue); background: var(--soft); }
+.chat-composer-context > div { display: grid; min-width: 0; gap: 4px; }
+.chat-composer-context strong { font-size: 11px; }
+.chat-composer-context span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.forward-dialog-backdrop { position: fixed; z-index: 180; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(10,16,25,.46); }
+.forward-dialog { position: relative; width: min(100%, 520px); max-height: 90vh; overflow-y: auto; padding: 28px; background: #fff; border: 1px solid var(--line); box-shadow: 0 22px 70px rgba(0,0,0,.24); }
+.forward-dialog h2 { margin: 10px 0; font-size: 26px; letter-spacing: -.05em; }
+.forward-dialog > p { font-size: 12px; line-height: 1.6; }
+.forward-close { position: absolute; top: 12px; right: 12px; }
+.forward-preview { max-height: 140px; overflow: auto; margin: 16px 0; padding: 14px; background: var(--soft); border: 1px solid var(--line); font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.forward-dialog-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+.bot-verification { display: grid; gap: 6px; margin: 16px 0; padding: 12px 0; }
+.bot-verification > div { min-height: 65px; }
+.bot-verification small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.bot-verification-warning { margin: 14px 0; font-size: 12px; }
+@media (max-width: 760px) {
+  .messages-layout { min-height: 620px; }
+  .chat-messages { min-height: 340px; max-height: 56vh; }
+  .chat-composer-input { min-height: 135px; }
+  .chat-message-options-menu { min-width: 180px; }
+  .forward-dialog { padding: 22px 18px; }
+  .forward-dialog-actions { flex-direction: column-reverse; }
+  .forward-dialog-actions .btn { width: 100%; }
+}

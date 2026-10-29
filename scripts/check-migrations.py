@@ -28,7 +28,7 @@ def main() -> int:
         "users", "sessions", "properties", "favorites", "inquiries",
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
-        "property_moderation_events", "property_media", "property_conversations", "property_messages",
+        "property_moderation_events", "property_media", "property_conversations", "property_messages", "property_message_hidden",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
@@ -50,8 +50,11 @@ def main() -> int:
     expect({"property_id", "buyer_id", "owner_id", "status", "last_message_at"} <= conversation_columns,
            "Private conversation metadata columns are incomplete")
     message_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_messages)")}
-    expect({"conversation_id", "sender_id", "body", "created_at", "read_at"} <= message_columns,
+    expect({"conversation_id", "sender_id", "body", "created_at", "read_at", "edited_at", "deleted_for_everyone_at", "reply_to_message_id", "forwarded_from_message_id"} <= message_columns,
            "Private message columns are incomplete")
+    hidden_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_message_hidden)")}
+    expect({"message_id", "user_id", "hidden_at"} <= hidden_columns,
+           "Per-user message deletion columns are incomplete")
 
     now = "2026-10-28T00:00:00.000Z"
 

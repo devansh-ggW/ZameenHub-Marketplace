@@ -7,6 +7,7 @@ export type Env = {
   R2?: R2Bucket
   AI?: AiBinding
   MFA_ENCRYPTION_KEY?: string
+  TURNSTILE_SECRET_KEY?: string
   RESEND_API_KEY?: string
   RESEND_FROM_EMAIL?: string
   SUPPORT_EMAIL?: string
@@ -152,7 +153,7 @@ async function screenListingRisk(input:{title:string;location:string;city:string
     }
   }
   const uniqueReasons=[...new Set(reasons)].slice(0,5)
-  if(!modelAvailable&&uniqueReasons.length===0)uniqueReasons.push('Cloudflare AI screening unavailable; manual review is required')
+  if(!modelAvailable&&uniqueReasons.length===0)uniqueReasons.push('Automated screening unavailable; manual review is required')
   const level:ListingRisk['level']=score>=65?'high':score>=30?'medium':modelAvailable?'low':'unscored'
   return {level,score,reasons:uniqueReasons,model}
 }
@@ -210,6 +211,20 @@ async function authLimit(request:Request,db:D1Database,route:string,max=8) {
   const ip=request.headers.get('CF-Connecting-IP')||'unknown'
   return limited(db,route+':'+ip,max,15)
 }
+async function verifyTurnstile(request:Request,env:Env,tokenValue:unknown,action:'signup'|'login'):Promise<boolean>{
+  const token=clean(tokenValue,4096)
+  if(!env.TURNSTILE_SECRET_KEY||!token)return false
+  try{
+    const data=new URLSearchParams({secret:env.TURNSTILE_SECRET_KEY,response:token})
+    const remoteIp=request.headers.get('CF-Connecting-IP')
+    if(remoteIp)data.set('remoteip',remoteIp)
+    const response=await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify',{method:'POST',body:data})
+    if(!response.ok)return false
+    const result=await response.json() as {success?:boolean;hostname?:string;action?:string}
+    const expectedHost=env.APP_URL?new URL(env.APP_URL).hostname:new URL(request.url).hostname
+    return result.success===true&&result.hostname===expectedHost&&result.action===action
+  }catch{return false}
+}
 async function issueToken(db:D1Database,userId:string,purpose:'verify'|'activate',minutes=30) {
   const token=randomToken()
   await db.batch([
@@ -265,7 +280,7 @@ function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includeRisk=f
     verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
     ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',
     favorite:!!p.favorite,
-    aiScreened:!!p.ai_screened_at&&p.ai_model==='@cf/meta/llama-3.2-1b-instruct',
+    aiScreened:!!p.ai_screened_at&&(p.ai_model||'').startsWith('@cf/meta/llama-'),
     ...(includePrivateVerification ? {
       verificationEvidenceType:p.verification_evidence_type||'none',
       verificationEvidenceUrl:p.verification_evidence_url||'',
@@ -401,6 +416,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const nextPath=safeNextPath(input.next)
       const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
+      if(!env.TURNSTILE_SECRET_KEY)return fail('Bot verification is not configured on this deployment. Please contact support.',503)
+      if(!await verifyTurnstile(request,env,input.turnstileToken,'signup'))return fail('Please complete the bot verification and try again.',403)
       if(!await limited(db,'register-email:'+email,3,60))return fail('Too many account setup requests for this email. Please wait before trying again.',429)
 
       // Do the same password-hash work for new and existing addresses, and
@@ -479,6 +496,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'login',8))return fail('Too many sign-in attempts. Please wait and try again.',429)
       const input=await body(request);if(!input)return fail('Invalid request body.')
       const email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
+      if(!env.TURNSTILE_SECRET_KEY)return fail('Bot verification is not configured on this deployment. Please contact support.',503)
+      if(!await verifyTurnstile(request,env,input.turnstileToken,'login'))return fail('Please complete the bot verification and try again.',403)
       if(!await limited(db,'login-email:'+email,8,15))return fail('Too many sign-in attempts. Please wait and try again.',429)
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE email=?').bind(email).first<UserRow>()
       // Match the PBKDF2 work for unknown emails to reduce account-enumeration
@@ -708,7 +727,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ]
       await db.batch(statements)
       const message=autoPublished
-        ? 'Cloudflare AI screening passed and your listing is now published. This is an automated content-risk check, not proof of ownership; the evidence status remains separate.'
+        ? 'Automated screening passed and your listing is now published. This is an automated content-risk check, not proof of ownership; the evidence status remains separate.'
         : evidence.status==='submitted'
           ? 'Submitted for review. AI could not safely auto-publish this listing, so it remains private until review. A supplied record link is not automatically verified.'
           : 'Submitted for review. AI could not safely auto-publish this listing. Add a public evidence reference in Edit details if you have one; AI screening is not proof of ownership.'
@@ -772,7 +791,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,verification_status=?,verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=?,updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),updateTime,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt,nextStatus,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       await savePropertyMedia(db,id,mediaImages,videoUrl)
-      return ok({id,status:nextStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message:autoPublished?'Changes saved and the listing passed Cloudflare AI screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
+      return ok({id,status:nextStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message:autoPublished?'Changes saved and the listing passed automated screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
@@ -781,7 +800,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/my/inquiries'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your inquiries.',401)
-      if(!await authLimit(request,db,'inquiry-inbox',20)||!await limited(db,'inquiry-inbox-user:'+user.id,60,60))return fail('Too many inbox requests. Please try again shortly.',429)
+      if(!await authLimit(request,db,'inquiry-inbox',120)||!await limited(db,'inquiry-inbox-user:'+user.id,240,60))return fail('The inbox is receiving too many requests. Please wait briefly and try again.',429)
       const result=await db.prepare("SELECT i.id,i.property_id,i.sender_id,i.email,i.message,i.status,i.created_at,p.title AS property_title,p.slug AS property_slug,p.city AS property_city FROM inquiries i JOIN properties p ON p.id=i.property_id WHERE p.owner_id=? ORDER BY CASE i.status WHEN 'new' THEN 0 WHEN 'read' THEN 1 ELSE 2 END, i.created_at DESC LIMIT 200").bind(user.id).all<{id:string;property_id:string;sender_id:string|null;email:string;message:string;status:string;created_at:string;property_title:string;property_slug:string;property_city:string}>()
       return ok(result.results)
     }
@@ -926,14 +945,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
 
     if(path==='/api/conversations'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your messages.',401)
-      if(!await authLimit(request,db,'conversation-list',30)||!await limited(db,'conversation-list-user:'+user.id,90,60))return fail('Too many inbox requests. Please try again shortly.',429)
+      if(!await authLimit(request,db,'conversation-list',120)||!await limited(db,'conversation-list-user:'+user.id,240,60))return fail('The inbox is receiving too many requests. Please wait briefly and try again.',429)
       const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,c.last_message_at AS lastMessageAt,
         CASE WHEN c.buyer_id=? THEN 'buyer' ELSE 'owner' END AS role,
         CASE WHEN c.buyer_id=? THEN uo.name ELSE ub.name END AS otherUserName,
-        COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
-        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unreadCount
+        COALESCE((SELECT CASE WHEN m.deleted_for_everyone_at IS NOT NULL THEN 'This message was deleted' ELSE m.body END FROM property_messages m LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=? WHERE m.conversation_id=c.id AND h.message_id IS NULL ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
+        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)) AS unreadCount
         FROM property_conversations c JOIN properties p ON p.id=c.property_id JOIN users ub ON ub.id=c.buyer_id JOIN users uo ON uo.id=c.owner_id
-        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
+        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
       return ok(result.results)
     }
     if(path==='/api/conversations'&&method==='POST') {
@@ -960,6 +979,44 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ])
       return ok({id:conversation.id},201)
     }
+    const conversationMessageActionMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)$/)
+    if(conversationMessageActionMatch&&(method==='PATCH'||method==='DELETE')) {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage private messages.',401)
+      if(!await authLimit(request,db,'conversation-message-action',30)||!await limited(db,'conversation-message-action-user:'+user.id,120,60))return fail('Too many message actions. Please wait and try again.',429)
+      const conversationId=decodeURIComponent(conversationMessageActionMatch[1]),messageId=decodeURIComponent(conversationMessageActionMatch[2])
+      const conversation=await db.prepare('SELECT id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(conversationId,user.id,user.id).first<{id:string;status:string}>()
+      if(!conversation)return fail('Conversation not found.',404)
+      const message=await db.prepare('SELECT id,sender_id,deleted_for_everyone_at FROM property_messages WHERE id=? AND conversation_id=? AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=property_messages.id AND h.user_id=?)').bind(messageId,conversationId,user.id).first<{id:string;sender_id:string;deleted_for_everyone_at:string|null}>()
+      if(!message)return fail('Message not found.',404)
+      if(method==='PATCH') {
+        if(message.sender_id!==user.id)return fail('You can only edit your own messages.',403)
+        if(conversation.status!=='open')return fail('This conversation is closed.',409)
+        if(message.deleted_for_everyone_at)return fail('A deleted message cannot be edited.',409)
+        const input=await body(request);if(!input)return fail('Invalid message edit.')
+        const bodyText=clean(input.message,2000).trim()
+        if(!bodyText||bodyText.length>2000)return fail('Write a message of 1–2,000 characters.')
+        const editedAt=nowIso()
+        const updated=await db.prepare('UPDATE property_messages SET body=?,edited_at=? WHERE id=? AND conversation_id=? AND sender_id=? AND deleted_for_everyone_at IS NULL').bind(bodyText,editedAt,messageId,conversationId,user.id).run()
+        if(!updated.meta.changes)return fail('The message could not be edited. Refresh and try again.',409)
+        await db.prepare('UPDATE property_conversations SET updated_at=? WHERE id=?').bind(editedAt,conversationId).run()
+        return ok({id:messageId,body:bodyText,editedAt})
+      }
+      const input=await body(request);if(!input)return fail('Invalid message action.')
+      const scope=clean(input.scope,20)
+      if(scope==='me') {
+        await db.prepare('INSERT OR IGNORE INTO property_message_hidden(message_id,user_id,hidden_at) VALUES(?,?,?)').bind(messageId,user.id,nowIso()).run()
+        return ok({id:messageId,deletedFor:'me'})
+      }
+      if(scope==='everyone') {
+        if(message.sender_id!==user.id)return fail('You can only delete your own message for everyone.',403)
+        if(message.deleted_for_everyone_at)return fail('This message has already been deleted.',409)
+        const deletedAt=nowIso()
+        const deleted=await db.prepare("UPDATE property_messages SET body='This message was deleted',deleted_for_everyone_at=?,edited_at=NULL,reply_to_message_id=NULL,forwarded_from_message_id=NULL WHERE id=? AND conversation_id=? AND sender_id=? AND deleted_for_everyone_at IS NULL").bind(deletedAt,messageId,conversationId,user.id).run()
+        if(!deleted.meta.changes)return fail('The message could not be deleted. Refresh and try again.',409)
+        return ok({id:messageId,deletedFor:'everyone',deletedAt})
+      }
+      return fail('Choose whether to delete the message for you or everyone.')
+    }
     const conversationMessagesMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages$/)
     if(conversationMessagesMatch&&(method==='GET'||method==='POST')) {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to access private messages.',401)
@@ -967,22 +1024,41 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const conversation=await db.prepare('SELECT id,buyer_id,owner_id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(id,user.id,user.id).first<{id:string;buyer_id:string;owner_id:string;status:string}>()
       if(!conversation)return fail('Conversation not found.',404)
       if(method==='GET') {
-        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt
-          FROM property_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=?
-          ORDER BY m.created_at DESC LIMIT 100`).bind(id).all<{id:string;senderId:string;senderName:string;body:string;createdAt:string;readAt:string|null}>()
+        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt,
+          m.edited_at AS editedAt,m.deleted_for_everyone_at AS deletedAt,m.reply_to_message_id AS replyToMessageId,
+          CASE WHEN rm.id IS NULL THEN '' WHEN rm.deleted_for_everyone_at IS NOT NULL OR rh.message_id IS NOT NULL THEN 'Message unavailable' ELSE rm.body END AS replyToBody,
+          COALESCE(ru.name,'') AS replyToSenderName,m.forwarded_from_message_id AS forwardedFromMessageId
+          FROM property_messages m JOIN users u ON u.id=m.sender_id
+          LEFT JOIN property_messages rm ON rm.id=m.reply_to_message_id
+          LEFT JOIN users ru ON ru.id=rm.sender_id
+          LEFT JOIN property_message_hidden rh ON rh.message_id=rm.id AND rh.user_id=?
+          LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=?
+          WHERE m.conversation_id=? AND h.message_id IS NULL
+          ORDER BY m.created_at DESC LIMIT 100`).bind(user.id,user.id,id).all<{id:string;senderId:string;senderName:string;body:string;createdAt:string;readAt:string|null;editedAt:string|null;deletedAt:string|null;replyToMessageId:string|null;replyToBody:string;replyToSenderName:string;forwardedFromMessageId:string|null}>()
         return ok(result.results.reverse())
       }
       if(conversation.status!=='open')return fail('This conversation is closed.',409)
       if(!await authLimit(request,db,'conversation-message',20)||!await limited(db,'conversation-message-user:'+user.id,80,60))return fail('You are sending messages too quickly. Wait a moment and retry.',429)
       const input=await body(request);if(!input)return fail('Invalid message.')
       const message=clean(input.message,2000).trim()
+      const replyToMessageId=clean(input.replyToMessageId,80)||null
+      const forwardedFromMessageId=clean(input.forwardedFromMessageId,80)||null
+      if(replyToMessageId&&forwardedFromMessageId)return fail('A message cannot be both a reply and a forward.')
       if(!message||message.length>2000)return fail('Write a message of 1–2,000 characters.')
+      if(replyToMessageId) {
+        const quoted=await db.prepare('SELECT m.id FROM property_messages m LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=? WHERE m.id=? AND m.conversation_id=? AND h.message_id IS NULL AND m.deleted_for_everyone_at IS NULL').bind(user.id,replyToMessageId,id).first<{id:string}>()
+        if(!quoted)return fail('The message you are replying to is no longer available.',404)
+      }
+      if(forwardedFromMessageId) {
+        const forwarded=await db.prepare('SELECT m.id FROM property_messages m JOIN property_conversations c ON c.id=m.conversation_id LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=? WHERE m.id=? AND h.message_id IS NULL AND m.deleted_for_everyone_at IS NULL AND (c.buyer_id=? OR c.owner_id=?)').bind(user.id,forwardedFromMessageId,user.id,user.id).first<{id:string}>()
+        if(!forwarded)return fail('The message you are forwarding is no longer available.',404)
+      }
       const timestamp=nowIso(),messageId=uuid()
       await db.batch([
-        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES(?,?,?,?,?)').bind(messageId,id,user.id,message,timestamp),
+        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at,reply_to_message_id,forwarded_from_message_id) VALUES(?,?,?,?,?,?,?)').bind(messageId,id,user.id,message,timestamp,replyToMessageId,forwardedFromMessageId),
         db.prepare('UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status=\'open\'').bind(timestamp,timestamp,id)
       ])
-      return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null},201)
+      return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null,editedAt:null,deletedAt:null,replyToMessageId,forwardedFromMessageId},201)
     }
     const conversationReadMatch=path.match(/^\/api\/conversations\/([^/]+)\/read$/)
     if(conversationReadMatch&&method==='PATCH') {

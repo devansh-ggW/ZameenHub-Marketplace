@@ -6,7 +6,9 @@
 - [ ] Confirm run_worker_first = ["/api/*"] is under the [assets] section.
 - [ ] Confirm RESEND_API_KEY is a Cloudflare Secret; never commit it.
 - [ ] Confirm APP_URL, RESEND_FROM_EMAIL, and SUPPORT_EMAIL use the exact production values and the sender domain is Verified in Resend.
-- [ ] Back up D1 and apply all pending D1 migrations through the latest numbered file (`migrations/0005_property_chat.sql`) before deploying Worker code that references the schema. The production migration must be applied to the intended remote `zameenhub` database.
+- [ ] Create a Turnstile widget for the production hostname; set the public key as the GitHub Actions/Cloudflare build variable `VITE_TURNSTILE_SITE_KEY` and set the matching private key as the Worker secret `TURNSTILE_SECRET_KEY`. Never commit the secret.
+- [ ] Confirm signup/sign-in challenge verification rejects missing, expired, wrong-hostname and wrong-action tokens before enabling public account creation.
+- [ ] Back up D1 and apply all pending D1 migrations through the latest numbered file (`migrations/0006_property_message_actions.sql`) before deploying Worker code that references the schema. The production migration must be applied to the intended remote `zameenhub` database.
 - [ ] Run pnpm build, pnpm test:smoke, and review the final source diff. The smoke check is a wiring check, not a live integration test.
 - [ ] Review Privacy Policy and Terms with the actual operator identity, address, governing law, grievance process, and real data-retention practices.
 - [ ] Confirm the Worker CPU budget/plan can support PBKDF2 password hashing; test registration and login on the deployed plan and inspect CPU-limit errors.
@@ -28,6 +30,7 @@
 - [ ] Only authorized moderator/admin accounts can publish or reject listings.
 - [ ] Published listings use D1 data; AI-screened status is labelled separately from human evidence review, and no AI result is presented as proof of legal ownership.
 - [ ] Favorites persist per account and cannot be changed for unpublished/nonexistent properties.
+- [ ] Apply `migrations/0006_property_message_actions.sql` to remote D1 before deploying the Worker. Test reply, forwarding, message edits, delete-for-everyone and delete-for-me as both conversation participants.
 - [ ] Inquiry is stored and owner notification is delivered; missing notification is reported honestly.
 - [ ] Support form actually sends to dewifystores@gmail.com; failed delivery is not shown as success.
 - [ ] /api/* responds with JSON, not the SPA HTML fallback.
@@ -44,7 +47,7 @@
 
 ## Additional checks for MFA and AI risk screening
 
-- [ ] Back up production D1 and apply pending migrations through `migrations/0005_property_chat.sql` **before** deploying Worker code that references the new schema.
+- [ ] Back up production D1 and apply pending migrations through `migrations/0006_property_message_actions.sql` **before** deploying Worker code that references the new schema.
 - [ ] Add `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret (at least 32 random characters); do not commit it or place it in public vars.
 - [ ] Confirm `[ai]` / `binding = "AI"` is active for the Worker and check the Workers AI usage dashboard.
 - [ ] Configure and test authenticator MFA enrolment, invalid/expired TOTP, one-time recovery codes, rate limits, MFA disable alerts and delete-account confirmation.
@@ -79,7 +82,7 @@
 
 
 ## Private chat and automatic AI screening
-- [ ] Apply `migrations/0005_property_chat.sql` before deploying the conversation endpoints.
+- [ ] Apply `migrations/0006_property_message_actions.sql` before deploying the conversation endpoints.
 - [ ] Verify buyers can start a private chat only for a published property, cannot chat with their own listing, and cannot read another user's conversation.
 - [ ] Verify owners can reply from /messages, messages refresh, unread counts clear, and email addresses are not exposed by the chat API.
 - [ ] Confirm Cloudflare Workers AI responds with a valid low-risk result; submit a low-risk non-duplicate listing and confirm it publishes with an “AI screened” disclosure, not an ownership-verified badge.
