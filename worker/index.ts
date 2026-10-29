@@ -400,7 +400,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid request body.')
       const nextPath=safeNextPath(input.next)
       const name=clean(input.name,100),email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
-      if(name.length<2||!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
+      if(name.length<2||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||password.length<8||password.length>128||input.acceptedTerms!==true)return fail('Enter your name and a valid email, choose a password of at least 8 characters, and accept the Terms.')
       if(!await limited(db,'register-email:'+email,3,60))return fail('Too many account setup requests for this email. Please wait before trying again.',429)
 
       // Do the same password-hash work for new and existing addresses, and
@@ -643,7 +643,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
       const accountRateKeys=await Promise.all([
         'login-email:'+user.email,'register-email:'+user.email,'resend-email:'+user.email,'forgot-email:'+user.email,
-        'listing-user:'+user.id,'listing-edit-user:'+user.id,'listing-manage-user:'+user.id,
+        'listing-user:'+user.id,'listing-edit-user:'+user.id,'listing-manage-user:'+user.id,'listing-delete-user:'+user.id,
         'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id,
         'property-report-user:'+user.id,'inquiry-inbox-user:'+user.id,'inquiry-update-user:'+user.id,
         'moderation-user:'+user.id,'report-review-user:'+user.id
@@ -724,6 +724,27 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       return ok({id,status:'archived',message:'Your listing is archived and no longer appears in public search.'})
     }
     const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
+    if(ownedPropertyMatch&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to delete your listings.',401)
+      if(!await authLimit(request,db,'listing-delete',6)||!await limited(db,'listing-delete-user:'+user.id,6,60))return fail('Too many listing deletions. Please wait before trying again.',429)
+      const id=decodeURIComponent(ownedPropertyMatch[1])
+      const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string}>()
+      if(!owned)return fail('Listing not found in your account.',404)
+      // Delete dependent rows first. Each statement is scoped to a property that still belongs to this user.
+      const deletion=await db.batch([
+        db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
+        db.prepare('DELETE FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
+        db.prepare('DELETE FROM inquiries WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
+        db.prepare('DELETE FROM property_reports WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
+        db.prepare('DELETE FROM property_moderation_events WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
+        db.prepare('DELETE FROM favorites WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
+        db.prepare('DELETE FROM property_media WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
+        db.prepare('DELETE FROM property_images WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
+        db.prepare('DELETE FROM properties WHERE id=? AND owner_id=?').bind(id,user.id)
+      ])
+      if(!deletion[deletion.length-1]?.meta?.changes)return fail('Listing could not be deleted. Refresh and try again.',409)
+      return ok({id,deleted:true,message:'Property deleted permanently. Its listing, saved entries, inquiries, reports and related chat history have been removed.'})
+    }
     if(ownedPropertyMatch&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
       const property=await db.prepare('SELECT * FROM properties WHERE id=? AND owner_id=?').bind(decodeURIComponent(ownedPropertyMatch[1]),user.id).first<PropertyRow>()
