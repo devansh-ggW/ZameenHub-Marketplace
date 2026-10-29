@@ -104,6 +104,8 @@ if(!read('src/account-pages.tsx').includes('verifyEvidence'))errors.push('Modera
 if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
 if(!read('src/account-security.tsx').includes('Show password')||!read('src/account-security.tsx').includes('Hide password')||!read('src/account-security.tsx').includes('delete-account-password'))errors.push('MFA and delete-account password fields must expose accessible show/hide controls')
 if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
+const securityUi=read('src/account-security.tsx')
+if(!securityUi.includes('setSetup(result.data); setSetupCode(\'\')')||securityUi.includes('setSetup(result.data); setSetupPassword(\'\'); setSetupCode(\'\')')||!securityUi.includes('password: setupPassword, code: setupCode'))errors.push('MFA setup must retain the password until the authenticator code has been confirmed')
 if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
 if(!read('public/_headers').includes('Strict-Transport-Security:'))errors.push('Static pages should include HSTS')
 if(wrangler.includes('REPLACE_WITH_CONFIGURED_D1_DATABASE_ID'))errors.push('Wrangler still contains a placeholder D1 database ID')
