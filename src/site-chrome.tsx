@@ -22,7 +22,7 @@ export function SiteHeader() {
     setBusy(false); setUser(null); navigate('/')
   }
   return <header className="site-header"><div className="container nav">
-    <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/icon1.png" alt="" /><span>ZameenHub</span></Link>
+    <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
     <nav className={'nav-links ' + (open ? 'open' : '')} aria-label="Primary navigation">
       <NavLink to="/">Home</NavLink>
       <NavLink to="/properties">Browse properties</NavLink>
