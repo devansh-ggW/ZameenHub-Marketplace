@@ -21,20 +21,20 @@ export function SiteHeader() {
     await apiRequest<{ loggedOut: boolean }>('/api/auth/logout', { method: 'POST', body: '{}' })
     setBusy(false); setUser(null); navigate('/')
   }
-  return <header className="site-header"><div className="container nav">
+  return <header className="site-header"><div className={'container nav' + (user ? ' nav-authenticated' : '')}>
     <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
     <nav className={'nav-links ' + (open ? 'open' : '')} aria-label="Primary navigation">
       <NavLink to="/">Home</NavLink>
       <NavLink to="/properties">Browse properties</NavLink>
       <NavLink to="/tools/emi-calculator">EMI calculator</NavLink>
-      {user && <NavLink to="/saved">Saved properties</NavLink>}
-      {user && <NavLink to="/my-listings">My listings</NavLink>}
-      {user && <><NavLink to="/inquiries">Inquiries</NavLink><NavLink to="/messages">Messages</NavLink></>}
-      {user && <NavLink to="/profile">Account</NavLink>}
-      {user && ['admin','moderator'].includes(user.role) && <><NavLink to="/review-queue">Review queue</NavLink><NavLink to="/report-queue">Listing reports</NavLink></>}
+      {user && <NavLink className="nav-account-menu-link" to="/saved">Saved properties</NavLink>}
+      {user && <NavLink className="nav-account-menu-link" to="/my-listings">My listings</NavLink>}
+      {user && <><NavLink className="nav-account-menu-link" to="/inquiries">Inquiries</NavLink><NavLink className="nav-account-menu-link" to="/messages">Messages</NavLink></>}
+      {user && <NavLink className="nav-account-menu-link" to="/profile">Account</NavLink>}
+      {user && ['admin','moderator'].includes(user.role) && <><NavLink className="nav-account-menu-link" to="/review-queue">Review queue</NavLink><NavLink className="nav-account-menu-link" to="/report-queue">Listing reports</NavLink></>}
       <NavLink to="/about">About</NavLink>
       {user ? <>
-        <NavLink className="mobile-menu-link mobile-menu-list" to="/list-property">List a property <ArrowUpRight size={15} /></NavLink>
+        <NavLink className="mobile-menu-link mobile-menu-list nav-account-menu-link" to="/list-property">List a property <ArrowUpRight size={15} /></NavLink>
         <button className="mobile-menu-link mobile-menu-button" disabled={busy} onClick={() => void logout()}>{busy ? 'Signing out…' : 'Sign out'}</button>
       </> : <>
         <NavLink className="mobile-menu-link" to={'/login?next=' + encodeURIComponent(location.pathname === '/list-property' ? '/list-property' : '/profile')}>Sign in</NavLink>
