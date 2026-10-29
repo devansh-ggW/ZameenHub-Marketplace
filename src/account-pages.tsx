@@ -49,10 +49,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
     let reviewNote = ''
     if (status === 'published' && verifyEvidence) {
       if (user?.role !== 'admin') { setError('Only an administrator can manually verify a listing.'); return }
-      const verificationNote = window.prompt('Describe how you manually checked this property and its details (at least 20 characters). You may include a public record reference check or another independent check:')
-      if (verificationNote === null) return
-      if (verificationNote.trim().length < 20) { setError('Verification cancelled. Record at least 20 characters describing the checks you completed.'); return }
-      reviewNote = 'Manual verification: ' + verificationNote.trim()
+      reviewNote = 'Administrator manually checked the property details and supporting reference information.'
     }
     let ownerMessage = ''
     if (status === 'rejected') {

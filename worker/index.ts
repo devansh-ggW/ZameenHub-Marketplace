@@ -8,7 +8,7 @@ export type Env = {
   SUPPORT_EMAIL?: string
   APP_URL?: string
 }
-type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
+type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; mfa_enabled?:number; mfa_email_enabled?:number; is_banned?:number; banned_reason?:string|null; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
 type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
@@ -42,7 +42,7 @@ function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
 const passwordValue=(v:unknown)=>typeof v==='string'?v:''
 const safeInt=(v:unknown,min=0,max=100_000_000)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>=min&&n<=max?n:null}
-const userView=(u:UserRow)=>({id:u.id,email:u.email,name:u.name,role:u.role,emailVerified:u.email_verified===1,mfaEnabled:u.mfa_enabled===1,profileImageUrl:u.profile_image_url||''})
+const userView=(u:UserRow)=>({id:u.id,email:u.email,name:u.name,role:u.role,emailVerified:u.email_verified===1,mfaEnabled:u.mfa_enabled===1||u.mfa_email_enabled===1,mfaAuthenticatorEnabled:u.mfa_enabled===1,mfaEmailEnabled:u.mfa_email_enabled===1,profileImageUrl:u.profile_image_url||''})
 async function passwordHash(password:string) {
   const salt=bytes(16), iterations=100000
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits'])
@@ -108,7 +108,7 @@ const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURICompone
 const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
 async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
-  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
+  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.mfa_enabled,u.mfa_email_enabled,u.is_banned,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1 AND COALESCE(u.is_banned,0)=0').bind(await digest(token),nowIso()).first<UserRow>()
   return row??null
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
@@ -128,6 +128,36 @@ function emailHtml(title:string,body:string,url:string,button:string) {
 }
 function emailText(title:string,body:string,url:string,button:string) {
   return `ZameenHub\n\n${title}\n\n${body}\n\n${button}:\n${url}\n\nIf you did not request this, you can ignore this email. Never share this link with anyone.\n\nSupport: dewifystores@gmail.com`
+}
+type EmailMfaPurpose = 'login'|'setup'|'disable'|'delete'
+type EmailMfaCode = { id:string; salt:string; code_hash:string; attempts:number }
+const randomSixDigitCode=()=>{const ceiling=Math.floor(0x1_0000_0000/1_000_000)*1_000_000;let value=0;do{const v=bytes(4);value=((v[0]*0x1000000)+(v[1]*0x10000)+(v[2]*0x100)+v[3])}while(value>=ceiling);return String(value%1_000_000).padStart(6,'0')}
+const maskEmail=(email:string)=>{const i=email.indexOf('@');return i>0?email.slice(0,1)+'***'+email.slice(i):'***'}
+async function issueEmailMfaCode(db:D1Database,env:Env,user:UserRow,url:URL,purpose:EmailMfaPurpose,minutes=10) {
+  if(!env.RESEND_API_KEY||!env.RESEND_FROM_EMAIL)return false
+  const code=randomSixDigitCode(),salt=randomToken(),codeHash=await digest('email-mfa:'+env.RESEND_API_KEY+':'+salt+':'+code),id=uuid(),expiresAt=future(minutes)
+  await db.batch([
+    db.prepare('DELETE FROM auth_email_mfa_codes WHERE user_id=? AND purpose=?').bind(user.id,purpose),
+    db.prepare('INSERT INTO auth_email_mfa_codes(id,user_id,purpose,salt,code_hash,attempts,expires_at,created_at) VALUES(?,?,?,?,?,0,?,?)').bind(id,user.id,purpose,salt,codeHash,expiresAt,nowIso())
+  ])
+  const purposeLabel=purpose==='login'?'sign-in':purpose==='setup'?'email two-step setup':purpose==='disable'?'security-change confirmation':'account-deletion confirmation'
+  const title='Your ZameenHub '+purposeLabel+' code'
+  const message='Your one-time code is '+code+'. It expires in '+minutes+' minutes. Never share this code with anyone. If you did not request it, you can ignore this email.'
+  const link=(env.APP_URL||url.origin)+(purpose==='delete'?'/profile':'/login')
+  const sent=await sendEmail(env,user.email,title,emailHtml(title,message,link,'Open ZameenHub'),emailText(title,message,link,'Open ZameenHub'))
+  if(!sent){await db.prepare('DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=?').bind(id,user.id).run();return false}
+  return true
+}
+async function inspectEmailMfaCode(db:D1Database,env:Env,userId:string,purpose:EmailMfaPurpose,rawCode:unknown):Promise<{id:string;codeHash:string}|null> {
+  if(!env.RESEND_API_KEY||!env.RESEND_FROM_EMAIL)return null
+  const code=clean(rawCode,20).replace(/\s/g,'')
+  if(!/^\d{6}$/.test(code))return null
+  const update=await db.prepare("UPDATE auth_email_mfa_codes SET attempts=attempts+1 WHERE id=(SELECT id FROM auth_email_mfa_codes WHERE user_id=? AND purpose=? AND expires_at>? LIMIT 1) AND expires_at>? AND attempts<5").bind(userId,purpose,nowIso(),nowIso()).run()
+  if(!update.meta.changes)return null
+  const row=await db.prepare('SELECT id,salt,code_hash,attempts FROM auth_email_mfa_codes WHERE user_id=? AND purpose=? AND expires_at>? LIMIT 1').bind(userId,purpose,nowIso()).first<EmailMfaCode>()
+  if(!row)return null
+  if(await digest('email-mfa:'+env.RESEND_API_KEY+':'+row.salt+':'+code)!==row.code_hash){if(row.attempts>=5)await db.prepare('DELETE FROM auth_email_mfa_codes WHERE id=?').bind(row.id).run();return null}
+  return {id:row.id,codeHash:row.code_hash}
 }
 async function limited(db:D1Database,key:string,max=8,windowMinutes=15) {
   const keyHash=await digest(key), now=Date.now(), current=nowIso()
@@ -319,7 +349,91 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/auth/mfa/status'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before checking two-factor setup.',401)
-      return ok({enabled:user.mfa_enabled===1,configured:typeof env.MFA_ENCRYPTION_KEY==='string'&&env.MFA_ENCRYPTION_KEY.length>=32})
+      return ok({enabled:user.mfa_enabled===1||user.mfa_email_enabled===1,authenticatorEnabled:user.mfa_enabled===1,emailEnabled:user.mfa_email_enabled===1,configured:typeof env.MFA_ENCRYPTION_KEY==='string'&&env.MFA_ENCRYPTION_KEY.length>=32})
+    }
+
+    if(path==='/api/auth/mfa/email/send'&&method==='POST') {
+      if(!await authLimit(request,db,'mfa-email-login-send',4))return fail('Too many code requests. Please wait before trying again.',429)
+      const challenge=requestCookie(request,'zh_mfa');if(!challenge)return fail('Your two-step sign-in has expired. Please sign in again.',401)
+      const challengeHash=await digest(challenge)
+      const pending=await db.prepare('SELECT id,user_id,expires_at FROM auth_mfa_challenges WHERE token_hash=? AND expires_at>?').bind(challengeHash,nowIso()).first<{id:string;user_id:string;expires_at:string}>()
+      if(!pending)return fail('Your two-step sign-in has expired. Please sign in again.',401)
+      const challengeUser=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_email_enabled,is_banned FROM users WHERE id=?').bind(pending.user_id).first<UserRow>()
+      if(!challengeUser||challengeUser.email_verified!==1||challengeUser.is_banned===1||challengeUser.mfa_email_enabled!==1)return fail('Email-code sign-in is not enabled for this account.',403)
+      if(!await limited(db,'mfa-email-login-user:'+challengeUser.id,4,15))return fail('Too many email-code requests. Try again later.',429)
+      const sent=await issueEmailMfaCode(db,env,challengeUser,url,'login',5)
+      if(!sent)return fail('The sign-in email could not be sent. Check the site email service or use your authenticator app.',503)
+      return ok({sent:true,emailHint:maskEmail(challengeUser.email),expiresInMinutes:5})
+    }
+    if(path==='/api/auth/mfa/email/verify'&&method==='POST') {
+      if(!await authLimit(request,db,'mfa-email-login-verify',8))return fail('Too many verification attempts. Please wait before trying again.',429)
+      const challenge=requestCookie(request,'zh_mfa');if(!challenge)return fail('Your two-step sign-in has expired. Please sign in again.',401)
+      const challengeHash=await digest(challenge)
+      const pending=await db.prepare('SELECT id,user_id,expires_at FROM auth_mfa_challenges WHERE token_hash=? AND expires_at>?').bind(challengeHash,nowIso()).first<{id:string;user_id:string;expires_at:string}>()
+      if(!pending)return fail('Your two-step sign-in has expired. Please sign in again.',401)
+      const challengeUser=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_email_enabled,is_banned FROM users WHERE id=?').bind(pending.user_id).first<UserRow>()
+      if(!challengeUser||challengeUser.email_verified!==1||challengeUser.is_banned===1||challengeUser.mfa_email_enabled!==1)return fail('Email-code sign-in is not enabled for this account.',403)
+      const match=await inspectEmailMfaCode(db,env,challengeUser.id,'login',(await body(request))?.code)
+      if(!match)return fail('That email code is invalid, expired, or has been used. Request a new one and try again.',401)
+      const consumed=await db.batch([
+        db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='login' AND code_hash=? AND expires_at>? AND attempts<=5").bind(match.id,challengeUser.id,match.codeHash,nowIso()),
+        db.prepare('DELETE FROM auth_mfa_challenges WHERE id=? AND user_id=? AND expires_at>? AND changes()=1').bind(pending.id,challengeUser.id,nowIso())
+      ])
+      if(!consumed[0]?.meta?.changes||!consumed[1]?.meta?.changes)return fail('That email code or sign-in challenge was already used. Sign in again.',401)
+      await db.prepare("DELETE FROM auth_email_mfa_codes WHERE user_id=? AND purpose='login'").bind(challengeUser.id).run()
+      const token=await createSession(db,challengeUser.id)
+      return okWithCookies({user:userView(challengeUser)},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
+    }
+    if(path==='/api/auth/mfa/email/action-code'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before changing two-step verification.',401)
+      if(!await authLimit(request,db,'mfa-email-action-code',5)||!await limited(db,'mfa-email-action-user:'+user.id,8,60))return fail('Too many code requests. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid verification request.')
+      const purpose=clean(input.purpose,20) as EmailMfaPurpose,password=passwordValue(input.password)
+      if(!['setup','disable','delete'].includes(purpose))return fail('Unsupported email verification action.')
+      if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
+      if(purpose==='setup'&&user.mfa_email_enabled===1)return fail('Email two-step verification is already enabled.')
+      if(purpose==='disable'&&user.mfa_email_enabled!==1)return fail('Email two-step verification is not enabled.')
+      if(purpose==='delete'&&user.mfa_email_enabled!==1)return fail('Email two-step verification is not enabled for this account.')
+      const sent=await issueEmailMfaCode(db,env,user,url,purpose,10)
+      if(!sent)return fail('The email could not be sent. Confirm the Resend API key and sender configuration, then try again.',503)
+      return ok({sent:true,emailHint:maskEmail(user.email),expiresInMinutes:10})
+    }
+    if(path==='/api/auth/mfa/email/enable'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling email two-step verification.',401)
+      if(!await authLimit(request,db,'mfa-email-enable',5)||!await limited(db,'mfa-email-enable-user:'+user.id,5,15))return fail('Too many verification attempts. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid verification request.')
+      if(user.mfa_email_enabled===1)return fail('Email two-step verification is already enabled.')
+      if(!await verifyPassword(passwordValue(input.password),user.password_hash))return fail('Current password is incorrect.',401)
+      const match=await inspectEmailMfaCode(db,env,user.id,'setup',input.code)
+      if(!match)return fail('That email code is invalid or expired. Request another code and try again.',401)
+      const result=await db.batch([
+        db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='setup' AND code_hash=? AND expires_at>? AND attempts<=5").bind(match.id,user.id,match.codeHash,nowIso()),
+        db.prepare('UPDATE users SET mfa_email_enabled=1,updated_at=? WHERE id=? AND COALESCE(mfa_email_enabled,0)=0 AND changes()=1').bind(nowIso(),user.id)
+      ])
+      if(!result[0]?.meta?.changes||!result[1]?.meta?.changes)return fail('The code was already used or your security settings changed. Request another code.',409)
+      const currentHash=await digest(cookieToken(request))
+      await db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').bind(user.id,currentHash).run()
+      await sendEmail(env,user.email,'Email two-step verification enabled on ZameenHub',emailHtml('Email two-step verification enabled','A one-time email code will now be required when signing in to your account. If you did not make this change, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'),emailText('Email two-step verification enabled','A one-time email code will now be required when signing in to your account. If you did not make this change, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'))
+      return ok({enabled:true,emailEnabled:true,authenticatorEnabled:user.mfa_enabled===1})
+    }
+    if(path==='/api/auth/mfa/email/disable'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before disabling email two-step verification.',401)
+      if(!await authLimit(request,db,'mfa-email-disable',5)||!await limited(db,'mfa-email-disable-user:'+user.id,5,15))return fail('Too many verification attempts. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid verification request.')
+      if(user.mfa_email_enabled!==1)return fail('Email two-step verification is not enabled.')
+      if(!await verifyPassword(passwordValue(input.password),user.password_hash))return fail('Current password is incorrect.',401)
+      const match=await inspectEmailMfaCode(db,env,user.id,'disable',input.code)
+      if(!match)return fail('That email code is invalid or expired. Request another code and try again.',401)
+      const result=await db.batch([
+        db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='disable' AND code_hash=? AND expires_at>? AND attempts<=5").bind(match.id,user.id,match.codeHash,nowIso()),
+        db.prepare('UPDATE users SET mfa_email_enabled=0,updated_at=? WHERE id=? AND COALESCE(mfa_email_enabled,0)=1 AND changes()=1').bind(nowIso(),user.id)
+      ])
+      if(!result[0]?.meta?.changes||!result[1]?.meta?.changes)return fail('The code was already used or your security settings changed. Request another code.',409)
+      await db.prepare('DELETE FROM auth_email_mfa_codes WHERE user_id=? AND purpose=?').bind(user.id,'setup').run()
+      const currentHash=await digest(cookieToken(request))
+      await db.prepare('DELETE FROM sessions WHERE user_id=? AND token_hash<>?').bind(user.id,currentHash).run()
+      await sendEmail(env,user.email,'Email two-step verification disabled on ZameenHub',emailHtml('Email two-step verification disabled','Email-based two-step verification was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'),emailText('Email two-step verification disabled','Email-based two-step verification was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'))
+      return ok({enabled:user.mfa_enabled===1,emailEnabled:false,authenticatorEnabled:user.mfa_enabled===1})
     }
     if(path==='/api/auth/logout'&&method==='POST') {
       const token=cookieToken(request)
@@ -414,22 +528,23 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid request body.')
       const email=normalizeEmail(clean(input.email,254)),password=passwordValue(input.password)
       if(!await limited(db,'login-email:'+email,8,15))return fail('Too many sign-in attempts. Please wait and try again.',429)
-      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE email=?').bind(email).first<UserRow>()
+      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_email_enabled,is_banned,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE email=?').bind(email).first<UserRow>()
       // Match the PBKDF2 work for unknown emails to reduce account-enumeration
       // through response timing. The dummy expected digest is intentionally invalid.
       const dummyHash='pbkdf2$100000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
       const valid=await verifyPassword(password,user?.password_hash||dummyHash)
       if(!user||!valid)return fail('Email or password is incorrect.',401)
+      if(user.is_banned===1)return fail('This account has been suspended. Contact site support if you believe this is a mistake.',403)
       if(user.email_verified!==1)return fail('Please verify your email before signing in. Use the resend verification option if needed.',403)
       const previousToken=cookieToken(request)
       if(previousToken)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await digest(previousToken)).run()
       const previousChallenge=requestCookie(request,'zh_mfa')
       if(previousChallenge)await db.prepare('DELETE FROM auth_mfa_challenges WHERE token_hash=?').bind(await digest(previousChallenge)).run()
-      if(user.mfa_enabled===1){
+      if(user.mfa_enabled===1||user.mfa_email_enabled===1){
         const challenge=randomToken()
         await db.prepare('DELETE FROM auth_mfa_challenges WHERE expires_at<=?').bind(nowIso()).run()
         await db.prepare('INSERT INTO auth_mfa_challenges(id,user_id,token_hash,attempts,expires_at) VALUES(?,?,?,0,?)').bind(uuid(),user.id,await digest(challenge),future(5)).run()
-        return okWithCookies({mfaRequired:true},200,[sessionCookie('',0),mfaChallengeCookie(challenge,300)])
+        return okWithCookies({mfaRequired:true,mfaMethods:{authenticator:user.mfa_enabled===1,email:user.mfa_email_enabled===1},emailHint:maskEmail(user.email)},200,[sessionCookie('',0),mfaChallengeCookie(challenge,300)])
       }
       const token=await createSession(db,user.id)
       return okWithCookies({user:userView(user),mfaRequired:false},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
@@ -449,15 +564,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       const attempt=await db.prepare('UPDATE auth_mfa_challenges SET attempts=attempts+1 WHERE id=? AND expires_at>? AND attempts<5').bind(record.id,nowIso()).run()
       if(!attempt.meta.changes)return fail('Too many incorrect codes. Please sign in again.',429)
-      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE id=?').bind(record.user_id).first<UserRow>()
+      const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_email_enabled,is_banned,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE id=?').bind(record.user_id).first<UserRow>()
       let valid=false
-      try { valid=!!user&&user.email_verified===1&&await verifyMfaCode(db,user,code,env) } catch { valid=false }
+      try { valid=!!user&&user.email_verified===1&&user.is_banned!==1&&await verifyMfaCode(db,user,code,env) } catch { valid=false }
       if(!valid){
         if(record.attempts+1>=5)await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
         return fail('That code is invalid or expired. Check your authenticator and try again.',401)
       }
+      const consumed=await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=? AND token_hash=? AND expires_at>? RETURNING id').bind(record.id,challengeHash,nowIso()).first<{id:string}>()
+      if(!consumed)return fail('Your two-step sign-in was already completed or has expired. Sign in again.',401)
       const token=await createSession(db,record.user_id)
-      await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
       return okWithCookies({user:userView(user as UserRow)},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/setup'&&method==='POST') {
@@ -493,7 +609,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ]
       await db.batch(statements)
       await sendEmail(env,user.email,'Two-factor authentication enabled on ZameenHub',emailHtml('Two-factor authentication enabled','Authenticator-based two-factor authentication was enabled for your account. If you did not do this, sign in, disable it, and contact support.',env.APP_URL||url.origin,'Open ZameenHub'),emailText('Two-factor authentication enabled','Authenticator-based two-factor authentication was enabled for your account. If you did not do this, sign in, disable it, and contact support.',env.APP_URL||url.origin,'Open ZameenHub'))
-      return ok({enabled:true,recoveryCodes})
+      return ok({enabled:true,authenticatorEnabled:true,emailEnabled:user.mfa_email_enabled===1,recoveryCodes})
     }
     if(path==='/api/auth/mfa/disable'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before changing two-factor authentication.',401)
@@ -512,7 +628,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         db.prepare('DELETE FROM auth_mfa_challenges WHERE user_id=?').bind(user.id)
       ])
       await sendEmail(env,user.email,'Two-factor authentication disabled on ZameenHub',emailHtml('Two-factor authentication disabled','Authenticator-based two-factor authentication was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'),emailText('Two-factor authentication disabled','Authenticator-based two-factor authentication was disabled for your account. If you did not do this, reset your password and contact support.',env.APP_URL||url.origin,'Open ZameenHub'))
-      return ok({enabled:false})
+      return ok({enabled:user.mfa_email_enabled===1,authenticatorEnabled:false,emailEnabled:user.mfa_email_enabled===1})
     }
     if(path==='/api/auth/forgot-password'&&method==='POST') {
       if(!await authLimit(request,db,'forgot',4))return fail('Too many requests. Please wait before trying again.',429)
@@ -569,10 +685,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(input?.confirmText!=='DELETE')return fail('Type DELETE to confirm account deletion.')
       const password=passwordValue(input?.password)
       if(!await verifyPassword(password,user.password_hash))return fail('Current password is incorrect.',401)
-      if(user.mfa_enabled===1){
+      if(user.mfa_enabled===1||user.mfa_email_enabled===1){
         let valid=false
-        try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }
-        if(!valid)return fail('Enter a valid authenticator or unused recovery code to confirm account deletion.',401)
+        if(user.mfa_enabled===1){try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }}
+        if(!valid&&user.mfa_email_enabled===1){
+          const emailMatch=await inspectEmailMfaCode(db,env,user.id,'delete',input?.emailCode)
+          if(emailMatch){const consumed=await db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='delete' AND code_hash=? AND expires_at>? AND attempts<=5 RETURNING id").bind(emailMatch.id,user.id,emailMatch.codeHash,nowIso()).first<{id:string}>();valid=!!consumed}
+        }
+        if(!valid)return fail('Enter a valid authenticator/recovery code or request an email code to confirm account deletion.',401)
       }
       // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
       const accountRateKeys=await Promise.all([
@@ -720,6 +840,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       return ok({id,status})
     }
     if(path==='/api/favorites'&&method==='GET') {
+
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
       const result=await db.prepare("SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' ORDER BY f.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow>()
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p))))
@@ -738,6 +859,71 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         return ok({saved:true})
       }
       if(method==='DELETE') {await db.prepare('DELETE FROM favorites WHERE user_id=? AND property_id=?').bind(user.id,id).run();return ok({saved:false})}
+    }
+    if(path==='/api/admin/overview'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Administrator access required.',403)
+      if(!await authLimit(request,db,'admin-overview',30))return fail('Too many admin requests. Please wait before trying again.',429)
+      const [users,bannedUsers,publishedProperties,unverifiedProperties,openReports,pendingListings]=await Promise.all([
+        db.prepare('SELECT COUNT(*) AS total FROM users').first<{total:number}>(),
+        db.prepare('SELECT COUNT(*) AS total FROM users WHERE is_banned=1').first<{total:number}>(),
+        db.prepare("SELECT COUNT(*) AS total FROM properties WHERE status='published'").first<{total:number}>(),
+        db.prepare("SELECT COUNT(*) AS total FROM properties WHERE status='published' AND COALESCE(verification_status,'unverified')<>'verified'").first<{total:number}>(),
+        db.prepare("SELECT COUNT(*) AS total FROM property_reports WHERE status IN ('open','reviewing')").first<{total:number}>(),
+        db.prepare("SELECT COUNT(*) AS total FROM properties WHERE status='pending'").first<{total:number}>()
+      ])
+      return ok({users:users?.total||0,bannedUsers:bannedUsers?.total||0,publishedProperties:publishedProperties?.total||0,unverifiedProperties:unverifiedProperties?.total||0,openReports:openReports?.total||0,pendingListings:pendingListings?.total||0})
+    }
+    if(path==='/api/admin/users'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Administrator access required.',403)
+      if(!await authLimit(request,db,'admin-users',30))return fail('Too many admin requests. Please wait before trying again.',429)
+      const q=clean(url.searchParams.get('q'),120).replace(/[%_]/g,'')
+      const like='%'+q+'%'
+      const result=await db.prepare("SELECT id,email,name,role,email_verified,mfa_enabled,mfa_email_enabled,is_banned,banned_reason,created_at FROM users WHERE (?='' OR email LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE) ORDER BY created_at DESC LIMIT 100").bind(q,like,like).all<{id:string;email:string;name:string;role:string;email_verified:number;mfa_enabled:number;mfa_email_enabled:number;is_banned:number;banned_reason:string;created_at:string}>()
+      return ok(result.results)
+    }
+    const adminUserMatch=path.match(/^\/api\/admin\/users\/([^/]+)$/)
+    if(adminUserMatch&&method==='PATCH') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Administrator access required.',403)
+      if(!await authLimit(request,db,'admin-user-moderation',20)||!await limited(db,'admin-user-moderation:'+user.id,40,60))return fail('Too many moderation actions. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid account action.')
+      const action=clean(input.action,20),reason=clean(input.reason,1000),id=decodeURIComponent(adminUserMatch[1])
+      if(!['ban','unban'].includes(action))return fail('Unsupported account action.')
+      if(reason.trim().length<8)return fail('Add an admin note of at least 8 characters.')
+      if(id===user.id)return fail('You cannot suspend your own administrator account.',403)
+      const target=await db.prepare('SELECT id,email,role,is_banned FROM users WHERE id=?').bind(id).first<{id:string;email:string;role:string;is_banned:number}>()
+      if(!target)return fail('Account not found.',404)
+      if(target.role==='admin')return fail('Administrator accounts cannot be suspended from this panel.',403)
+      if(action==='ban'&&target.is_banned===1)return fail('This account is already suspended.',409)
+      if(action==='unban'&&target.is_banned!==1)return fail('This account is not suspended.',409)
+      const now=nowIso(),nextBanned=action==='ban'?1:0
+      const changed=await db.batch([
+        db.prepare('UPDATE users SET is_banned=?,banned_reason=?,banned_at=?,banned_by=?,updated_at=? WHERE id=? AND role<>\'admin\' AND is_banned=?').bind(nextBanned,action==='ban'?reason:'',action==='ban'?now:null,action==='ban'?user.id:null,now,id,action==='ban'?0:1),
+        db.prepare('INSERT INTO admin_action_events(id,admin_id,action,target_id,target_label,reason,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1').bind(uuid(),user.id,action==='ban'?'user_banned':'user_unbanned',id,target.email,reason,now),
+        db.prepare('DELETE FROM sessions WHERE user_id=?').bind(id),
+        db.prepare('DELETE FROM auth_mfa_challenges WHERE user_id=?').bind(id),
+        db.prepare('DELETE FROM auth_email_mfa_codes WHERE user_id=?').bind(id)
+      ])
+      if(!changed[0]?.meta?.changes)return fail('Account state changed before this action completed. Refresh the account list.',409)
+      if(!changed[1]?.meta?.changes)return fail('The action could not be audited; no account change was recorded.',500)
+      return ok({id,isBanned:nextBanned===1,message:action==='ban'?'Account suspended. Active sessions were revoked.':'Account restored. The user can sign in again.'})
+    }
+    if(path==='/api/admin/properties'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Administrator access required.',403)
+      if(!await authLimit(request,db,'admin-properties',30))return fail('Too many admin requests. Please wait before trying again.',429)
+      const q=clean(url.searchParams.get('q'),120).replace(/[%_]/g,''),like='%'+q+'%',rawStatus=clean(url.searchParams.get('status'),20)
+      const status=['published','pending','rejected','archived'].includes(rawStatus)?rawStatus:'all'
+      const result=await db.prepare("SELECT p.id,p.slug,p.title,p.status,p.city,p.price,p.created_at,COALESCE(p.verification_status,'unverified') AS verification_status,u.email AS owner_email,u.name AS owner_name FROM properties p JOIN users u ON u.id=p.owner_id WHERE (?='' OR p.title LIKE ? COLLATE NOCASE OR p.city LIKE ? COLLATE NOCASE OR u.email LIKE ? COLLATE NOCASE) AND (?='all' OR p.status=?) ORDER BY p.updated_at DESC LIMIT 100").bind(q,like,like,like,status,status).all<{id:string;slug:string;title:string;status:string;city:string;price:number;created_at:string;verification_status:string;owner_email:string;owner_name:string}>()
+      return ok(result.results)
+    }
+    if(path==='/api/admin/activity'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Administrator access required.',403)
+      const result=await db.prepare('SELECT e.id,e.admin_id,u.email AS admin_email,e.action,e.target_id,e.target_label,e.reason,e.created_at FROM admin_action_events e LEFT JOIN users u ON u.id=e.admin_id ORDER BY e.created_at DESC LIMIT 100').all<{id:string;admin_id:string|null;admin_email:string|null;action:string;target_id:string;target_label:string;reason:string;created_at:string}>()
+      return ok(result.results)
     }
     if(path==='/api/reports'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before reporting a property.',401)
@@ -759,7 +945,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to view reports.',403)
       if(!await authLimit(request,db,'report-queue',20))return fail('Too many requests. Please wait before trying again.',429)
-      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status,p.ai_risk_level,p.ai_risk_score FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<{id:string;property_id:string;reporter_id:string|null;reason:string;details:string;status:string;created_at:string;resolved_by:string|null;resolved_at:string|null;resolution_note:string;property_title:string;property_slug:string;property_city:string;property_status:string;ai_risk_level:string|null;ai_risk_score:number}>()
+      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<{id:string;property_id:string;reporter_id:string|null;reason:string;details:string;status:string;created_at:string;resolved_by:string|null;resolved_at:string|null;resolution_note:string;property_title:string;property_slug:string;property_city:string;property_status:string}>()
       return ok(result.results)
     }
     const reportMatch=path.match(/^\/api\/admin\/reports\/([^/]+)$/)
@@ -771,11 +957,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const status=clean(input.status,20),note=clean(input.resolutionNote,1200),reportId=decodeURIComponent(reportMatch[1])
       if(!['reviewing','resolved','dismissed'].includes(status))return fail('Unsupported report status.')
       if(['resolved','dismissed'].includes(status)&&note.trim().length<8)return fail('Add a resolution note of at least 8 characters before closing a report.')
-      const old=await db.prepare("SELECT id FROM property_reports WHERE id=? AND status IN ('open','reviewing')").bind(reportId).first<{id:string}>()
+      const old=await db.prepare("SELECT r.id,r.property_id,p.title FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.id=? AND r.status IN ('open','reviewing')").bind(reportId).first<{id:string;property_id:string;title:string}>()
       if(!old)return fail('Report was already handled or could not be found.',404)
-      const result=await db.prepare("UPDATE property_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:nowIso(),note,reportId).run()
-      if(!result.meta.changes)return fail('Report was already handled or could not be found.',409)
-      return ok({id:reportId,status})
+      const reviewTime=nowIso(),eventAction=status==='reviewing'?'report_reviewing':status==='resolved'?'report_resolved':'report_dismissed'
+      const audit=await db.batch([
+        db.prepare("UPDATE property_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:reviewTime,note,reportId),
+        db.prepare("INSERT INTO admin_action_events(id,admin_id,action,target_id,target_label,reason,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),user.id,eventAction,reportId,old.title+' · report',note||'Report assigned for review.',reviewTime)
+      ])
+      if(!audit[0]?.meta?.changes)return fail('Report was already handled or could not be found.',409)
+      if(!audit[1]?.meta?.changes)return fail('The report status changed, but its audit entry could not be saved. Contact support.',500)
+      return ok({id:reportId,status,auditRecorded:true})
     }
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
@@ -784,6 +975,23 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p,true))))
     }
     const reviewMatch=path.match(/^\/api\/admin\/properties\/([^/]+)$/)
+    if(reviewMatch&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Administrator access required to permanently delete a property.',403)
+      if(!await authLimit(request,db,'admin-property-delete',8)||!await limited(db,'admin-property-delete-user:'+user.id,12,60))return fail('Too many deletion actions. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid deletion request.')
+      const reason=clean(input.reason,1000),id=decodeURIComponent(reviewMatch[1])
+      if(reason.trim().length<8)return fail('Add an admin note of at least 8 characters before deleting a property.')
+      const property=await db.prepare('SELECT id,title,status FROM properties WHERE id=?').bind(id).first<{id:string;title:string;status:string}>()
+      if(!property)return fail('Property not found.',404)
+      const result=await db.batch([
+        db.prepare('DELETE FROM properties WHERE id=? AND title=? AND status=?').bind(id,property.title,property.status),
+        db.prepare('INSERT INTO admin_action_events(id,admin_id,action,target_id,target_label,reason,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1').bind(uuid(),user.id,'property_deleted',id,property.title,reason,nowIso())
+      ])
+      if(!result[0]?.meta?.changes)return fail('The property changed before deletion. Refresh the list and try again.',409)
+      if(!result[1]?.meta?.changes)return fail('The deletion audit record could not be saved.',500)
+      return ok({id,deleted:true,message:'Property permanently deleted. Related favorites, media, inquiries, reports and property chats were removed.'})
+    }
     if(reviewMatch&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
@@ -809,12 +1017,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const nextVerificationNote=verificationDecision==='unchanged'?(record.verification_note||''):reviewNote
       // The decision is bound to the exact submitted listing and evidence link.
       const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=? AND COALESCE(verification_status,'unverified')=? AND COALESCE(verification_evidence_type,'none')=? AND COALESCE(verification_evidence_url,'')=?"
+      const adminAction=status==='archived'?'property_archived':verifyEvidence?'property_verified':'property_moderated'
       const auditResults=await db.batch([
         db.prepare("UPDATE properties SET status=?,updated_at=?,verification_status=?,verification_reviewed_at=?,verification_reviewed_by=?,verification_note=? WHERE id=? AND status=?"+snapshotGuard).bind(status,reviewTime,nextVerificationStatus,nextVerificationReviewedAt,nextVerificationReviewedBy,nextVerificationNote,id,priorStatus,record.title,record.location,record.city,record.price,record.description,record.property_type,record.purpose,record.bedrooms,record.bathrooms,record.area,record.amenities_json||'[]',record.price_period||'',record.ai_risk_level||'not-screened',Number(record.ai_risk_score)||0,record.ai_risk_reasons_json||'[]',record.ai_model||'not-screened',record.ai_screened_at||'',record.updated_at,record.verification_status||'unverified',record.verification_evidence_type||'none',record.verification_evidence_url||''),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at,verification_decision) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,verificationDecision,id,status)
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at,verification_decision) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,verificationDecision,id,status),
+        db.prepare('INSERT INTO admin_action_events(id,admin_id,action,target_id,target_label,reason,created_at) SELECT ?,?,?,?,?,?,? WHERE changes()=1').bind(uuid(),user.id,adminAction,id,record.title,reviewNote||ownerMessage||'Listing moderation decision.',reviewTime)
       ])
       if(!auditResults[0]?.meta?.changes)return fail('The listing or evidence changed while it was being reviewed. Refresh the queue and review the latest details.',409)
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
+      if(!auditResults[2]?.meta?.changes)return fail('The administrator activity record could not be recorded.',500)
       return ok({status,priorStatus,auditRecorded:true,verificationStatus:nextVerificationStatus,verificationDecision})
     }
     if(path==='/api/inquiries'&&method==='POST') {

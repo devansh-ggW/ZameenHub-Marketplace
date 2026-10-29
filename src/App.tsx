@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { MotionProvider, ScrollProgress } from './motion'
 import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage } from './pages'
 import { AccountPage } from './account-pages'
+import { AdminPanelPage } from './admin-panel'
 import { AuthPage, VerifyEmailPage, ActivateAccountPage, ForgotPasswordPage, ResetPasswordPage } from './auth-pages'
 import { InfoPage } from './legal-pages'
 import { ListingPage } from './listing-page'
@@ -28,6 +29,7 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/profile" element={<AccountPage kind="profile" />} />
+      <Route path="/admin" element={<AdminPanelPage />} />
       <Route path="/saved" element={<AccountPage kind="saved" />} />
       <Route path="/list-property" element={<ListingPage />} />
       <Route path="/edit-listing/:id" element={<EditListingPage />} />

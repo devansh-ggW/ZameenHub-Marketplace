@@ -15,8 +15,6 @@ type Report = {
   property_slug: string
   property_city: string
   property_status: 'pending' | 'published' | 'rejected' | 'archived'
-  ai_risk_level: string | null
-  ai_risk_score: number
 }
 const reasonLabel: Record<string, string> = {
   suspected_fraud: 'Suspected scam or fraud',
@@ -103,7 +101,6 @@ export function ReportQueuePage() {
         <div className="report-card-head"><div><span className={'report-status report-status-' + report.status}>{report.status}</span><h2>{report.property_title}</h2><p>{report.property_city} · {reasonLabel[report.reason] ?? report.reason}</p></div><span className="mono">{new Date(report.created_at).toLocaleDateString('en-IN')}</span></div>
         <p className="report-evidence">{report.details}</p>
         <p className="muted">Reported listing: {report.property_status === 'published' ? <Link to={'/properties/' + report.property_slug} target="_blank" rel="noreferrer">Open property</Link> : <span>Not publicly available · {report.property_status}</span>}</p>
-        <p className="muted">Automated screen: {report.ai_risk_level ?? 'not-screened'} · {Number(report.ai_risk_score) || 0}/100. This is a triage signal, not proof.</p>
         <div className="report-actions">
           {report.status === 'open' && <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void updateReport(report, 'reviewing')}>Start review</button>}
           {report.property_status === 'published' && <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void archiveReportedListing(report)}>{busyId === report.id ? 'Archiving…' : 'Archive listing'}</button>}
