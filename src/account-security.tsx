@@ -1,12 +1,37 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiRequest, type AppUser } from './lib/auth'
 
 type MfaSetup = { secret: string; otpAuthUri: string; expiresInMinutes: number }
 
+
+function PasswordInput({ id, label, value, onChange, autoComplete = 'current-password' }: {
+  id: string; label: string; value: string; onChange: (value: string) => void; autoComplete?: string
+}) {
+  const [visible, setVisible] = useState(false)
+  return <div className="form-field">
+    <label htmlFor={id}>{label}</label>
+    <div className="password-input-wrap">
+      <input className="form-control" id={id} type={visible ? 'text' : 'password'} autoComplete={autoComplete}
+        minLength={8} maxLength={128} required value={value} onChange={event => onChange(event.target.value)} />
+      <button className="password-toggle" type="button" aria-label={visible ? 'Hide password' : 'Show password'}
+        aria-controls={id} aria-pressed={visible} onClick={() => setVisible(current => !current)}>{visible ? 'Hide' : 'Show'}</button>
+    </div>
+  </div>
+}
+
 export function AccountSecurity({ user }: { user: AppUser }) {
   const navigate = useNavigate()
   const [enabled, setEnabled] = useState(user.mfaEnabled)
+  const [mfaConfigured, setMfaConfigured] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let active = true
+    void apiRequest<{ enabled: boolean; configured: boolean }>('/api/auth/mfa/status').then(result => {
+      if (active && result.ok) { setEnabled(result.data.enabled); setMfaConfigured(result.data.configured) }
+    })
+    return () => { active = false }
+  }, [])
   const [setup, setSetup] = useState<MfaSetup | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([])
   const [setupPassword, setSetupPassword] = useState('')
@@ -68,9 +93,11 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     <h2 id="account-security-title">Security and account</h2>
     <p className="muted">Protect sign-in with an authenticator app and manage your account data.</p>
     <div className="security-status"><strong>Two-factor authentication</strong><span className={enabled ? 'security-pill on' : 'security-pill'}>{enabled ? 'Enabled' : 'Optional · not enabled'}</span></div>
+    {!enabled && mfaConfigured === false && <p className="status-message error" role="status">Two-factor setup is not configured on the server yet. The site administrator must add a Cloudflare Worker Secret named MFA_ENCRYPTION_KEY (at least 32 characters) under Settings → Variables and Secrets, then retry.</p>}
+    {enabled && mfaConfigured === false && <p className="status-message error" role="status">The encryption secret is missing. If authenticator codes fail, use an unused recovery code to sign in and contact the site administrator before changing security settings.</p>}
     {!enabled && !setup && <form onSubmit={beginSetup}>
       <p>Use an authenticator app that supports time-based one-time passwords (TOTP). ZameenHub will show you a setup key; the secret is encrypted at rest.</p>
-      <div className="form-field"><label htmlFor="mfa-setup-password">Current password</label><input className="form-control" id="mfa-setup-password" type="password" autoComplete="current-password" minLength={8} maxLength={128} required value={setupPassword} onChange={e => setSetupPassword(e.target.value)} /></div>
+      <PasswordInput id="mfa-setup-password" label="Current password" value={setupPassword} onChange={setSetupPassword} />
       <button className="btn btn-primary" disabled={busy}>{busy ? 'Starting setup…' : 'Set up authenticator'}</button>
     </form>}
     {setup && <div className="mfa-setup">
@@ -82,7 +109,6 @@ export function AccountSecurity({ user }: { user: AppUser }) {
       <p><a href={setup.otpAuthUri}>Open in an authenticator app</a></p>
       <h3>2. Confirm it works</h3>
       <form onSubmit={enableMfa}>
-        <div className="form-field"><label htmlFor="mfa-confirm-password">Confirm current password</label><input className="form-control" id="mfa-confirm-password" type="password" autoComplete="current-password" minLength={8} maxLength={128} required value={setupPassword} onChange={e => setSetupPassword(e.target.value)} /></div>
         <div className="form-field"><label htmlFor="mfa-setup-code">Six-digit authenticator code</label><input className="form-control" id="mfa-setup-code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={setupCode} onChange={e => setSetupCode(e.target.value.replace(/\D/g, '').slice(0, 6))} /></div>
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Verifying…' : 'Enable two-factor authentication'}</button>
         <button className="btn btn-outline" type="button" disabled={busy} onClick={() => { setSetup(null); setSetupPassword(''); setSetupCode(''); setError(''); setNotice('Setup cancelled.') }}>Cancel</button>
@@ -91,7 +117,7 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     {enabled && <form onSubmit={disableMfa} className="security-subsection">
       <h3>Disable two-factor authentication</h3>
       <p>Confirm your password and an authenticator or unused recovery code. Disabling this removes the second sign-in step.</p>
-      <div className="form-field"><label htmlFor="mfa-disable-password">Current password</label><input className="form-control" id="mfa-disable-password" type="password" autoComplete="current-password" minLength={8} maxLength={128} required value={disablePassword} onChange={e => setDisablePassword(e.target.value)} /></div>
+      <PasswordInput id="mfa-disable-password" label="Current password" value={disablePassword} onChange={setDisablePassword} />
       <div className="form-field"><label htmlFor="mfa-disable-code">Authenticator or recovery code</label><input className="form-control" id="mfa-disable-code" autoComplete="one-time-code" required value={disableCode} onChange={e => setDisableCode(e.target.value)} /></div>
       <button className="btn btn-outline" disabled={busy}>{busy ? 'Updating…' : 'Disable two-factor authentication'}</button>
     </form>}
@@ -106,7 +132,7 @@ export function AccountSecurity({ user }: { user: AppUser }) {
       <h3>Delete account</h3>
       <p>This permanently deletes your account and the property listings you submitted. This action cannot be undone. If two-factor authentication is enabled, you must also confirm with its code.</p>
       <form onSubmit={deleteAccount}>
-        <div className="form-field"><label htmlFor="delete-account-password">Current password</label><input className="form-control" id="delete-account-password" type="password" autoComplete="current-password" minLength={8} maxLength={128} required value={deletePassword} onChange={e => setDeletePassword(e.target.value)} /></div>
+        <PasswordInput id="delete-account-password" label="Current password" value={deletePassword} onChange={setDeletePassword} />
         {enabled && <div className="form-field"><label htmlFor="delete-account-code">Authenticator or unused recovery code</label><input className="form-control" id="delete-account-code" required value={deleteCode} onChange={e => setDeleteCode(e.target.value)} /></div>}
         <div className="form-field"><label htmlFor="delete-account-confirmation">Type DELETE to confirm</label><input className="form-control" id="delete-account-confirmation" required autoComplete="off" value={deleteConfirmation} onChange={e => setDeleteConfirmation(e.target.value)} /></div>
         <button className="btn btn-danger" disabled={busy || deleteConfirmation !== 'DELETE'}>{busy ? 'Deleting…' : 'Permanently delete account'}</button>

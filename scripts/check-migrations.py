@@ -28,7 +28,7 @@ def main() -> int:
         "users", "sessions", "properties", "favorites", "inquiries",
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
-        "property_moderation_events", "property_media",
+        "property_moderation_events", "property_media", "property_conversations", "property_messages",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
@@ -46,6 +46,12 @@ def main() -> int:
     media_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_media)")}
     expect({"property_id", "media_type", "media_url", "sort_order"} <= media_columns,
            "URL-based property media columns are incomplete")
+    conversation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_conversations)")}
+    expect({"property_id", "buyer_id", "owner_id", "status", "last_message_at"} <= conversation_columns,
+           "Private conversation metadata columns are incomplete")
+    message_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_messages)")}
+    expect({"conversation_id", "sender_id", "body", "created_at", "read_at"} <= message_columns,
+           "Private message columns are incomplete")
 
     now = "2026-10-28T00:00:00.000Z"
 
@@ -163,6 +169,30 @@ def main() -> int:
                ("inquiry-owner", "owner"))
     expect(db.execute("SELECT status FROM inquiries WHERE id='inquiry-owner'").fetchone()[0] == "read",
            "Listing owner could not mark their inquiry as read")
+
+    # Exercise the new private chat schema, participant separation, and unread counts.
+    db.execute("""INSERT INTO property_conversations(id,property_id,buyer_id,owner_id,created_at,updated_at,last_message_at,status)
+                  VALUES('conversation-one','published','reporter','owner',?,?,?,'open')""", (now, now, now))
+    db.execute("""INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at)
+                  VALUES('message-one','conversation-one','reporter','Could I arrange a viewing?',?)""", (now,))
+    buyer_conversations = db.execute("""SELECT c.id,p.title,
+        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unread
+        FROM property_conversations c JOIN properties p ON p.id=c.property_id
+        WHERE c.buyer_id=? OR c.owner_id=?""", ("reporter", "reporter", "reporter")).fetchall()
+    expect(len(buyer_conversations) == 1 and buyer_conversations[0]["id"] == "conversation-one" and buyer_conversations[0]["unread"] == 0,
+           "Buyer conversation list did not return the right private conversation")
+    owner_unread = db.execute("""SELECT COUNT(*) FROM property_messages
+        WHERE conversation_id='conversation-one' AND sender_id<>? AND read_at IS NULL""", ("owner",)).fetchone()[0]
+    expect(owner_unread == 1, "Property owner unread count did not include the buyer's message")
+    owner_conversations = db.execute("SELECT id FROM property_conversations WHERE buyer_id=? OR owner_id=?", ("owner", "owner")).fetchall()
+    expect(len(owner_conversations) == 1 and owner_conversations[0]["id"] == "conversation-one",
+           "Property owner could not see their own conversation")
+    stranger_conversations = db.execute("SELECT id FROM property_conversations WHERE buyer_id=? OR owner_id=?", ("other-owner", "other-owner")).fetchall()
+    expect(len(stranger_conversations) == 0, "A non-participant can see another person's conversation")
+    db.execute("UPDATE property_messages SET read_at=? WHERE conversation_id=? AND sender_id<>? AND read_at IS NULL",
+               (now, "conversation-one", "owner"))
+    expect(db.execute("SELECT read_at FROM property_messages WHERE id='message-one'").fetchone()[0] == now,
+           "Conversation read state did not update")
 
     # Material listing edits are owner-scoped and force the listing back into review.
     db.execute("UPDATE properties SET title=?,status='pending',updated_at=? WHERE id=? AND owner_id=?",

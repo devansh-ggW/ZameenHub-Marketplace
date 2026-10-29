@@ -4,26 +4,28 @@ import process from 'node:process'
 const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
-  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/property-options.ts','worker/index.ts',
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
 const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
-const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), mediaMigration=read('migrations/0004_media_verification.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html')
-for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/tools/emi-calculator','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
-for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/my/inquiries','/api/inquiries','/api/properties','/api/favorites','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
+const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), mediaMigration=read('migrations/0004_media_verification.sql'), chatMigration=read('migrations/0005_property_chat.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html')
+for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/messages','/tools/emi-calculator','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
+for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/status','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/my/inquiries','/api/inquiries','/api/properties','/api/favorites','/api/conversations','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
 for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
 if(!wrangler.includes('run_worker_first = ["/api/*"]'))errors.push('Wrangler assets must route /api/* through the Worker before SPA fallback')
 if(!wrangler.includes('[ai]') || !wrangler.includes('binding = "AI"'))errors.push('Cloudflare Workers AI binding is missing')
 for(const marker of ['mfa_enabled','mfa_last_counter','mfa_secret_ciphertext','ai_risk_level','ai_risk_score','auth_mfa_challenges','mfa_recovery_codes','property_reports','property_moderation_events','owner_message'])if(!securityMigration.includes(marker))errors.push('Security migration missing '+marker)
-if(!worker.includes('screenListingRisk(')||!worker.includes('@cf/meta/llama-3.2-1b-instruct'))errors.push('Worker listing-risk screening is not connected to the configured AI model')
+if(!worker.includes('screenListingRisk(')||!worker.includes('@cf/meta/llama-3.2-1b-instruct')||!worker.includes("risk.level==='low'&&risk.model==='@cf/meta/llama-3.2-1b-instruct'&&!duplicate"))errors.push('Worker listing AI screening and low-risk auto-publish policy are not connected')
 if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('status=\'pending\'')||!worker.includes("status:'archived'"))errors.push('Owner edit/archive routes must be wired and edits must re-enter review')
 if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('inquiries SET status=? WHERE id=? AND EXISTS'))errors.push('Owner inquiry inbox must restrict each message to the listing owner')
 if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.includes('INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)')||!worker.includes('sendEmail(env,property.owner_email'))errors.push('Public inquiry submission must persist a lead and attempt owner email notification')
 if(!worker.includes('withProperty(db,p,true,true)'))errors.push('Moderation queue must include risk signals and private evidence references')
 if((worker.split('withProperty(db,p,true,true)').length-1)!==1||!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')"))errors.push('Detailed risk signals and evidence references must only be exposed in the authorized moderation queue')
 if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage }')||!app.includes('<Route path="*" element={<NotFoundPage />} />'))errors.push('Unknown routes must use the dedicated not-found page, not the homepage')
+if(!read('src/App.tsx').includes('import { MessagesPage }')||!read('src/App.tsx').includes('path="/messages"'))errors.push('Private property chat route is missing')
+if(!read('src/components.tsx').includes('const isPublished = property.status === \'published\'')||!read('src/components.tsx').includes('{isPublished && <FavoriteButton'))errors.push('Private listing cards must not show unusable public links or favorites')
 const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
 const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
 const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
@@ -62,6 +64,7 @@ if(!read('src/listing-page.tsx').includes('description: description.trim(), amen
 if(!pages.includes("setMinPrice")||!pages.includes("setMaxPrice")||!pages.includes("setMinArea")||!pages.includes("setMaxArea"))errors.push('Buyer-side budget and area range filter controls are missing')
 if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage must load real public listings from the property API')
 if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
+if(!read('src/site-chrome.tsx').includes('to="/messages"')||!read('src/messages-page.tsx').includes('/api/conversations'))errors.push('Private property messages page and navigation must be wired')
 if(!read('src/emi-calculator-page.tsx').includes('calculateEmi(')||!read('src/lib/emi.ts').includes('monthlyRate'))errors.push('EMI calculator must use the tested monthly-repayment formula')
 if(!read('src/site-chrome.tsx').includes('to="/tools/emi-calculator"'))errors.push('EMI calculator must be reachable from primary navigation')
 const sitemap=read('public/sitemap.xml'), robots=read('public/robots.txt')
@@ -86,6 +89,10 @@ const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
 if(!faviconHref)errors.push('HTML must declare a favicon href')
 else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.slice(1))))errors.push('HTML favicon target does not exist: '+faviconHref)
 if(!worker.includes("verified:verificationStatus==='verified'"))errors.push('Public verified status must reflect a separate evidence review, not publication alone')
+if(!worker.includes('aiScreened:!!p.ai_screened_at')||!pages.includes('Cloudflare AI screened this listing'))errors.push('AI-screened properties need a distinct disclosure, not a legal-ownership verified label')
+for(const marker of ['property_conversations','property_messages','buyer_id','owner_id'])if(!chatMigration.includes(marker))errors.push('Private chat migration missing '+marker)
+if(!worker.includes("conversationMessagesMatch=path.match")||!worker.includes("conversationReadMatch=path.match")||!worker.includes("(buyer_id=? OR owner_id=?)"))errors.push('Private chat endpoints must require conversation membership')
+if(!worker.includes("if(path==='/api/auth/mfa/status'&&method==='GET'"))errors.push('MFA readiness diagnostic endpoint is missing')
 if(!worker.includes("if(path==='/api/account/profile'&&method==='PATCH')")||!worker.includes('UPDATE users SET profile_image_url=?'))errors.push('Profile image URL must be saved through the authenticated profile API')
 if(!worker.includes('sanitizeImageUrls')||!worker.includes('value.length>5')||!mediaMigration.includes('property_media_max_five_images')||!mediaMigration.includes('property_media_one_video')||!worker.includes('sanitizeVideoUrl'))errors.push('Property URL media must enforce five-image limit and supported HTTPS video links')
 if(!worker.includes("const nextVerificationStatus=status==='rejected'?'rejected':verifyEvidence?'verified'"))errors.push('Evidence-reviewed status must be saved only through moderator action')
@@ -96,6 +103,7 @@ if(!pages.includes('<PropertyVideo src={property.videoUrl}'))errors.push('Proper
 if(!read('src/account-pages.tsx').includes('/api/account/profile')||!read('src/account-pages.tsx').includes('profile-image-url'))errors.push('Account profile must let users save and remove profile image URLs')
 if(!read('src/account-pages.tsx').includes('verifyEvidence'))errors.push('Moderators need an explicit evidence-review decision instead of automatic verification')
 if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
+if(!read('src/account-security.tsx').includes('Show password')||!read('src/account-security.tsx').includes('Hide password')||!read('src/account-security.tsx').includes('delete-account-password'))errors.push('MFA and delete-account password fields must expose accessible show/hide controls')
 if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
 if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
 if(!read('public/_headers').includes('Strict-Transport-Security:'))errors.push('Static pages should include HSTS')
