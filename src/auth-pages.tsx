@@ -139,9 +139,9 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-    setBusy(true); setError(''); setNotice('')
     if (!mfaRequired && !TURNSTILE_SITE_KEY) { setError('Bot verification is not configured on this deployment. Please contact support.'); return }
     if (!mfaRequired && !turnstileToken) { setError('Complete the bot verification before continuing.'); return }
+    setBusy(true); setError(''); setNotice('')
     const result = mode === 'signup'
       ? await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next, turnstileToken }) })
       : mfaRequired
