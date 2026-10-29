@@ -131,10 +131,11 @@ function emailText(title:string,body:string,url:string,button:string) {
 }
 type EmailMfaPurpose = 'login'|'setup'|'disable'|'delete'
 type EmailMfaCode = { id:string; salt:string; code_hash:string; attempts:number }
-const randomSixDigitCode=()=>{const v=bytes(4);return String(((v[0]*0x1000000)+(v[1]*0x10000)+(v[2]*0x100)+v[3])%1_000_000).padStart(6,'0')}
+const randomSixDigitCode=()=>{const ceiling=Math.floor(0x1_0000_0000/1_000_000)*1_000_000;let value=0;do{const v=bytes(4);value=((v[0]*0x1000000)+(v[1]*0x10000)+(v[2]*0x100)+v[3])}while(value>=ceiling);return String(value%1_000_000).padStart(6,'0')}
 const maskEmail=(email:string)=>{const i=email.indexOf('@');return i>0?email.slice(0,1)+'***'+email.slice(i):'***'}
 async function issueEmailMfaCode(db:D1Database,env:Env,user:UserRow,url:URL,purpose:EmailMfaPurpose,minutes=10) {
-  const code=randomSixDigitCode(),salt=randomToken(),codeHash=await digest(salt+':'+code),id=uuid(),expiresAt=future(minutes)
+  if(!env.RESEND_API_KEY||!env.RESEND_FROM_EMAIL)return false
+  const code=randomSixDigitCode(),salt=randomToken(),codeHash=await digest('email-mfa:'+env.RESEND_API_KEY+':'+salt+':'+code),id=uuid(),expiresAt=future(minutes)
   await db.batch([
     db.prepare('DELETE FROM auth_email_mfa_codes WHERE user_id=? AND purpose=?').bind(user.id,purpose),
     db.prepare('INSERT INTO auth_email_mfa_codes(id,user_id,purpose,salt,code_hash,attempts,expires_at,created_at) VALUES(?,?,?,?,?,0,?,?)').bind(id,user.id,purpose,salt,codeHash,expiresAt,nowIso())
@@ -147,14 +148,15 @@ async function issueEmailMfaCode(db:D1Database,env:Env,user:UserRow,url:URL,purp
   if(!sent){await db.prepare('DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=?').bind(id,user.id).run();return false}
   return true
 }
-async function inspectEmailMfaCode(db:D1Database,userId:string,purpose:EmailMfaPurpose,rawCode:unknown):Promise<{id:string;codeHash:string}|null> {
+async function inspectEmailMfaCode(db:D1Database,env:Env,userId:string,purpose:EmailMfaPurpose,rawCode:unknown):Promise<{id:string;codeHash:string}|null> {
+  if(!env.RESEND_API_KEY||!env.RESEND_FROM_EMAIL)return null
   const code=clean(rawCode,20).replace(/\s/g,'')
   if(!/^\d{6}$/.test(code))return null
   const update=await db.prepare("UPDATE auth_email_mfa_codes SET attempts=attempts+1 WHERE id=(SELECT id FROM auth_email_mfa_codes WHERE user_id=? AND purpose=? AND expires_at>? LIMIT 1) AND expires_at>? AND attempts<5").bind(userId,purpose,nowIso(),nowIso()).run()
   if(!update.meta.changes)return null
   const row=await db.prepare('SELECT id,salt,code_hash,attempts FROM auth_email_mfa_codes WHERE user_id=? AND purpose=? AND expires_at>? LIMIT 1').bind(userId,purpose,nowIso()).first<EmailMfaCode>()
   if(!row)return null
-  if(await digest(row.salt+':'+code)!==row.code_hash){if(row.attempts>=5)await db.prepare('DELETE FROM auth_email_mfa_codes WHERE id=?').bind(row.id).run();return null}
+  if(await digest('email-mfa:'+env.RESEND_API_KEY+':'+row.salt+':'+code)!==row.code_hash){if(row.attempts>=5)await db.prepare('DELETE FROM auth_email_mfa_codes WHERE id=?').bind(row.id).run();return null}
   return {id:row.id,codeHash:row.code_hash}
 }
 async function limited(db:D1Database,key:string,max=8,windowMinutes=15) {
@@ -371,7 +373,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!pending)return fail('Your two-step sign-in has expired. Please sign in again.',401)
       const challengeUser=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_email_enabled,is_banned FROM users WHERE id=?').bind(pending.user_id).first<UserRow>()
       if(!challengeUser||challengeUser.email_verified!==1||challengeUser.is_banned===1||challengeUser.mfa_email_enabled!==1)return fail('Email-code sign-in is not enabled for this account.',403)
-      const match=await inspectEmailMfaCode(db,challengeUser.id,'login',(await body(request))?.code)
+      const match=await inspectEmailMfaCode(db,env,challengeUser.id,'login',(await body(request))?.code)
       if(!match)return fail('That email code is invalid, expired, or has been used. Request a new one and try again.',401)
       const consumed=await db.batch([
         db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='login' AND code_hash=? AND expires_at>? AND attempts<=5").bind(match.id,challengeUser.id,match.codeHash,nowIso()),
@@ -402,7 +404,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid verification request.')
       if(user.mfa_email_enabled===1)return fail('Email two-step verification is already enabled.')
       if(!await verifyPassword(passwordValue(input.password),user.password_hash))return fail('Current password is incorrect.',401)
-      const match=await inspectEmailMfaCode(db,user.id,'setup',input.code)
+      const match=await inspectEmailMfaCode(db,env,user.id,'setup',input.code)
       if(!match)return fail('That email code is invalid or expired. Request another code and try again.',401)
       const result=await db.batch([
         db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='setup' AND code_hash=? AND expires_at>? AND attempts<=5").bind(match.id,user.id,match.codeHash,nowIso()),
@@ -420,7 +422,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid verification request.')
       if(user.mfa_email_enabled!==1)return fail('Email two-step verification is not enabled.')
       if(!await verifyPassword(passwordValue(input.password),user.password_hash))return fail('Current password is incorrect.',401)
-      const match=await inspectEmailMfaCode(db,user.id,'disable',input.code)
+      const match=await inspectEmailMfaCode(db,env,user.id,'disable',input.code)
       if(!match)return fail('That email code is invalid or expired. Request another code and try again.',401)
       const result=await db.batch([
         db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='disable' AND code_hash=? AND expires_at>? AND attempts<=5").bind(match.id,user.id,match.codeHash,nowIso()),
@@ -687,7 +689,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         let valid=false
         if(user.mfa_enabled===1){try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }}
         if(!valid&&user.mfa_email_enabled===1){
-          const emailMatch=await inspectEmailMfaCode(db,user.id,'delete',input?.emailCode)
+          const emailMatch=await inspectEmailMfaCode(db,env,user.id,'delete',input?.emailCode)
           if(emailMatch){const consumed=await db.prepare("DELETE FROM auth_email_mfa_codes WHERE id=? AND user_id=? AND purpose='delete' AND code_hash=? AND expires_at>? AND attempts<=5 RETURNING id").bind(emailMatch.id,user.id,emailMatch.codeHash,nowIso()).first<{id:string}>();valid=!!consumed}
         }
         if(!valid)return fail('Enter a valid authenticator/recovery code or request an email code to confirm account deletion.',401)
