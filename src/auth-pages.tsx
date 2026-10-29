@@ -55,6 +55,8 @@ function PasswordField({
   </div>
 }
 
+type AuthResponse = { message?: string; user?: { id: string }; mfaRequired?: boolean; mfaMethods?: { authenticator: boolean; email: boolean }; emailHint?: string }
+
 export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
@@ -78,10 +80,10 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
     event.preventDefault()
     setBusy(true); setError(''); setNotice('')
     const result = mode === 'signup'
-      ? await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next }) })
+      ? await apiRequest<AuthResponse>('/api/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password, acceptedTerms, next }) })
       : mfaRequired
-        ? await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean }>(mfaMethod === 'email' ? '/api/auth/mfa/email/verify' : '/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
-        : await apiRequest<{ message?: string; user?: { id: string }; mfaRequired?: boolean; mfaMethods?: { authenticator: boolean; email: boolean }; emailHint?: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+        ? await apiRequest<AuthResponse>(mfaMethod === 'email' ? '/api/auth/mfa/email/verify' : '/api/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
+        : await apiRequest<AuthResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
     setBusy(false)
     if (!result.ok) { setError(result.error); return }
     if (mode === 'signup') setNotice(result.data.message || 'Check your email for the verification link. If you already have an account, sign in or use password recovery.')
