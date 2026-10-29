@@ -1,4 +1,5 @@
 import { base32Encode, matchedTotpCounter } from './totp'
+import { DOCUMENT_TYPE_LABELS, detectDocumentFormat, isPropertyDocumentRole, isPropertyDocumentType, MAX_PROPERTY_DOCUMENT_BYTES, MAX_PROPERTY_DOCUMENTS_PER_PROPERTY, sanitizeDocumentFileName, sanitizeDocumentLabel } from './property-documents'
 export type Env = {
   DB?: D1Database
   R2?: R2Bucket
@@ -10,6 +11,7 @@ export type Env = {
 }
 type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
 type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
+type PropertyDocumentRow = {id:string;property_id:string;owner_id:string;document_role:'private_original'|'public_copy';document_type:string;display_label:string;file_extension:string;content_type:string;size_bytes:number;sha256:string;object_key:string;possible_duplicate:number;visibility:'private'|'public'|'withdrawn';processing_status:'stored'|'unavailable';review_status:'pending'|'reviewed'|'inconclusive';submitted_at:string;published_at:string|null;withdrawn_at:string|null;reviewed_at:string|null;reviewer_id:string|null;review_note:string;last_actor_id:string|null;updated_at:string}
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
   headers.set('content-type','application/json; charset=utf-8')
@@ -193,6 +195,26 @@ async function body(request:Request) {
     const value=JSON.parse(raw) as unknown
     return value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null
   } catch { return null }
+}
+async function readCappedBytes(request:Request,limit:number):Promise<{bytes?:Uint8Array;error?:'missing'|'too-large'|'invalid'}> {
+ const declared=request.headers.get('content-length')
+ if(declared&&/^\d+$/.test(declared)&&Number(declared)>limit){await request.body?.cancel('File too large').catch(()=>{});return {error:'too-large'}}
+ const reader=request.body?.getReader();if(!reader)return {error:'missing'}
+ try{const chunks:Uint8Array[]=[];let total=0
+  while(true){const {done,value}=await reader.read();if(done)break;total+=value.byteLength
+   if(total>limit){await reader.cancel('File too large').catch(()=>{});return {error:'too-large'}}
+   chunks.push(value)}
+  if(total===0)return {error:'missing'}
+  const buffer=new Uint8Array(total);let offset=0;for(const chunk of chunks){buffer.set(chunk,offset);offset+=chunk.byteLength}return {bytes:buffer}
+ }catch{return {error:'invalid'}}
+}
+function decodeDocumentHeader(value:string|null):string|null{if(value===null)return null;try{return decodeURIComponent(value)}catch{return null}}
+async function sha256Hex(value:Uint8Array):Promise<string>{const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',value));return [...hash].map(byte=>byte.toString(16).padStart(2,'0')).join('')}
+async function flushDocumentObjectCleanup(db:D1Database,bucket?:R2Bucket){
+ if(!bucket)return
+ try{const pending=await db.prepare('SELECT object_key FROM property_document_object_cleanup ORDER BY created_at ASC LIMIT 25').all<{object_key:string}>()
+  for(const row of pending.results){try{await bucket.delete(row.object_key);await db.prepare('DELETE FROM property_document_object_cleanup WHERE object_key=?').bind(row.object_key).run()}catch{/* keep cleanup key queued; never log object keys */}}
+ }catch{/* do not serve objects without public metadata; retain cleanup keys for retry */}
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
 function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includePrivateVerification=false) {
@@ -586,12 +608,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       // attempting deletion at once must not both observe a count of two.
       const canDeleteAdmin=`(role<>'admin' OR (SELECT COUNT(*) FROM users WHERE role='admin')>1)`
       const deletion=await db.batch([
+        db.prepare(`INSERT OR IGNORE INTO property_document_object_cleanup(object_key,created_at) SELECT d.object_key,? FROM property_documents d JOIN properties p ON p.id=d.property_id WHERE p.owner_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(nowIso(),user.id,user.id),
         db.prepare(`DELETE FROM inquiries WHERE sender_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
         db.prepare(`DELETE FROM properties WHERE owner_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
         db.prepare(`DELETE FROM users WHERE id=? AND ${canDeleteAdmin}`).bind(user.id),
         ...accountRateKeys.map(key=>db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=? AND NOT EXISTS (SELECT 1 FROM users WHERE id=?)').bind(key,user.id))
       ])
-      if(!deletion[2]?.meta?.changes)return fail('The last administrator cannot delete this account. Assign another trusted administrator first.',409)
+      if(!deletion[3]?.meta?.changes)return fail('The last administrator cannot delete this account. Assign another trusted administrator first.',409)
+      await flushDocumentObjectCleanup(db,env.R2)
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/properties'&&method==='GET') {
@@ -611,6 +635,47 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       sql+=' LIMIT 100'
       const result=await db.prepare(sql).bind(...args).all<PropertyRow>()
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p))))
+    }
+    const publicDocumentsMatch=path.match(/^\/api\/properties\/([^/]+)\/documents$/)
+    if(publicDocumentsMatch&&method==='GET'){
+      const slug=decodeURIComponent(publicDocumentsMatch[1])
+      const property=await db.prepare("SELECT id FROM properties WHERE slug=? AND status='published'").bind(slug).first<{id:string}>()
+      if(!property)return fail('Property not found or no longer available.',404)
+      const result=await db.prepare("SELECT d.id,d.document_type AS documentType,d.display_label AS label,d.file_extension AS fileExtension,d.size_bytes AS sizeBytes,d.submitted_at AS submittedAt,d.published_at AS publishedAt,d.review_status AS reviewStatus FROM property_documents d WHERE d.property_id=? AND d.document_role='public_copy' AND d.visibility='public' AND d.processing_status='stored' ORDER BY d.published_at DESC LIMIT 10").bind(property.id).all<Record<string,unknown>>()
+      if(!env.R2&&result.results.length)return fail('Property document storage is temporarily unavailable.',503)
+      return ok(result.results)
+    }
+    const documentFileMatch=path.match(/^\/api\/property-documents\/([^/]+)\/file$/)
+    if(documentFileMatch&&method==='GET'){
+      const documentId=decodeURIComponent(documentFileMatch[1])
+      const doc=await db.prepare("SELECT d.*,p.status AS property_status FROM property_documents d JOIN properties p ON p.id=d.property_id WHERE d.id=?").bind(documentId).first<PropertyDocumentRow&{property_status:string}>()
+      if(!doc)return fail('Document not found or no longer available.',404)
+      const isPublic=doc.document_role==='public_copy'&&doc.visibility==='public'&&doc.processing_status==='stored'&&doc.property_status==='published'
+      let viewer:UserRow|null=null
+      if(!isPublic){viewer=await requireUser(request,env);if(!viewer)return fail('Sign in to access this private document.',401);if(viewer.id!==doc.owner_id&&!['admin','moderator'].includes(viewer.role))return fail('You do not have permission to access this document.',403)}
+      if(!env.R2)return fail('Private property document storage is not configured for this environment.',503)
+      const object=await env.R2.get(doc.object_key);if(!object||!object.body)return fail('The document file is unavailable.',404)
+      if(viewer&&viewer.id!==doc.owner_id&&['admin','moderator'].includes(viewer.role)){
+        try{await db.prepare("INSERT INTO property_document_events(id,document_id,property_id,actor_id,event_type,prior_state,new_state,note,created_at) VALUES(?,?,?,?, 'private_download',?,?,?,?)").bind(uuid(),doc.id,doc.property_id,viewer.id,doc.visibility,doc.review_status,'Authorized moderator download of a non-public document.',nowIso()).run()}
+        catch{return fail('The access audit could not be recorded. Retry later.',503)}
+      }
+      const download=url.searchParams.get('download')==='1'||!isPublic||doc.content_type==='application/pdf'
+      const headers=new Headers({'content-type':download?'application/octet-stream':doc.content_type,'content-disposition':(download?'attachment':'inline')+'; filename="zameenhub-property-document'+doc.file_extension+'"','cache-control':'private, no-store, max-age=0','pragma':'no-cache','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'no-referrer','cross-origin-resource-policy':'same-origin','content-security-policy':"default-src 'none'; sandbox"})
+      return new Response(object.body,{status:200,headers})
+    }
+    const documentReportMatch=path.match(/^\/api\/property-documents\/([^/]+)\/reports$/)
+    if(documentReportMatch&&method==='POST'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before reporting a property document.',401)
+      if(!await authLimit(request,db,'property-document-report',6)||!await limited(db,'property-document-report-user:'+user.id,5,60))return fail('Too many document reports. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid document report.')
+      const reason=clean(input.reason,40),details=clean(input.details,1200),documentId=decodeURIComponent(documentReportMatch[1])
+      if(!['suspected_fraud','wrong_property','privacy_exposure','other'].includes(reason)||details.trim().length<10||details.length>1200)return fail('Choose a reason and provide at least 10 characters of specific detail.')
+      const doc=await db.prepare("SELECT d.id,d.property_id,d.owner_id FROM property_documents d JOIN properties p ON p.id=d.property_id WHERE d.id=? AND d.document_role='public_copy' AND d.visibility='public' AND d.processing_status='stored' AND p.status='published'").bind(documentId).first<{id:string;property_id:string;owner_id:string}>()
+      if(!doc)return fail('This published document is no longer available to report.',404)
+      if(doc.owner_id===user.id)return fail('You cannot report a document on your own listing.',403)
+      if(await db.prepare("SELECT id FROM property_document_reports WHERE document_id=? AND reporter_id=? AND status IN ('open','reviewing')").bind(documentId,user.id).first())return fail('You already have an open report for this document.',409)
+      try{const id=uuid();await db.prepare("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)").bind(id,doc.id,doc.property_id,user.id,reason,details,nowIso()).run();return ok({id,status:'open',message:'Document report received. A report alone is not proof of fraud.'},201)}
+      catch{return fail('The report could not be saved. Refresh and try again.',409)}
     }
     const detailMatch=path.match(/^\/api\/properties\/([^/]+)$/)
     if(detailMatch&&method==='GET') {
@@ -640,6 +705,87 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const message='Your listing is now live and marked Unverified. It will remain unverified until an administrator manually verifies it.'
       return ok({id,status:'published',verified:false,message},201)
     }
+    const ownerDocumentsMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/documents$/)
+    if(ownerDocumentsMatch&&method==='GET'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage property documents.',401)
+      const propertyId=decodeURIComponent(ownerDocumentsMatch[1])
+      if(!await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first())return fail('Listing not found in your account.',404)
+      const result=await db.prepare("SELECT d.id,d.document_role AS documentRole,d.document_type AS documentType,d.display_label AS label,d.file_extension AS fileExtension,d.content_type AS contentType,d.size_bytes AS sizeBytes,d.visibility,d.processing_status AS processingStatus,d.review_status AS reviewStatus,d.possible_duplicate AS possibleDuplicate,d.submitted_at AS submittedAt,d.published_at AS publishedAt,d.withdrawn_at AS withdrawnAt,d.updated_at AS updatedAt FROM property_documents d WHERE d.property_id=? AND d.owner_id=? ORDER BY d.submitted_at DESC LIMIT 10").bind(propertyId,user.id).all<Record<string,unknown>>()
+      return ok({storageReady:!!env.R2,documents:result.results.map(d=>({...d,possibleDuplicate:Number(d.possibleDuplicate)===1}))})
+    }
+    if(ownerDocumentsMatch&&method==='POST'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in with a verified email before uploading property documents.',401)
+      if(!await authLimit(request,db,'property-document-upload',8)||!await limited(db,'property-document-upload-user:'+user.id,10,60))return fail('Too many document uploads. Please wait before trying again.',429)
+      if(!env.R2)return fail('Document uploads are disabled until a private R2 bucket is provisioned and bound to this Worker.',503)
+      const propertyId=decodeURIComponent(ownerDocumentsMatch[1])
+      if(!await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first())return fail('Listing not found in your account.',404)
+      const count=await db.prepare('SELECT COUNT(*) AS total FROM property_documents WHERE property_id=?').bind(propertyId).first<{total:number}>()
+      if(Number(count?.total||0)>=MAX_PROPERTY_DOCUMENTS_PER_PROPERTY)return fail('A property may have at most ten documents.',409)
+      const read=await readCappedBytes(request,MAX_PROPERTY_DOCUMENT_BYTES)
+      if(read.error==='too-large')return fail('Document is too large. The maximum size is 8 MiB.',413)
+      if(read.error||!read.bytes)return fail('No readable document was received. Choose a supported PDF or image.')
+      const fileName=decodeDocumentHeader(request.headers.get('x-document-file-name'))
+      if(fileName===null||!sanitizeDocumentFileName(fileName))return fail('Use a PDF, JPEG, PNG, or WebP file with a matching extension.')
+      const format=detectDocumentFormat(read.bytes,fileName);if(!format)return fail('File signature does not match its extension or the format is unsupported.')
+      const kind=clean(request.headers.get('x-document-type'),40);if(!isPropertyDocumentType(kind))return fail('Choose a supported document type.')
+      const role=clean(request.headers.get('x-document-role'),40);if(!isPropertyDocumentRole(role))return fail('Choose private original or redacted public copy.')
+      const rawLabel=decodeDocumentHeader(request.headers.get('x-document-label'));if(rawLabel===null)return fail('Document label metadata is malformed.')
+      const label=sanitizeDocumentLabel(rawLabel,DOCUMENT_TYPE_LABELS[kind]);if(!label)return fail('Use a document label between 2 and 100 characters.')
+      const hash=await sha256Hex(read.bytes),prior=await db.prepare('SELECT COUNT(*) AS total FROM property_documents WHERE sha256=?').bind(hash).first<{total:number}>()
+      const duplicate=Number(prior?.total||0)>0,id=uuid(),objectKey='property-documents/'+uuid(),submitted=nowIso()
+      try{
+        await env.R2.put(objectKey,read.bytes,{httpMetadata:{contentType:'application/octet-stream',cacheControl:'private, no-store',contentDisposition:'attachment'},customMetadata:{documentId:id}})
+        const statements=[db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,possible_duplicate,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'private','stored','pending',?,'',?,?)").bind(id,propertyId,user.id,role,kind,label,format.extension,format.contentType,read.bytes.byteLength,hash,objectKey,duplicate?1:0,submitted,user.id,submitted)]
+        if(duplicate)statements.push(db.prepare('UPDATE property_documents SET possible_duplicate=1 WHERE sha256=?').bind(hash))
+        await db.batch(statements)
+      }catch{
+        try{await env.R2.delete(objectKey)}catch{try{await db.prepare('INSERT OR IGNORE INTO property_document_object_cleanup(object_key,created_at) VALUES(?,?)').bind(objectKey,nowIso()).run()}catch{}}
+        return fail('The document could not be securely recorded. Retry; any failed object cleanup remains private.',503)
+      }
+      await flushDocumentObjectCleanup(db,env.R2)
+      return ok({id,label,documentRole:role,visibility:'private',possibleDuplicate:duplicate,message:role==='private_original'?'Private original stored; it can never be published.':'Redacted public copy stored privately; it remains private until explicitly published.'},201)
+    }
+    const ownerDocumentMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/documents\/([^/]+)$/)
+    if(ownerDocumentMatch&&method==='PATCH'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to change document visibility.',401)
+      if(!await authLimit(request,db,'property-document-visibility',10)||!await limited(db,'property-document-visibility-user:'+user.id,15,60))return fail('Too many document visibility changes. Please wait before trying again.',429)
+      const propertyId=decodeURIComponent(ownerDocumentMatch[1]),documentId=decodeURIComponent(ownerDocumentMatch[2]),input=await body(request)
+      if(!input)return fail('Invalid document visibility update.')
+      const visibility=clean(input.visibility,20),note=clean(input.reviewNote,1200)
+      const doc=await db.prepare('SELECT id,document_role,visibility,processing_status FROM property_documents WHERE id=? AND property_id=? AND owner_id=?').bind(documentId,propertyId,user.id).first<{id:string;document_role:string;visibility:string;processing_status:string}>()
+      if(!doc)return fail('Document not found in your listing.',404)
+      if(doc.document_role!=='public_copy')return fail('Private originals can never be published. Upload a separate redacted public copy instead.',403)
+      const timestamp=nowIso()
+      if(visibility==='public'){
+        if(input.publicDisclosureConfirmed!==true)return fail('Confirm the public copy has been checked for sensitive personal information.')
+        if(!env.R2)return fail('Document storage is unavailable. Visibility was not changed.',503)
+        const property=await db.prepare("SELECT id FROM properties WHERE id=? AND owner_id=? AND status='published'").bind(propertyId,user.id).first()
+        if(!property||doc.processing_status!=='stored')return fail('Only stored documents on a published listing can be made public.',409)
+        const result=await db.prepare("UPDATE property_documents SET visibility='public',published_at=?,withdrawn_at=NULL,review_note='',last_actor_id=?,updated_at=? WHERE id=? AND property_id=? AND owner_id=? AND document_role='public_copy' AND visibility<>'public'").bind(timestamp,user.id,timestamp,documentId,propertyId,user.id).run()
+        if(!result.meta.changes)return fail('Document visibility changed. Refresh and retry.',409)
+        return ok({id:documentId,visibility:'public',message:'Public copy published. This does not establish authenticity or legal ownership.'})
+      }
+      if(visibility==='withdrawn'){
+        if(doc.visibility!=='public')return fail('This document is not currently public.',409)
+        const result=await db.prepare("UPDATE property_documents SET visibility='withdrawn',withdrawn_at=?,review_note=?,last_actor_id=?,updated_at=? WHERE id=? AND property_id=? AND owner_id=? AND document_role='public_copy' AND visibility='public'").bind(timestamp,note,user.id,timestamp,documentId,propertyId,user.id).run()
+        if(!result.meta.changes)return fail('Document visibility changed. Refresh and retry.',409)
+        return ok({id:documentId,visibility:'withdrawn',message:'Public access withdrawn. New public requests are denied; downloaded copies cannot be recalled.'})
+      }
+      return fail('Unsupported visibility change.')
+    }
+    if(ownerDocumentMatch&&method==='DELETE'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to delete property documents.',401)
+      if(!await authLimit(request,db,'property-document-delete',8)||!await limited(db,'property-document-delete-user:'+user.id,10,60))return fail('Too many document deletions. Please wait before trying again.',429)
+      const propertyId=decodeURIComponent(ownerDocumentMatch[1]),documentId=decodeURIComponent(ownerDocumentMatch[2])
+      if(await db.prepare("SELECT id FROM property_document_reports WHERE document_id=? AND status IN ('open','reviewing') LIMIT 1").bind(documentId).first())return fail('An open report prevents deletion. Withdraw public access if needed; resolve the report first.',409)
+      const deletion=await db.batch([
+       db.prepare("INSERT OR IGNORE INTO property_document_object_cleanup(object_key,created_at) SELECT object_key,? FROM property_documents WHERE id=? AND property_id=? AND owner_id=? AND visibility<>'public' AND NOT EXISTS(SELECT 1 FROM property_document_reports WHERE document_id=? AND status IN ('open','reviewing'))").bind(nowIso(),documentId,propertyId,user.id,documentId),
+       db.prepare("DELETE FROM property_documents WHERE id=? AND property_id=? AND owner_id=? AND visibility<>'public' AND NOT EXISTS(SELECT 1 FROM property_document_reports WHERE document_id=? AND status IN ('open','reviewing'))").bind(documentId,propertyId,user.id,documentId)
+      ])
+      if(!deletion[1]?.meta?.changes)return fail('Document could not be deleted. It may be public, reported, or not owned by this account.',409)
+      await flushDocumentObjectCleanup(db,env.R2)
+      return ok({id:documentId,deleted:true,message:'Document metadata removed; external object cleanup is retried if storage is unavailable.'})
+    }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to manage your listings.',401)
@@ -658,6 +804,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!owned)return fail('Listing not found in your account.',404)
       // Delete dependent rows first. Each statement is scoped to a property that still belongs to this user.
       const deletion=await db.batch([
+        db.prepare('INSERT OR IGNORE INTO property_document_object_cleanup(object_key,created_at) SELECT object_key,? FROM property_documents WHERE property_id=? AND owner_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(nowIso(),id,user.id,id,user.id),
         db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
         db.prepare('DELETE FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
         db.prepare('DELETE FROM inquiries WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
@@ -669,7 +816,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         db.prepare('DELETE FROM properties WHERE id=? AND owner_id=?').bind(id,user.id)
       ])
       if(!deletion[deletion.length-1]?.meta?.changes)return fail('Listing could not be deleted. Refresh and try again.',409)
-      return ok({id,deleted:true,message:'Property deleted permanently. Its listing, saved entries, inquiries, reports and related chat history have been removed.'})
+      await flushDocumentObjectCleanup(db,env.R2)
+      return ok({id,deleted:true,message:'Property deleted permanently. Its listing, saved entries, inquiries, reports, chats and document metadata were removed; private object cleanup remains queued if storage is unavailable.'})
     }
     if(ownedPropertyMatch&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
@@ -776,6 +924,59 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare("UPDATE property_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:nowIso(),note,reportId).run()
       if(!result.meta.changes)return fail('Report was already handled or could not be found.',409)
       return ok({id:reportId,status})
+    }
+    const adminDocumentMatch=path.match(/^\/api\/admin\/property-documents\/([^/]+)$/)
+    if(adminDocumentMatch&&method==='PATCH'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to change document visibility.',403)
+      if(!await authLimit(request,db,'property-document-admin-visibility',15))return fail('Too many moderation actions. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid document visibility update.')
+      const note=clean(input.note,1200),documentId=decodeURIComponent(adminDocumentMatch[1]),timestamp=nowIso()
+      if(clean(input.visibility,20)!=='withdrawn'||note.trim().length<10)return fail('Only withdrawal of a public copy is supported. Add at least 10 characters of evidence-based notes.')
+      const result=await db.prepare("UPDATE property_documents SET visibility='withdrawn',withdrawn_at=?,review_note=?,last_actor_id=?,updated_at=? WHERE id=? AND document_role='public_copy' AND visibility='public'").bind(timestamp,note,user.id,timestamp,documentId).run()
+      if(!result.meta.changes)return fail('Public document already withdrawn or not found.',409)
+      return ok({id:documentId,visibility:'withdrawn',message:'Public access was withdrawn and the decision was audited.'})
+    }
+    if(path==='/api/admin/property-documents'&&method==='GET'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review property documents.',403)
+      if(!await authLimit(request,db,'property-document-review-queue',20))return fail('Too many requests. Please wait before trying again.',429)
+      const result=await db.prepare("SELECT d.id,d.property_id AS propertyId,d.owner_id AS ownerId,d.document_role AS documentRole,d.document_type AS documentType,d.display_label AS label,d.file_extension AS fileExtension,d.content_type AS contentType,d.size_bytes AS sizeBytes,d.visibility,d.processing_status AS processingStatus,d.review_status AS reviewStatus,d.possible_duplicate AS possibleDuplicate,d.submitted_at AS submittedAt,d.published_at AS publishedAt,d.updated_at AS updatedAt,p.title AS propertyTitle,p.slug AS propertySlug,p.city AS propertyCity,p.status AS propertyStatus,(SELECT COUNT(*) FROM property_documents other WHERE other.sha256=d.sha256 AND other.id<>d.id) AS duplicateCount FROM property_documents d JOIN properties p ON p.id=d.property_id WHERE d.review_status='pending' OR (d.possible_duplicate=1 AND d.visibility<>'withdrawn') ORDER BY d.possible_duplicate DESC,d.submitted_at ASC LIMIT 100").all<Record<string,unknown>>()
+      return ok({storageReady:!!env.R2,documents:result.results.map(d=>({...d,possibleDuplicate:Number(d.possibleDuplicate)===1,duplicateCount:Number(d.duplicateCount)||0}))})
+    }
+    const documentReviewMatch=path.match(/^\/api\/admin\/property-documents\/([^/]+)\/review$/)
+    if(documentReviewMatch&&method==='PATCH'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review property documents.',403)
+      if(!await authLimit(request,db,'property-document-review',30)||!await limited(db,'property-document-review-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid document review.')
+      const status=clean(input.reviewStatus,20),note=clean(input.reviewNote,1200),documentId=decodeURIComponent(documentReviewMatch[1])
+      if(!['reviewed','inconclusive'].includes(status)||note.trim().length<20)return fail('Choose Reviewed or Inconclusive and record at least 20 characters of specific review notes.')
+      const current=await db.prepare('SELECT review_status,updated_at FROM property_documents WHERE id=?').bind(documentId).first<{review_status:string;updated_at:string}>()
+      if(!current)return fail('Document not found.',404)
+      if(current.review_status===status)return fail('This document already has that review status. Refresh the queue.',409)
+      const timestamp=nowIso(),result=await db.prepare("UPDATE property_documents SET review_status=?,reviewed_at=?,reviewer_id=?,review_note=?,last_actor_id=?,updated_at=? WHERE id=? AND review_status=? AND updated_at=?").bind(status,timestamp,user.id,note,user.id,timestamp,documentId,current.review_status,current.updated_at).run()
+      if(!result.meta.changes)return fail('Document changed while being reviewed. Refresh the queue and inspect it again.',409)
+      return ok({id:documentId,reviewStatus:status,auditRecorded:true,message:status==='reviewed'?'Review recorded; it does not guarantee authenticity or legal title.':'Review recorded as inconclusive.'})
+    }
+    if(path==='/api/admin/property-document-reports'&&method==='GET'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to view document reports.',403)
+      if(!await authLimit(request,db,'property-document-report-queue',20))return fail('Too many requests. Please wait before trying again.',429)
+      const result=await db.prepare("SELECT r.id,r.document_id AS documentId,r.property_id AS propertyId,r.reason,r.details,r.status,r.created_at AS createdAt,r.resolution_note AS resolutionNote,d.display_label AS documentLabel,d.visibility AS documentVisibility,p.title AS propertyTitle,p.slug AS propertySlug,p.city AS propertyCity,p.status AS propertyStatus FROM property_document_reports r JOIN property_documents d ON d.id=r.document_id JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<Record<string,unknown>>()
+      return ok({reports:result.results})
+    }
+    const documentReportReviewMatch=path.match(/^\/api\/admin\/property-document-reports\/([^/]+)$/)
+    if(documentReportReviewMatch&&method==='PATCH'){
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to update document reports.',403)
+      if(!await authLimit(request,db,'property-document-report-review',30)||!await limited(db,'property-document-report-review-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid document report update.')
+      const status=clean(input.status,20),note=clean(input.resolutionNote,1200),id=decodeURIComponent(documentReportReviewMatch[1])
+      if(!['reviewing','resolved','dismissed'].includes(status)||(status!=='reviewing'&&note.trim().length<8))return fail('Unsupported status or missing resolution note (minimum 8 characters).')
+      const result=await db.prepare("UPDATE property_document_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:nowIso(),note,id).run()
+      if(!result.meta.changes)return fail('Report already handled or not found.',404)
+      return ok({id,status})
     }
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
