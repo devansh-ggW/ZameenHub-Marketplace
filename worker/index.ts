@@ -708,10 +708,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ]
       await db.batch(statements)
       const message=autoPublished
-        ? 'Cloudflare AI screening passed and your listing is now published. This is an automated content-risk check, not proof of ownership; the evidence status remains separate.'
+        ? 'Your listing has been published after automated text-risk checks. Publication is separate from evidence review and does not prove ownership.'
         : evidence.status==='submitted'
-          ? 'Submitted for review. AI could not safely auto-publish this listing, so it remains private until review. A supplied record link is not automatically verified.'
-          : 'Submitted for review. AI could not safely auto-publish this listing. Add a public evidence reference in Edit details if you have one; AI screening is not proof of ownership.'
+          ? 'Submitted for review. The listing remains private until it is approved. A supplied evidence link is not automatically verified.'
+          : 'Submitted for review. The listing remains private while it awaits a decision. Add a public evidence reference in Edit details if you have one; automated checks are not proof of ownership.'
       return ok({id,status:initialStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message},201)
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
@@ -772,7 +772,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level=?,ai_risk_score=?,ai_risk_reasons_json=?,ai_screened_at=?,ai_model=?,verification_status=?,verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=?,updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),risk.level,risk.score,JSON.stringify(risk.reasons),updateTime,risk.model,evidence.status,evidence.type,evidence.url,evidence.submittedAt,nextStatus,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       await savePropertyMedia(db,id,mediaImages,videoUrl)
-      return ok({id,status:nextStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message:autoPublished?'Changes saved and the listing passed Cloudflare AI screening, so it is published. This is not proof of ownership; any previous evidence review is reset.':'Changes saved. AI could not safely auto-publish the updated details, so the listing is pending review. Any prior evidence review is reset when listing details change.'})
+      return ok({id,status:nextStatus,aiScreened:risk.model.startsWith('@cf/meta/llama-'),message:autoPublished?'Changes saved and the listing has been published after automated text-risk checks. Any previous evidence review is reset.':'Changes saved. The updated listing is pending review. Any prior evidence review is reset when listing details change.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
