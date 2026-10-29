@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_email_mfa_expiry ON auth_email_mfa_codes(exp
 CREATE TABLE IF NOT EXISTS admin_action_events (
   id TEXT PRIMARY KEY,
   admin_id TEXT REFERENCES users(id) ON DELETE SET NULL,
-  action TEXT NOT NULL CHECK (action IN ('user_banned', 'user_unbanned', 'property_deleted', 'property_archived', 'property_verified', 'property_moderated')),
+  action TEXT NOT NULL CHECK (action IN ('user_banned', 'user_unbanned', 'property_deleted', 'property_archived', 'property_verified', 'property_moderated', 'report_reviewing', 'report_resolved', 'report_dismissed')),
   target_id TEXT NOT NULL DEFAULT '',
   target_label TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL DEFAULT '',
