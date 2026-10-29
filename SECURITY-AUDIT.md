@@ -63,7 +63,7 @@ Public reference pages:
 - Email verification, legacy activation, and password-reset tokens are atomically consumed before use, reducing replay under concurrent requests.
 - New listing and owner-edit paths do not run AI screening or expose AI risk scores. The prior risk-related database columns remain for compatibility, but the current runtime does not use an AI binding.
 - A clear cookie notice and dedicated cookie policy. The current implementation does not intentionally set analytics or advertising cookies; the notice preference uses browser local storage.
-- UI language now makes clear that “published” means approved for public display, not independently verified property ownership.
+- UI language makes clear that “published” means publicly visible after required-field validation; it does not mean a property was independently verified for ownership or legal title.
 - Static production smoke checks now verify the new wiring. CI also runs a SQLite migration test, owner-isolation query checks, RFC TOTP vectors, a full dependency audit, and the TypeScript/Vite build.
 
 ## Security review: addressed in this branch
