@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUpRight, Check, ChevronLeft, ChevronRight, Share2 } from 'lucide-react'
 import { CinematicScrollExperience, EmptyState, ErrorState, FavoriteButton, ImageWithFallback, Lightbox, LoadingState, PropertyCard, PropertySearch, PropertyVideo, SectionKicker, ScrollScene } from './components'
 import { categories, formatPrice, images, type Property } from './lib/data'
 import { getProperties, getProperty, submitInquiry } from './lib/api'
+import { apiRequest, getSession } from './lib/auth'
 import { ReportProperty } from './report-property'
 import { PROPERTY_AMENITIES } from './lib/property-options'
 
@@ -128,8 +129,104 @@ export function PropertiesPage() {
   </div></main>
 }
 
-export function PropertyDetailPage() { const { slug = '' } = useParams(); const [property, setProperty] = useState<Property | null>(null); const [error, setError] = useState(''); const [lightbox, setLightbox] = useState<string | null>(null); const [message, setMessage] = useState(''); const [notice, setNotice] = useState(''); const [email, setEmail] = useState(''); const [sending, setSending] = useState(false); useEffect(() => { getProperty(slug).then((result) => result.ok ? setProperty(result.data) : setError(result.error)) }, [slug]); if (error) return <main className="page-shell"><div className="container"><EmptyState title="This property is unavailable." copy={error} /></div></main>; if (!property) return <main className="page-shell"><div className="container"><LoadingState /></div></main>; const send = async (event: FormEvent) => { event.preventDefault(); setSending(true); const result = await submitInquiry({ propertyId: property.id, message, email }); setSending(false); if (result.ok) { setNotice((result.data.notificationSent ? 'Your inquiry was sent to the listing owner. ' : 'Your inquiry was saved, but an email notification could not be delivered. ') + 'Reference: ' + result.data.reference); setEmail(''); setMessage('') } else setNotice(result.error) }; return <main className="page-shell"><div className="container"><Link to="/properties" className="mono" style={{ color: 'var(--blue)' }}><ArrowLeft size={13} style={{ verticalAlign: 'middle' }} /> Back to properties</Link><div className="detail-grid" style={{ marginTop: 28 }}><div>{property.gallery.length ? <div className="gallery">{property.gallery.map((image, index) => <ImageWithFallback key={image} src={image} alt={`${property.title} view ${index + 1}`} className="gallery-image" onClick={() => setLightbox(image)} />)}</div> : <div className="gallery-empty">No property photos supplied by the owner.</div>}{property.videoUrl && <div className="detail-section"><SectionKicker>Property video</SectionKicker><PropertyVideo src={property.videoUrl} title={property.title} /></div>}<div className="detail-section"><SectionKicker>About this place</SectionKicker><h2>{property.title}</h2><p>{property.description}</p></div><div className="detail-section"><SectionKicker>Features</SectionKicker><div className="amenities">{property.amenities.map((amenity) => <span className="amenity" key={amenity}><Check size={13} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--blue)' }} />{amenity}</span>)}</div></div></div><aside className="detail-panel"><div className="eyebrow">Published listing · {property.verified ? 'submitted public evidence reference reviewed' : 'ownership not independently certified'}</div>{property.verified && <p className="verification-badge">Evidence reference reviewed</p>}<h1>{property.title}</h1><div className="muted">{property.location}</div><div className="detail-price">{formatPrice(property.price, property.purpose, property.pricePeriod)}</div><div className="detail-specs"><div className="detail-spec"><strong>{property.bedrooms}</strong>bedrooms</div><div className="detail-spec"><strong>{property.bathrooms}</strong>bathrooms</div><div className="detail-spec"><strong>{property.area.toLocaleString('en-IN')}</strong>{property.areaUnit}</div></div><div style={{ display: 'flex', gap: 10, marginBottom: 28 }}><FavoriteButton propertyId={property.id} initial={property.favorite ?? false} /><button className="btn btn-outline" onClick={() => navigator.share ? navigator.share({ title: property.title, url: window.location.href }) : navigator.clipboard.writeText(window.location.href)}><Share2 size={15} /> Share</button></div><div className="owner-profile-card"><div className="owner-avatar">{property.ownerProfileImageUrl ? <img src={property.ownerProfileImageUrl} alt={property.ownerName + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span>{(property.ownerName || 'Owner').slice(0, 1).toUpperCase()}</span>}</div><div><strong>{property.ownerName || 'Listing owner'}</strong><p className="muted">Contact through the inquiry form below</p></div></div><div className="form-card"><h2>Ask about this place</h2><p className="muted" style={{ fontSize: 13 }}>Your inquiry is sent to the listing owner's registered email. Check the confirmation message for delivery status.</p><form onSubmit={send}><div className="form-field"><label htmlFor="email">Email</label><input className="form-control" id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@example.com" /></div><div className="form-field"><label htmlFor="message">Message</label><textarea className="form-control" id="message" value={message} onChange={(e) => setMessage(e.target.value)} required placeholder="I would like to understand more about this place..." /></div>{notice && <div className="status-message">{notice}</div>}<button className="btn btn-primary" disabled={sending} type="submit">{sending ? 'Sending...' : 'Send inquiry'}</button></form></div><ReportProperty propertyId={property.id} slug={property.slug} /></aside></div></div>{lightbox && <Lightbox src={lightbox} alt={property.title} onClose={() => setLightbox(null)} />}</main> }
+export function PropertyDetailPage() {
+  const { slug = '' } = useParams()
+  const navigate = useNavigate()
+  const [property, setProperty] = useState<Property | null>(null)
+  const [error, setError] = useState('')
+  const [lightbox, setLightbox] = useState<string | null>(null)
+  const [message, setMessage] = useState('')
+  const [notice, setNotice] = useState('')
+  const [email, setEmail] = useState('')
+  const [sending, setSending] = useState(false)
+  const [viewerAuthenticated, setViewerAuthenticated] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatDraft, setChatDraft] = useState('')
+  const [chatStarting, setChatStarting] = useState(false)
+  const [chatError, setChatError] = useState('')
 
+  useEffect(() => {
+    let active = true
+    void getProperty(slug).then(result => {
+      if (!active) return
+      if (result.ok) setProperty(result.data)
+      else setError(result.error)
+    })
+    void getSession().then(result => {
+      if (active) setViewerAuthenticated(result.ok && result.data.authenticated)
+    })
+    return () => { active = false }
+  }, [slug])
+
+  if (error) return <main className="page-shell"><div className="container"><EmptyState title="This property is unavailable." copy={error} /></div></main>
+  if (!property) return <main className="page-shell"><div className="container"><LoadingState /></div></main>
+
+  const sendInquiry = async (event: FormEvent) => {
+    event.preventDefault(); setSending(true); setNotice('')
+    const result = await submitInquiry({ propertyId: property.id, message, email })
+    setSending(false)
+    if (result.ok) {
+      setNotice((result.data.notificationSent ? 'Your inquiry was sent to the listing owner. ' : 'Your inquiry was saved, but an email notification could not be delivered. ') + 'Reference: ' + result.data.reference)
+      setEmail(''); setMessage('')
+    } else setNotice(result.error)
+  }
+  const startChat = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!viewerAuthenticated) {
+      navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
+      return
+    }
+    const firstMessage = chatDraft.trim()
+    if (!firstMessage) { setChatError('Write a message first.'); return }
+    setChatStarting(true); setChatError('')
+    const result = await apiRequest<{ id: string }>('/api/conversations', {
+      method: 'POST',
+      body: JSON.stringify({ propertyId: property.id, message: firstMessage }),
+    })
+    setChatStarting(false)
+    if (!result.ok) { setChatError(result.error); return }
+    navigate('/messages?conversation=' + encodeURIComponent(result.data.id))
+  }
+
+  return <main className="page-shell"><div className="container">
+    <Link to="/properties" className="mono" style={{ color: 'var(--blue)' }}><ArrowLeft size={13} style={{ verticalAlign: 'middle' }} /> Back to properties</Link>
+    <div className="detail-grid" style={{ marginTop: 28 }}>
+      <div>
+        {property.gallery.length ? <div className="gallery">{property.gallery.map((image, index) => <ImageWithFallback key={image} src={image} alt={`${property.title} view ${index + 1}`} className="gallery-image" onClick={() => setLightbox(image)} />)}</div> : <div className="gallery-empty">No property photos supplied by the owner.</div>}
+        {property.videoUrl && <div className="detail-section"><SectionKicker>Property video</SectionKicker><PropertyVideo src={property.videoUrl} title={property.title} /></div>}
+        <div className="detail-section"><SectionKicker>About this place</SectionKicker><h2>{property.title}</h2><p>{property.description}</p></div>
+        <div className="detail-section"><SectionKicker>Features</SectionKicker><div className="amenities">{property.amenities.map(amenity => <span className="amenity" key={amenity}><Check size={13} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--blue)' }} />{amenity}</span>)}</div></div>
+      </div>
+      <aside className="detail-panel">
+        <div className="eyebrow">Published listing · {property.verified ? 'submitted public evidence reference reviewed' : 'ownership not independently certified'}</div>
+        {property.verified && <p className="verification-badge">Evidence reference reviewed</p>}
+        {property.aiScreened && <p className="ai-screened-note">Cloudflare AI screened this listing for text-based scam signals. This does not prove existence, ownership, or legal title.</p>}
+        <h1>{property.title}</h1>
+        <div className="muted">{property.location}</div>
+        <div className="detail-price">{formatPrice(property.price, property.purpose, property.pricePeriod)}</div>
+        <div className="detail-specs"><div className="detail-spec"><strong>{property.bedrooms}</strong>bedrooms</div><div className="detail-spec"><strong>{property.bathrooms}</strong>bathrooms</div><div className="detail-spec"><strong>{property.area.toLocaleString('en-IN')}</strong>{property.areaUnit}</div></div>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 28 }}><FavoriteButton propertyId={property.id} initial={property.favorite ?? false} /><button className="btn btn-outline" onClick={() => { if (navigator.share) void navigator.share({ title: property.title, url: window.location.href }).catch(() => {}); else void navigator.clipboard.writeText(window.location.href) }}><Share2 size={15} /> Share</button></div>
+        <div className="owner-profile-card"><div className="owner-avatar">{property.ownerProfileImageUrl ? <img src={property.ownerProfileImageUrl} alt={property.ownerName + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span>{(property.ownerName || 'Owner').slice(0, 1).toUpperCase()}</span>}</div><div><strong>{property.ownerName || 'Listing owner'}</strong><p className="muted">Contact through a private chat or the inquiry form below</p></div></div>
+        <section className="form-card chat-start-card">
+          <h2>Chat with the owner</h2>
+          <p className="muted" style={{ fontSize: 13 }}>Ask questions and continue the conversation in your private ZameenHub inbox. Sign-in is required to reduce spam.</p>
+          {!chatOpen ? <button className="btn btn-primary" type="button" style={{ width: '100%' }} onClick={() => {
+            setChatOpen(true)
+            if (!viewerAuthenticated) setChatError('Sign in or create an account to start a private chat.')
+          }}>{viewerAuthenticated ? 'Start private chat' : 'Sign in to chat'}</button> : <form onSubmit={startChat}>
+            <div className="form-field"><label htmlFor="chat-first-message">Your message</label><textarea className="form-control" id="chat-first-message" required maxLength={2000} rows={3} value={chatDraft} onChange={event => setChatDraft(event.target.value)} placeholder="Hi, is this property available? Could I arrange a viewing?" /></div>
+            {chatError && <p className="status-message error" role="alert">{chatError}</p>}
+            <button className="btn btn-primary" style={{ width: '100%' }} disabled={chatStarting || !chatDraft.trim()}>{chatStarting ? 'Starting chat…' : 'Start conversation'}</button>
+            {!viewerAuthenticated && <p className="muted" style={{ fontSize: 12 }}>After signing in, return here and send your opening message.</p>}
+            <button className="btn btn-outline" type="button" onClick={() => { setChatOpen(false); setChatError('') }}>Cancel</button>
+          </form>}
+        </section>
+        <div className="form-card"><h2>Ask about this place</h2><p className="muted" style={{ fontSize: 13 }}>You can also send an email inquiry to the listing owner. No account is needed for this form.</p><form onSubmit={sendInquiry}><div className="form-field"><label htmlFor="inquiry-email">Email</label><input className="form-control" id="inquiry-email" type="email" value={email} onChange={event => setEmail(event.target.value)} required placeholder="you@example.com" /></div><div className="form-field"><label htmlFor="inquiry-message">Message</label><textarea className="form-control" id="inquiry-message" value={message} onChange={event => setMessage(event.target.value)} required minLength={12} maxLength={2000} placeholder="I would like to understand more about this place…" /></div>{notice && <div className="status-message" role="status">{notice}</div>}<button className="btn btn-primary" disabled={sending} type="submit">{sending ? 'Sending…' : 'Send email inquiry'}</button></form></div>
+        <ReportProperty propertyId={property.id} slug={property.slug} />
+      </aside>
+    </div>
+  </div>{lightbox && <Lightbox src={lightbox} alt={property.title} onClose={() => setLightbox(null)} />}</main>
+}
 
 export function NotFoundPage() {
   return <main className="page-shell"><div className="container">
