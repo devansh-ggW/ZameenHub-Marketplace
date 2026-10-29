@@ -29,7 +29,7 @@ export function SiteHeader() {
       <NavLink to="/tools/emi-calculator">EMI calculator</NavLink>
       {user && <NavLink to="/saved">Saved properties</NavLink>}
       {user && <NavLink to="/my-listings">My listings</NavLink>}
-      {user && <NavLink to="/inquiries">Inquiries</NavLink><NavLink to="/messages">Messages</NavLink>}
+      {user && <><NavLink to="/inquiries">Inquiries</NavLink><NavLink to="/messages">Messages</NavLink></>}
       {user && <NavLink to="/profile">Account</NavLink>}
       {user && ['admin','moderator'].includes(user.role) && <><NavLink to="/review-queue">Review queue</NavLink><NavLink to="/report-queue">Listing reports</NavLink></>}
       <NavLink to="/about">About</NavLink>
