@@ -500,9 +500,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const record=await db.prepare('SELECT id,user_id,attempts,expires_at FROM auth_mfa_challenges WHERE token_hash=? AND expires_at>?').bind(challengeHash,nowIso()).first<{id:string;user_id:string;attempts:number;expires_at:string}>()
       if(!record)return fail('Your two-factor sign-in has expired. Please sign in again.',401)
       if(record.attempts>=5){await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run();return fail('Too many incorrect codes. Please sign in again.',429)}
+      const input=await body(request),code=clean(input?.code,40)
+      const recoveryLike=/^[A-F0-9]{24}$/i.test(code.replace(/[\\s-]/g,''))
+      if((!env.MFA_ENCRYPTION_KEY||env.MFA_ENCRYPTION_KEY.length<32)&&!recoveryLike) {
+        return fail('Authenticator verification is unavailable because the server encryption secret is not configured. Use an unused recovery code if you have one, or contact site support.',503)
+      }
       const attempt=await db.prepare('UPDATE auth_mfa_challenges SET attempts=attempts+1 WHERE id=? AND expires_at>? AND attempts<5').bind(record.id,nowIso()).run()
       if(!attempt.meta.changes)return fail('Too many incorrect codes. Please sign in again.',429)
-      const input=await body(request),code=clean(input?.code,40)
       const user=await db.prepare('SELECT id,email,name,role,password_hash,email_verified,mfa_enabled,mfa_secret_ciphertext,mfa_last_counter FROM users WHERE id=?').bind(record.user_id).first<UserRow>()
       let valid=false
       try { valid=!!user&&user.email_verified===1&&await verifyMfaCode(db,user,code,env) } catch { valid=false }
