@@ -50,12 +50,12 @@ export function ListingPage() {
       setStep(2); return
     }
     setBusy(true)
-    const result = await apiRequest<{ id: string; status: 'pending'; message?: string }>('/api/properties', {
+    const result = await apiRequest<{ id: string; status: 'pending' | 'published'; aiScreened?: boolean; message?: string }>('/api/properties', {
       method: 'POST',
       body: JSON.stringify({ title: title.trim(), location: locationText.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: Number(bedrooms), bathrooms: Number(bathrooms), area: Number(area || 0), description: description.trim(), amenities, images: imageUrls.map(url => url.trim()).filter(Boolean), videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim() }),
     })
     setBusy(false)
-    if (result.ok) setNotice(result.data.message ?? 'Your listing has been submitted for review. It will not appear publicly until approved.')
+    if (result.ok) setNotice(result.data.message ?? 'Your listing has been submitted. Cloudflare AI may publish low-risk, non-duplicate listings automatically; otherwise the listing remains private for review.')
     else if (result.status === 401) navigate('/login?next=' + encodeURIComponent('/list-property'), { replace: true })
     else setError(result.error)
   }
@@ -64,7 +64,7 @@ export function ListingPage() {
   if (!authorized) return <main className="page-shell"><div className="container"><p className="status-message">Redirecting to sign in…</p></div></main>
 
   return <main className="page-shell"><div className="container">
-    <div className="page-title"><SectionKicker>Property owners</SectionKicker><h1>List a property.<br /><span className="serif">With clarity.</span></h1><p>Sign-in is required. Every new listing stays pending until an authorized reviewer approves it.</p></div>
+    <div className="page-title"><SectionKicker>Property owners</SectionKicker><h1>List a property.<br /><span className="serif">With clarity.</span></h1><p>Sign-in is required. Cloudflare AI can automatically publish a low-risk, non-duplicate submission. Other listings stay private for review. AI screening does not prove ownership.</p></div>
     <div className="stepper">{steps.map((label, index) => <div className={'step ' + (step === index + 1 ? 'active' : '')} key={label}><span className="mono">0{index + 1}</span> {label}</div>)}</div>
     <form className="form-card" style={{ maxWidth: 820 }} onSubmit={submit}>
       {step === 1 && <><h2>What are you listing?</h2><div className="form-grid"><div className="form-field"><label htmlFor="listing-purpose">Purpose</label><select className="form-control" id="listing-purpose" value={purpose} onChange={e => setPurpose(e.target.value as 'sale' | 'rent')}><option value="sale">For sale</option><option value="rent">For rent</option></select></div><div className="form-field"><label htmlFor="listing-type">Property type</label><select className="form-control" id="listing-type" value={propertyType} onChange={e => setPropertyType(e.target.value)}>{['Apartment', 'House', 'Villa', 'Studio', 'Plot'].map(type => <option key={type}>{type}</option>)}</select></div></div></>}
