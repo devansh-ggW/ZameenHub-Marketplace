@@ -29,7 +29,7 @@ export function detectDocumentFormat(bytes:Uint8Array,fileName:unknown):Property
   if(eof>=0&&xref>=0&&xref<eof&&tail.slice(eof+5).trim()==='')contentType='application/pdf'
  }else if(starts([0xff,0xd8,0xff])&&bytes.length>=16&&bytes[bytes.length-2]===0xff&&bytes[bytes.length-1]===0xd9){
   contentType='image/jpeg'
- }else if(starts([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])&&bytes.length>=45&&bytes[12]===0&&bytes[13]===0&&bytes[14]===0&&bytes[15]===13&&asciiAt(16,'IHDR')&&bytes[bytes.length-12]===0&&bytes[bytes.length-11]===0&&bytes[bytes.length-10]===0&&bytes[bytes.length-9]===0&&asciiAt(bytes.length-8,'IEND')){
+ }else if(starts([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])&&bytes.length>=45&&bytes[8]===0&&bytes[9]===0&&bytes[10]===0&&bytes[11]===13&&asciiAt(12,'IHDR')&&bytes[bytes.length-12]===0&&bytes[bytes.length-11]===0&&bytes[bytes.length-10]===0&&bytes[bytes.length-9]===0&&asciiAt(bytes.length-8,'IEND')){
   contentType='image/png'
  }else if(asciiAt(0,'RIFF')&&asciiAt(8,'WEBP')&&bytes.length>=21){
   try{
