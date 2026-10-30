@@ -75,15 +75,26 @@ try {
     'A provider 404 should be treated as an idempotent delete')
   assert.equal(deleteCalls, 1)
 
-  globalThis.fetch = async () => Response.json({
-    fileId: 'file12345678',
-    filePath: '/zameenhub/properties/property_123/not-the-expected-file.jpg',
-    url: 'https://evil.example.test/not-the-file.jpg',
-    fileType: 'image',
-  })
+  let cleanupAttempted = false
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'DELETE') {
+      cleanupAttempted = true
+      return new Response('provider unavailable', { status: 503 })
+    }
+    return Response.json({
+      fileId: 'file12345678',
+      filePath: '/zameenhub/properties/property_123/not-the-expected-file.jpg',
+      url: 'https://evil.example.test/not-the-file.jpg',
+      fileType: 'image',
+    })
+  }
   const rejected = await uploadImageKitImage(env, image, '/zameenhub/properties/property_123')
   assert.equal(rejected.ok, false,
     'Unexpected provider path/host must never be persisted')
+  assert.equal(cleanupAttempted, true,
+    'An unexpected provider response must trigger an immediate cleanup attempt')
+  assert.equal(rejected.ok ? undefined : rejected.orphanedFileId, 'file12345678',
+    'A provider file that cannot be deleted must be returned for D1 cleanup-queue persistence')
 
   assert.equal((await uploadImageKitImage({}, image, '/zameenhub/properties/property_123')).ok, false,
     'Missing private key/endpoint must fail closed')

@@ -15,7 +15,7 @@ export type ValidatedImage = {
 
 export type ImageKitUploadResult =
   | { ok: true; fileId: string; filePath: string; url: string; mimeType: string; size: number }
-  | { ok: false; status: number; error: string }
+  | { ok: false; status: number; error: string; orphanedFileId?: string }
 
 function sniffImage(bytes: Uint8Array): Pick<ValidatedImage, 'mimeType' | 'extension'> | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
@@ -133,9 +133,14 @@ export async function uploadImageKitImage(
       && (!endpointPath || parsed.pathname.startsWith(endpointPath + '/'))
   } catch { validUrl = false }
 
-  if (!response.ok || !fileId || filePath !== expectedPath || !validUrl || (result.fileType !== undefined && result.fileType !== 'image')) {
-    if (fileId) await deleteImageKitFile(env, fileId).catch(() => false)
-    return { ok: false, status: response.ok ? 502 : 502, error: 'ImageKit rejected the image or returned unexpected file metadata. No image record was saved.' }
+  if (!response.ok || !fileId || filePath !== expectedPath || !validUrl || result.fileType !== 'image') {
+    const removed = fileId ? await deleteImageKitFile(env, fileId).catch(() => false) : true
+    return {
+      ok: false,
+      status: 502,
+      error: 'ImageKit rejected the image or returned unexpected file metadata. No image record was saved.',
+      ...(!removed && /^[A-Za-z0-9_-]{8,100}$/.test(fileId) ? { orphanedFileId: fileId } : {}),
+    }
   }
 
   return { ok: true, fileId, filePath, url, mimeType: image.mimeType, size: image.size }

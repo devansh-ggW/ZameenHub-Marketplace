@@ -578,7 +578,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!image)return fail('Upload a valid JPEG, PNG or WebP image no larger than 8 MB.')
       await retryImageKitCleanup(db,env)
       const uploaded=await uploadImageKitImage(env,image,`/zameenhub/profiles/${user.id}`)
-      if(!uploaded.ok)return fail(uploaded.error,uploaded.status)
+      if(!uploaded.ok) {
+        if(uploaded.orphanedFileId)await queueImageKitCleanup(db,uploaded.orphanedFileId)
+        return fail(uploaded.error,uploaded.status)
+      }
       const old=await db.prepare('SELECT profile_image_file_id FROM users WHERE id=?').bind(user.id).first<{profile_image_file_id:string|null}>()
       try {
         await db.prepare('UPDATE users SET profile_image_url=?,profile_image_file_id=?,profile_image_file_path=?,profile_image_mime_type=?,updated_at=? WHERE id=?')
@@ -725,7 +728,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!image)return fail('Upload a valid JPEG, PNG or WebP image no larger than 8 MB.')
       await retryImageKitCleanup(db,env)
       const uploaded=await uploadImageKitImage(env,image,`/zameenhub/properties/${propertyId}`)
-      if(!uploaded.ok)return fail(uploaded.error,uploaded.status)
+      if(!uploaded.ok) {
+        if(uploaded.orphanedFileId)await queueImageKitCleanup(db,uploaded.orphanedFileId)
+        return fail(uploaded.error,uploaded.status)
+      }
       const mediaId=uuid()
       try {
         await db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,imagekit_file_path,mime_type,file_size,uploader_id) VALUES(?,?,'image',?,?,?,?,?,?,?,?)")
