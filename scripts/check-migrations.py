@@ -317,11 +317,11 @@ def main() -> int:
     expect(db.execute("SELECT public_review_summary FROM property_documents WHERE id='doc-0'").fetchone()[0].startswith("Compared the property identifier"),"Public review summary was not persisted separately")
     expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='reviewed'").fetchone()[0] == 1,
            "Document review was not audited")
-    db.execute("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)",
-               ("doc-report-1","doc-0","published","reporter","privacy_exposure","Contains unrelated sensitive details",now))
+    db.execute("INSERT INTO property_document_reports(id,document_id,document_id_snapshot,property_id,property_id_snapshot,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,?,?,'open',?)",
+               ("doc-report-1","doc-0","doc-0","published","published","reporter","privacy_exposure","Contains unrelated sensitive details",now))
     try:
         db.execute("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)",
-                   ("doc-report-2","doc-0","published","reporter","privacy_exposure","Repeated complaint",now))
+                   ("doc-report-2","doc-0","doc-0","published","published","reporter","privacy_exposure","Repeated complaint",now))
     except sqlite3.IntegrityError:
         pass
     else:
@@ -341,6 +341,10 @@ def main() -> int:
     db.execute("DELETE FROM properties WHERE owner_id=?", ("owner",))
     deleted_document_events = db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='deleted' AND document_id_snapshot LIKE 'doc-%' AND property_id_snapshot='published'").fetchone()[0]
     expect(deleted_document_events == 10, "Document deletion audit snapshots did not survive owner property cascade")
+    retained_report = db.execute("SELECT document_id,property_id,document_id_snapshot,property_id_snapshot FROM property_document_reports WHERE id='doc-report-1'").fetchone()
+    expect(retained_report == (None,None,"doc-0","published"), "Document report history did not retain ID snapshots after property/document deletion")
+    retained_upload_event = db.execute("SELECT document_id,property_id,document_id_snapshot,property_id_snapshot FROM property_document_events WHERE event_type='uploaded' AND document_id_snapshot='doc-0'").fetchone()
+    expect(retained_upload_event == (None,None,"doc-0","published"), "Upload event history lost its ID snapshots after property/document deletion")
     db.execute("DELETE FROM inquiries WHERE sender_id=?", ("owner",))
     db.execute("DELETE FROM users WHERE id=?", ("owner",))
     expect(db.execute("SELECT COUNT(*) FROM users WHERE id='owner'").fetchone()[0] == 0,
