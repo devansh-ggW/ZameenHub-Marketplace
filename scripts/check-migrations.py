@@ -344,9 +344,9 @@ def main() -> int:
     deleted_document_events = db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='deleted' AND document_id_snapshot LIKE 'doc-%' AND property_id_snapshot='published'").fetchone()[0]
     expect(deleted_document_events == 10, "Document deletion audit snapshots did not survive owner property cascade")
     retained_report = db.execute("SELECT document_id,property_id,document_id_snapshot,property_id_snapshot FROM property_document_reports WHERE id='doc-report-1'").fetchone()
-    expect(retained_report == (None,None,"doc-0","published"), "Document report history did not retain ID snapshots after property/document deletion")
+    expect(tuple(retained_report) == (None,None,"doc-0","published"), "Document report history did not retain ID snapshots after property/document deletion")
     retained_upload_event = db.execute("SELECT document_id,property_id,document_id_snapshot,property_id_snapshot FROM property_document_events WHERE event_type='uploaded' AND document_id_snapshot='doc-0'").fetchone()
-    expect(retained_upload_event == (None,None,"doc-0","published"), "Upload event history lost its ID snapshots after property/document deletion")
+    expect(tuple(retained_upload_event) == (None,None,"doc-0","published"), "Upload event history lost its ID snapshots after property/document deletion")
     db.execute("DELETE FROM inquiries WHERE sender_id=?", ("owner",))
     db.execute("DELETE FROM users WHERE id=?", ("owner",))
     expect(db.execute("SELECT COUNT(*) FROM users WHERE id='owner'").fetchone()[0] == 0,
