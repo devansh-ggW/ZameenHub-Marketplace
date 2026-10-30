@@ -187,17 +187,18 @@ def main() -> int:
                   VALUES('message-one','conversation-one','reporter','Could I arrange a viewing?',?)""", (now,))
     db.execute("INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES('message-reply','conversation-one','owner','Thanks, let us arrange it.',?)", (now,))
     db.execute("UPDATE property_messages SET edited_at=?,reply_to_message_id='message-one' WHERE id='message-reply'", (now,))
-    db.execute("INSERT INTO property_message_hidden(message_id,user_id,hidden_at) VALUES('message-one','reporter',?)", (now,))
+    db.execute("INSERT INTO property_message_hidden(message_id,user_id,hidden_at) VALUES('message-reply','reporter',?)", (now,))
     expect(db.execute("SELECT edited_at,reply_to_message_id FROM property_messages WHERE id='message-reply'").fetchone()[:] ==
            (now, "message-one"), "Message edit/reply metadata was not persisted")
     expect(db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE message_id='message-one' AND user_id='reporter'").fetchone()[0] == 1,
            "Per-user message deletion metadata was not persisted")
     buyer_conversations = db.execute("""SELECT c.id,p.title,
-        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unread
+        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)) AS unread
         FROM property_conversations c JOIN properties p ON p.id=c.property_id
-        WHERE c.buyer_id=? OR c.owner_id=?""", ("reporter", "reporter", "reporter")).fetchall()
+        WHERE c.buyer_id=? OR c.owner_id=?""", ("reporter", "reporter", "reporter", "reporter")).fetchall()
     expect(len(buyer_conversations) == 1 and buyer_conversations[0]["id"] == "conversation-one" and buyer_conversations[0]["unread"] == 0,
-           "Buyer conversation list did not return the right private conversation")
+           "Buyer inbox counted a message hidden only for that participant as unread")
     owner_unread = db.execute("""SELECT COUNT(*) FROM property_messages
         WHERE conversation_id='conversation-one' AND sender_id<>? AND read_at IS NULL""", ("owner",)).fetchone()[0]
     expect(owner_unread == 1, "Property owner unread count did not include the buyer's message")
