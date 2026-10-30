@@ -91,9 +91,9 @@ if (pollStart < 0 || pollEnd < 0 || messages.slice(pollStart, pollEnd).includes(
 if (!messages.includes('60_000') || !messages.includes('document.hidden')) {
   errors.push('Inbox summaries should refresh on a separate, visibility-aware interval')
 }
-if (!listing.includes('uploadPropertyImage') || !listing.includes('seller-hosted property evidence')
+if (!listing.includes('uploadPropertyImage') || !listing.toLowerCase().includes('seller-hosted property evidence')
   || listing.includes('Add another photo URL')) errors.push('Create-listing form must upload photos and accept seller-hosted evidence')
-if (!editing.includes('uploadPropertyImage') || !editing.includes('seller-hosted property evidence')
+if (!editing.includes('uploadPropertyImage') || !editing.toLowerCase().includes('seller-hosted property evidence')
   || !editing.includes('/images/')) errors.push('Edit-listing form must manage ImageKit photos and seller evidence')
 if (!read('src/account-pages.tsx').includes('uploadProfileImage')) errors.push('Profile photo UI is not wired to ImageKit')
 for (const marker of ['mfa_enabled','mfa_secret_ciphertext','mfa_recovery_codes']) {
