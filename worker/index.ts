@@ -976,9 +976,19 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const conversation=await db.prepare('SELECT id,buyer_id,owner_id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(id,user.id,user.id).first<{id:string;buyer_id:string;owner_id:string;status:string}>()
       if(!conversation)return fail('Conversation not found.',404)
       if(method==='GET') {
-        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt
-          FROM property_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=?
-          ORDER BY m.created_at DESC LIMIT 100`).bind(id).all<{id:string;senderId:string;senderName:string;body:string;createdAt:string;readAt:string|null}>()
+        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,
+          CASE WHEN m.deleted_at IS NULL THEN m.body ELSE 'This message was deleted.' END AS body,
+          m.created_at AS createdAt,m.read_at AS readAt,m.edited_at AS editedAt,m.deleted_at AS deletedAt,
+          m.reply_to_message_id AS replyToMessageId,
+          CASE WHEN r.id IS NULL THEN NULL WHEN r.deleted_at IS NULL THEN substr(r.body,1,200) ELSE 'Deleted message' END AS replyToBody,
+          ru.name AS replyToName,fu.name AS forwardedFromName
+          FROM property_messages m JOIN users u ON u.id=m.sender_id
+          LEFT JOIN property_messages r ON r.id=m.reply_to_message_id
+          LEFT JOIN users ru ON ru.id=r.sender_id
+          LEFT JOIN users fu ON fu.id=m.forwarded_from_sender_id
+          LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=?
+          WHERE m.conversation_id=? AND h.message_id IS NULL
+          ORDER BY m.created_at DESC LIMIT 100`).bind(user.id,id).all<Record<string,unknown>>()
         return ok(result.results.reverse())
       }
       if(conversation.status!=='open')return fail('This conversation is closed.',409)
@@ -986,12 +996,63 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid message.')
       const message=clean(input.message,2000).trim()
       if(!message||message.length>2000)return fail('Write a message of 1–2,000 characters.')
+      const replyToMessageId=typeof input.replyToMessageId==='string'?clean(input.replyToMessageId,80):''
+      if(replyToMessageId) {
+        const reply=await db.prepare('SELECT id FROM property_messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL')
+          .bind(replyToMessageId,id).first<{id:string}>()
+        if(!reply)return fail('The message you are replying to is no longer available.',404)
+      }
       const timestamp=nowIso(),messageId=uuid()
       await db.batch([
-        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES(?,?,?,?,?)').bind(messageId,id,user.id,message,timestamp),
-        db.prepare('UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status=\'open\'').bind(timestamp,timestamp,id)
+        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at,reply_to_message_id) VALUES(?,?,?,?,?,?)').bind(messageId,id,user.id,message,timestamp,replyToMessageId||null),
+        db.prepare("UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status='open'").bind(timestamp,timestamp,id)
       ])
-      return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null},201)
+      return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null,replyToMessageId:replyToMessageId||null,editedAt:null,deletedAt:null},201)
+    }
+    const messageActionMatch=path.match(/^\/api\/messages\/([^/]+)(?:\/(for-me|forward))?$/)
+    if(messageActionMatch&&(method==='PATCH'||method==='DELETE'||method==='POST')) {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage private messages.',401)
+      if(!await authLimit(request,db,'message-action',20)||!await limited(db,'message-action-user:'+user.id,40,60))return fail('Too many message actions. Please wait before trying again.',429)
+      const messageId=decodeURIComponent(messageActionMatch[1]),action=messageActionMatch[2]||''
+      const record=await db.prepare('SELECT m.id,m.conversation_id AS conversationId,m.sender_id AS senderId,m.body,m.deleted_at AS deletedAt,c.status FROM property_messages m JOIN property_conversations c ON c.id=m.conversation_id WHERE m.id=? AND (c.buyer_id=? OR c.owner_id=?)')
+        .bind(messageId,user.id,user.id).first<{id:string;conversationId:string;senderId:string;body:string;deletedAt:string|null;status:string}>()
+      if(!record)return fail('Message not found.',404)
+      if(method==='PATCH'&&!action) {
+        if(record.senderId!==user.id)return fail('You can only edit messages you sent.',403)
+        if(record.deletedAt)return fail('A deleted message cannot be edited.',409)
+        const input=await body(request);if(!input||typeof input.message!=='string')return fail('Enter an updated message.')
+        const updated=clean(input.message,2000).trim()
+        if(!updated||updated.length>2000)return fail('A message must contain 1–2,000 characters.')
+        const timestamp=nowIso()
+        const result=await db.prepare('UPDATE property_messages SET body=?,edited_at=? WHERE id=? AND sender_id=? AND deleted_at IS NULL').bind(updated,timestamp,messageId,user.id).run()
+        if(!result.meta.changes)return fail('The message could not be edited. Refresh and try again.',409)
+        return ok({id:messageId,body:updated,editedAt:timestamp})
+      }
+      if(method==='DELETE'&&action==='for-me') {
+        await db.prepare('INSERT OR IGNORE INTO property_message_hidden(message_id,user_id,hidden_at) VALUES(?,?,?)').bind(messageId,user.id,nowIso()).run()
+        return ok({id:messageId,hidden:true})
+      }
+      if(method==='DELETE'&&!action) {
+        if(record.senderId!==user.id)return fail('Only the sender can delete this message for everyone.',403)
+        if(record.deletedAt)return ok({id:messageId,deleted:true})
+        const timestamp=nowIso()
+        await db.prepare("UPDATE property_messages SET body='This message was deleted.',deleted_at=? WHERE id=? AND sender_id=? AND deleted_at IS NULL").bind(timestamp,messageId,user.id).run()
+        return ok({id:messageId,deleted:true,deletedAt:timestamp})
+      }
+      if(method==='POST'&&action==='forward') {
+        if(record.deletedAt)return fail('A deleted message cannot be forwarded.',409)
+        const input=await body(request);if(!input)return fail('Choose a destination conversation.')
+        const targetId=clean(input.targetConversationId,80)
+        const target=await db.prepare("SELECT id FROM property_conversations WHERE id=? AND status='open' AND (buyer_id=? OR owner_id=?)").bind(targetId,user.id,user.id).first<{id:string}>()
+        if(!target)return fail('Destination conversation not found or unavailable.',404)
+        const forwardId=uuid(),timestamp=nowIso()
+        await db.batch([
+          db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at,forwarded_from_message_id,forwarded_from_sender_id) VALUES(?,?,?,?,?,?,?)').bind(forwardId,targetId,user.id,record.body.slice(0,2000),timestamp,messageId,record.senderId),
+          db.prepare("UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status='open'").bind(timestamp,timestamp,targetId)
+        ])
+        return ok({id:forwardId,conversationId:targetId},201)
+      }
+      return fail('Unsupported message action.',405)
     }
     const conversationReadMatch=path.match(/^\/api\/conversations\/([^/]+)\/read$/)
     if(conversationReadMatch&&method==='PATCH') {
