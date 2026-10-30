@@ -118,7 +118,9 @@ if(!worker.includes('function emailText('))errors.push('Worker email messages mu
 if(!worker.includes('href=\"${safeUrl}\"'))errors.push('Email HTML must include a link with the generated action URL')
 if(!worker.includes('copy and open this link in your browser'))errors.push('Email HTML must expose the action URL as a visible clickable fallback')
 if(!worker.includes('html,text})'))errors.push('Resend payload must include both HTML and plain-text email bodies')
-if(!worker.includes('ownerDocumentsMatch')||!worker.includes('documentFileMatch')||!worker.includes('documentReviewMatch')||!worker.includes('publicDisclosureConfirmed'))errors.push('Document endpoints must enforce owner access, publication consent and moderator review')
+if(!worker.includes('ownerDocumentsMatch')||!worker.includes('documentFileMatch')||!worker.includes('documentReviewMatch')||!worker.includes('publicDisclosureConfirmed')||!worker.includes('public_review_summary'))errors.push('Document endpoints must enforce owner access, publication consent and public review summaries')
+if(!read('src/site-chrome.tsx').includes('to="/document-review"'))errors.push('Document review must be discoverable to moderators')
+if(!read('worker/property-documents.ts').includes('startxref')||!read('worker/property-documents.ts').includes('IEND'))errors.push('Document validation must reject common truncated structures')
 if(!read('migrations/0006_property_documents.sql').includes('property_documents_max_ten')||!read('migrations/0006_property_documents.sql').includes("document_role='public_copy' OR visibility='private'"))errors.push('Document schema must constrain per-property count and keep originals private')
 if(!read('src/property-documents.tsx').includes('Upload privately')||!read('src/property-documents.tsx').includes('No automated redaction is performed'))errors.push('Document UI must explain private-by-default and redaction limitations')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}

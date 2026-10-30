@@ -244,6 +244,18 @@ def main() -> int:
     expect(event is not None and event[0] == "high" and event[1] == 80 and event[2] == "",
            "Moderation audit did not capture current risk state while keeping internal notes separate")
 
+
+    # Simulate two identical uploads. The Worker runs this UPDATE within the
+    # same batch as INSERT so it doesn't rely on a stale pre-insert count.
+    duplicate_hash = "f" * 64
+    for doc_id in ("same-hash-a","same-hash-b"):
+        db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at)
+                      VALUES(?, 'other-property','other-owner','public_copy','sale_deed','Same hash test','.pdf','application/pdf',100,?,?,'private','stored','pending',?,'','other-owner',?)""",
+                   (doc_id,duplicate_hash,"property-documents/"+doc_id,now,now))
+        db.execute("UPDATE property_documents SET possible_duplicate=1 WHERE sha256=? AND (SELECT COUNT(*) FROM property_documents WHERE sha256=?)>1",(duplicate_hash,duplicate_hash))
+    expect(db.execute("SELECT COUNT(*) FROM property_documents WHERE sha256=? AND possible_duplicate=1",(duplicate_hash,)).fetchone()[0]==2,
+           "Atomic duplicate hash update did not flag both uploads")
+
     # The same conditional deletion guard used by the Worker protects the last
     # administrator even when two deletion requests race.
     db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
@@ -266,7 +278,7 @@ def main() -> int:
 
 
     document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
-    expect({"id","property_id","owner_id","document_role","document_type","content_type","size_bytes","sha256","object_key","visibility","review_status"} <= document_columns,
+    expect({"id","property_id","owner_id","document_role","document_type","content_type","size_bytes","sha256","object_key","visibility","review_status","public_review_summary"} <= document_columns,
            "Property document metadata is incomplete")
     doc_tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     event_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_document_events)")}
@@ -301,7 +313,8 @@ def main() -> int:
            "Document withdrawal state was not persisted")
     expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='withdrawn'").fetchone()[0] == 1,
            "Document withdrawal was not audited")
-    db.execute("UPDATE property_documents SET review_status='reviewed',reviewer_id='second-admin',reviewed_at=?,review_note=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"Checked property identifier and dates; title not legally certified.","second-admin",now))
+    db.execute("UPDATE property_documents SET review_status='reviewed',reviewer_id='second-admin',reviewed_at=?,review_note=?,public_review_summary=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"Checked property identifier and dates; title not legally certified.","Compared the property identifier and issue date with the named public registry entry.","second-admin",now))
+    expect(db.execute("SELECT public_review_summary FROM property_documents WHERE id='doc-0'").fetchone()[0].startswith("Compared the property identifier"),"Public review summary was not persisted separately")
     expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='reviewed'").fetchone()[0] == 1,
            "Document review was not audited")
     db.execute("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)",

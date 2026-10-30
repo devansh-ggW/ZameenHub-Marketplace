@@ -145,3 +145,10 @@ Public reference pages:
 - Public file requests check current visibility and listing status, disable caching and use safe content headers. Private access requires the owner or authorized moderator. Reports and moderation routes enforce roles and request limits.
 - Identical hashes are not fraud conclusions. Format validation is not malware scanning; there is no OCR, automated PII redaction, land-record lookup or proof of ownership. Sellers prepare and inspect public copies themselves.
 - Uploads remain disabled until migration 0006 is applied and a private R2 bucket is bound. This branch has not provisioned Cloudflare resources, applied production migrations or deployed production.
+
+
+## Second document re-audit refinements
+- Supported-format checks now require minimum end/structure markers for PDF, JPEG, PNG and WebP, rejecting common truncated files. This is still not full parsing, virus scanning or legal-authenticity validation.
+- Moderator review records a private internal note plus a separate public summary of the limited checks performed. Only the public summary is exposed on a listing; it must avoid personal data and never claim legal ownership.
+- Identical-file flags are updated in the same D1 batch as the new document insert and the just-created row is read back, avoiding a stale pre-insert count race.
+- Public PDFs can be opened inline through the document route while the explicit download endpoint remains available. Browser-native PDF preview behavior has not been manually tested across browsers.
