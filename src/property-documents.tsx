@@ -4,8 +4,10 @@ import { Link } from 'react-router-dom'
 import { apiRequest } from './lib/auth'
 import { SectionKicker } from './components'
 export const DOCUMENT_TYPE_LABELS={sale_deed:'Sale deed',property_tax_receipt:'Property tax receipt',registry_extract:'Registry extract',encumbrance_certificate:'Encumbrance certificate',approved_plan:'Approved plan',rera_record:'RERA record',other:'Other supporting record'} as const
-type DocType=keyof typeof DOCUMENT_TYPE_LABELS
-type Role='private_original'|'public_copy'
+export type PropertyDocumentType=keyof typeof DOCUMENT_TYPE_LABELS
+export type PropertyDocumentRole='private_original'|'public_copy'
+type DocType=PropertyDocumentType
+type Role=PropertyDocumentRole
 type PublicDoc={id:string;documentType:DocType;label:string;fileExtension:string;sizeBytes:number;submittedAt:string;publishedAt:string;reviewStatus:'pending'|'reviewed'|'inconclusive'}
 type OwnerDoc=PublicDoc&{documentRole:Role;visibility:'private'|'public'|'withdrawn';possibleDuplicate:boolean}
 const MAX=8*1024*1024
