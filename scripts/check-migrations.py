@@ -190,7 +190,7 @@ def main() -> int:
     db.execute("INSERT INTO property_message_hidden(message_id,user_id,hidden_at) VALUES('message-reply','reporter',?)", (now,))
     expect(db.execute("SELECT edited_at,reply_to_message_id FROM property_messages WHERE id='message-reply'").fetchone()[:] ==
            (now, "message-one"), "Message edit/reply metadata was not persisted")
-    expect(db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE message_id='message-one' AND user_id='reporter'").fetchone()[0] == 1,
+    expect(db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE message_id='message-reply' AND user_id='reporter'").fetchone()[0] == 1,
            "Per-user message deletion metadata was not persisted")
     buyer_conversations = db.execute("""SELECT c.id,p.title,
         (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL
