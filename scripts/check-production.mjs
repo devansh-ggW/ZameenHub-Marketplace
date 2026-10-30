@@ -64,6 +64,8 @@ if(!pages.includes("setMinPrice")||!pages.includes("setMaxPrice")||!pages.includ
 if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage must load real public listings from the property API')
 if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
 if(!read('src/site-chrome.tsx').includes('to="/messages"')||!read('src/messages-page.tsx').includes('/api/conversations'))errors.push('Private property messages page and navigation must be wired')
+const messagesPage=read('src/messages-page.tsx'),loadMessagesBlock=messagesPage.slice(messagesPage.indexOf('const loadMessages'),messagesPage.indexOf('useEffect(() => {',messagesPage.indexOf('const loadMessages')))
+if(loadMessagesBlock.includes('loadConversations()')||!loadMessagesBlock.includes('hasUnreadIncoming'))errors.push('Message polling must not repeatedly reload the inbox list and should mark only actual unread messages as read')
 if(!read('src/emi-calculator-page.tsx').includes('calculateEmi(')||!read('src/lib/emi.ts').includes('monthlyRate'))errors.push('EMI calculator must use the tested monthly-repayment formula')
 if(!read('src/site-chrome.tsx').includes('to="/tools/emi-calculator"'))errors.push('EMI calculator must be reachable from primary navigation')
 const sitemap=read('public/sitemap.xml'), robots=read('public/robots.txt')

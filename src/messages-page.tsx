@@ -57,24 +57,37 @@ export function MessagesPage() {
   }, [navigate, loadConversations])
 
   const loadMessages = useCallback(async (quiet = false) => {
-    if (!selectedId) { setMessages([]); return }
+    if (!selectedId || !currentUserId) { setMessages([]); return }
     if (!quiet) setMessagesLoading(true)
     const result = await apiRequest<ChatMessage[]>('/api/conversations/' + encodeURIComponent(selectedId) + '/messages')
     if (result.ok) {
       setMessages(result.data)
-      await apiRequest<{ read: boolean }>('/api/conversations/' + encodeURIComponent(selectedId) + '/read', { method: 'PATCH', body: '{}' })
-      void loadConversations()
+      const latest = result.data[result.data.length - 1]
+      if (latest) {
+        setConversations(current => current.map(item => item.id === selectedId
+          ? { ...item, lastMessage: latest.body, lastMessageAt: latest.createdAt }
+          : item))
+      }
+      const hasUnreadIncoming = result.data.some(message => message.senderId !== currentUserId && !message.readAt)
+      if (hasUnreadIncoming) {
+        const readResult = await apiRequest<{ read: boolean }>('/api/conversations/' + encodeURIComponent(selectedId) + '/read', { method: 'PATCH', body: '{}' })
+        if (readResult.ok) {
+          const readAt = new Date().toISOString()
+          setMessages(current => current.map(message => message.senderId !== currentUserId && !message.readAt ? { ...message, readAt } : message))
+          setConversations(current => current.map(item => item.id === selectedId ? { ...item, unreadCount: 0 } : item))
+        }
+      }
       setError('')
     } else setError(result.error)
     if (!quiet) setMessagesLoading(false)
-  }, [selectedId, loadConversations])
+  }, [selectedId, currentUserId])
 
   useEffect(() => {
-    if (!selectedId) { setMessages([]); return }
+    if (!selectedId || !currentUserId) { setMessages([]); return }
     void loadMessages()
     const timer = window.setInterval(() => { void loadMessages(true) }, 5000)
     return () => window.clearInterval(timer)
-  }, [selectedId, loadMessages])
+  }, [selectedId, currentUserId, loadMessages])
 
   function openConversation(id: string) {
     setParams({ conversation: id })
