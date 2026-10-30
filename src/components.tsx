@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode, type Mouse
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowUpRight, Check, ChevronLeft, ChevronRight, Heart, Menu, Search, Share2, X } from 'lucide-react'
 import { categories, formatPrice, images, type Property } from './lib/data'
-import { apiRequest } from './lib/auth'
+import { apiRequest, getSession } from './lib/auth'
 import { imageKitVariant } from './lib/media'
 export { DepthImage, ScrollScene } from './motion'
 
@@ -13,11 +13,19 @@ export function ImageWithFallback({ src, alt, className, onClick }: { src: strin
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
   const location = useLocation()
   useEffect(() => setOpen(false), [location.pathname])
+  useEffect(() => {
+    let active = true
+    void getSession().then(result => {
+      if (active) setAuthenticated(result.ok && result.data.authenticated)
+    })
+    return () => { active = false }
+  }, [location.pathname])
   return <header className="site-header"><div className="container nav">
     <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
-    <nav className={`nav-links ${open ? 'open' : ''}`} aria-label="Primary"><NavLink to="/properties">Browse properties</NavLink><NavLink to="/saved">Saved</NavLink><NavLink to="/about">About</NavLink></nav>
+    <nav className={`nav-links ${open ? 'open' : ''}`} aria-label="Primary"><NavLink to="/properties">Browse properties</NavLink><NavLink to="/saved">Saved</NavLink><NavLink to="/about">About</NavLink>{!authenticated && <><NavLink to="/signup">Sign up</NavLink><NavLink to="/login">Log in</NavLink></>}</nav>
     <div className="nav-actions"><Link className="btn btn-outline" to="/login">Sign in</Link><Link className="btn btn-primary" to="/list-property">List a property <ArrowUpRight size={15} /></Link><button className="icon-btn mobile-toggle" onClick={() => setOpen(!open)} aria-label={open ? 'Close menu' : 'Open menu'}>{open ? <X size={18} /> : <Menu size={18} />}</button></div>
   </div></header>
 }
