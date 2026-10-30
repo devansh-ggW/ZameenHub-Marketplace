@@ -154,3 +154,6 @@ Public reference pages:
 - Public PDFs can be opened inline through the document route while the explicit download endpoint remains available. Browser-native PDF preview behavior has not been manually tested across browsers.
 
 - Object cleanup now has a 15-minute scheduled Worker retry, processing up to 25 queued keys per run. It safely no-ops until a private R2 binding exists; actual Cloudflare scheduling and storage behavior still require environment-level verification.
+
+
+- The moderator's open-report queue uses left joins and snapshot IDs. A report remains visible after listing/document deletion, clearly labeled as historical with the file unavailable, instead of disappearing because its live resource rows were removed.
