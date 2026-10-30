@@ -666,3 +666,5 @@ img { max-width: 100%; display: block; }
 .document-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}
 .document-review-card{padding:18px}
 @media(max-width:650px){.document-card{display:block}.document-actions{justify-content:flex-start;margin-top:12px}.document-form,.document-report{grid-template-columns:1fr}.document-manager{padding:16px}}
+
+.document-review-summary{margin-top:8px;font-size:11px;line-height:1.6;color:var(--muted)}

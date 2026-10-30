@@ -11,7 +11,7 @@ export type Env = {
 }
 type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
 type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
-type PropertyDocumentRow = {id:string;property_id:string;owner_id:string;document_role:'private_original'|'public_copy';document_type:string;display_label:string;file_extension:string;content_type:string;size_bytes:number;sha256:string;object_key:string;possible_duplicate:number;visibility:'private'|'public'|'withdrawn';processing_status:'stored'|'unavailable';review_status:'pending'|'reviewed'|'inconclusive';submitted_at:string;published_at:string|null;withdrawn_at:string|null;reviewed_at:string|null;reviewer_id:string|null;review_note:string;last_actor_id:string|null;updated_at:string}
+type PropertyDocumentRow = {id:string;property_id:string;owner_id:string;document_role:'private_original'|'public_copy';document_type:string;display_label:string;file_extension:string;content_type:string;size_bytes:number;sha256:string;object_key:string;possible_duplicate:number;visibility:'private'|'public'|'withdrawn';processing_status:'stored'|'unavailable';review_status:'pending'|'reviewed'|'inconclusive';public_review_summary:string;submitted_at:string;published_at:string|null;withdrawn_at:string|null;reviewed_at:string|null;reviewer_id:string|null;review_note:string;last_actor_id:string|null;updated_at:string}
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
   headers.set('content-type','application/json; charset=utf-8')
@@ -641,7 +641,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const slug=decodeURIComponent(publicDocumentsMatch[1])
       const property=await db.prepare("SELECT id FROM properties WHERE slug=? AND status='published'").bind(slug).first<{id:string}>()
       if(!property)return fail('Property not found or no longer available.',404)
-      const result=await db.prepare("SELECT d.id,d.document_type AS documentType,d.display_label AS label,d.file_extension AS fileExtension,d.size_bytes AS sizeBytes,d.submitted_at AS submittedAt,d.published_at AS publishedAt,d.review_status AS reviewStatus FROM property_documents d WHERE d.property_id=? AND d.document_role='public_copy' AND d.visibility='public' AND d.processing_status='stored' ORDER BY d.published_at DESC LIMIT 10").bind(property.id).all<Record<string,unknown>>()
+      const result=await db.prepare("SELECT d.id,d.document_type AS documentType,d.display_label AS label,d.file_extension AS fileExtension,d.size_bytes AS sizeBytes,d.submitted_at AS submittedAt,d.published_at AS publishedAt,d.review_status AS reviewStatus,d.public_review_summary AS reviewSummary FROM property_documents d WHERE d.property_id=? AND d.document_role='public_copy' AND d.visibility='public' AND d.processing_status='stored' ORDER BY d.published_at DESC LIMIT 10").bind(property.id).all<Record<string,unknown>>()
       if(!env.R2&&result.results.length)return fail('Property document storage is temporarily unavailable.',503)
       return ok(result.results)
     }
@@ -659,7 +659,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         try{await db.prepare("INSERT INTO property_document_events(id,document_id,property_id,actor_id,event_type,prior_state,new_state,note,created_at) VALUES(?,?,?,?, 'private_download',?,?,?,?)").bind(uuid(),doc.id,doc.property_id,viewer.id,doc.visibility,doc.review_status,'Authorized moderator download of a non-public document.',nowIso()).run()}
         catch{return fail('The access audit could not be recorded. Retry later.',503)}
       }
-      const download=url.searchParams.get('download')==='1'||!isPublic||doc.content_type==='application/pdf'
+      const download=url.searchParams.get('download')==='1'||!isPublic
       const headers=new Headers({'content-type':download?'application/octet-stream':doc.content_type,'content-disposition':(download?'attachment':'inline')+'; filename="zameenhub-property-document'+doc.file_extension+'"','cache-control':'private, no-store, max-age=0','pragma':'no-cache','x-content-type-options':'nosniff','x-frame-options':'DENY','referrer-policy':'no-referrer','cross-origin-resource-policy':'same-origin','content-security-policy':"default-src 'none'; sandbox"})
       return new Response(object.body,{status:200,headers})
     }
@@ -731,18 +731,18 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const role=clean(request.headers.get('x-document-role'),40);if(!isPropertyDocumentRole(role))return fail('Choose private original or redacted public copy.')
       const rawLabel=decodeDocumentHeader(request.headers.get('x-document-label'));if(rawLabel===null)return fail('Document label metadata is malformed.')
       const label=sanitizeDocumentLabel(rawLabel,DOCUMENT_TYPE_LABELS[kind]);if(!label)return fail('Use a document label between 2 and 100 characters.')
-      const hash=await sha256Hex(read.bytes),prior=await db.prepare('SELECT COUNT(*) AS total FROM property_documents WHERE sha256=?').bind(hash).first<{total:number}>()
-      const duplicate=Number(prior?.total||0)>0,id=uuid(),objectKey='property-documents/'+uuid(),submitted=nowIso()
+      const hash=await sha256Hex(read.bytes),id=uuid(),objectKey='property-documents/'+uuid(),submitted=nowIso()
       try{
         await env.R2.put(objectKey,read.bytes,{httpMetadata:{contentType:'application/octet-stream',cacheControl:'private, no-store',contentDisposition:'attachment'},customMetadata:{documentId:id}})
-        const statements=[db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,possible_duplicate,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'private','stored','pending',?,'',?,?)").bind(id,propertyId,user.id,role,kind,label,format.extension,format.contentType,read.bytes.byteLength,hash,objectKey,duplicate?1:0,submitted,user.id,submitted)]
-        if(duplicate)statements.push(db.prepare('UPDATE property_documents SET possible_duplicate=1 WHERE sha256=?').bind(hash))
+        const statements=[db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,possible_duplicate,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,'private','stored','pending',?,'',?,?)").bind(id,propertyId,user.id,role,kind,label,format.extension,format.contentType,read.bytes.byteLength,hash,objectKey,submitted,user.id,submitted),db.prepare('UPDATE property_documents SET possible_duplicate=1 WHERE sha256=? AND (SELECT COUNT(*) FROM property_documents WHERE sha256=?)>1').bind(hash,hash)]
         await db.batch(statements)
       }catch{
         try{await env.R2.delete(objectKey)}catch{try{await db.prepare('INSERT OR IGNORE INTO property_document_object_cleanup(object_key,created_at) VALUES(?,?)').bind(objectKey,nowIso()).run()}catch{}}
         return fail('The document could not be securely recorded. Retry; any failed object cleanup remains private.',503)
       }
       await flushDocumentObjectCleanup(db,env.R2)
+      const saved=await db.prepare('SELECT possible_duplicate FROM property_documents WHERE id=?').bind(id).first<{possible_duplicate:number}>()
+      const duplicate=Number(saved?.possible_duplicate||0)===1
       return ok({id,label,documentRole:role,visibility:'private',possibleDuplicate:duplicate,message:role==='private_original'?'Private original stored; it can never be published.':'Redacted public copy stored privately; it remains private until explicitly published.'},201)
     }
     const ownerDocumentMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/documents\/([^/]+)$/)
@@ -950,12 +950,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review property documents.',403)
       if(!await authLimit(request,db,'property-document-review',30)||!await limited(db,'property-document-review-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid document review.')
-      const status=clean(input.reviewStatus,20),note=clean(input.reviewNote,1200),documentId=decodeURIComponent(documentReviewMatch[1])
-      if(!['reviewed','inconclusive'].includes(status)||note.trim().length<20)return fail('Choose Reviewed or Inconclusive and record at least 20 characters of specific review notes.')
+      const status=clean(input.reviewStatus,20),note=clean(input.reviewNote,1200),publicSummary=clean(input.publicSummary,280),documentId=decodeURIComponent(documentReviewMatch[1])
+      if(!['reviewed','inconclusive'].includes(status)||note.trim().length<20||publicSummary.trim().length<15)return fail('Choose Reviewed or Inconclusive, provide 20+ characters of internal notes and a 15–280 character public summary of the limited checks performed.')
       const current=await db.prepare('SELECT review_status,updated_at FROM property_documents WHERE id=?').bind(documentId).first<{review_status:string;updated_at:string}>()
       if(!current)return fail('Document not found.',404)
       if(current.review_status===status)return fail('This document already has that review status. Refresh the queue.',409)
-      const timestamp=nowIso(),result=await db.prepare("UPDATE property_documents SET review_status=?,reviewed_at=?,reviewer_id=?,review_note=?,last_actor_id=?,updated_at=? WHERE id=? AND review_status=? AND updated_at=?").bind(status,timestamp,user.id,note,user.id,timestamp,documentId,current.review_status,current.updated_at).run()
+      const timestamp=nowIso(),result=await db.prepare("UPDATE property_documents SET review_status=?,reviewed_at=?,reviewer_id=?,review_note=?,public_review_summary=?,last_actor_id=?,updated_at=? WHERE id=? AND review_status=? AND updated_at=?").bind(status,timestamp,user.id,note,publicSummary,user.id,timestamp,documentId,current.review_status,current.updated_at).run()
       if(!result.meta.changes)return fail('Document changed while being reviewed. Refresh the queue and inspect it again.',409)
       return ok({id:documentId,reviewStatus:status,auditRecorded:true,message:status==='reviewed'?'Review recorded; it does not guarantee authenticity or legal title.':'Review recorded as inconclusive.'})
     }
