@@ -31,7 +31,7 @@ Current upload endpoints:
 - POST /api/account/profile-image — authenticated profile photo upload.
 - PATCH /api/account/profile with an empty profileImageUrl — remove the current profile photo.
 
-The Worker accepts JPEG, PNG and WebP only, checks file signatures, enforces an 8 MiB per-file limit, applies ownership checks, and stores ImageKit file IDs/paths and MIME/size metadata in D1. Property listings are capped at five images. Failed D1 writes are compensated by a provider delete attempt; failed provider deletes are queued for retry in imagekit_cleanup_queue.
+The Worker accepts JPEG, PNG and WebP only, checks file signatures, enforces an 8 MiB per-file limit, applies ownership checks, and stores ImageKit file IDs/paths and MIME/size metadata in D1. Property listings are capped at five images. Failed D1 writes are compensated by a provider delete attempt; failed provider deletes are queued for retry in imagekit_cleanup_queue; a scheduled Worker event retries due entries every 15 minutes.
 
 The browser uses multipart FormData and does not receive the private key. ImageKit transformation URLs are applied only to ImageKit-hosted images; unrelated editorial artwork remains unchanged.
 

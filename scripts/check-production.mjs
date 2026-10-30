@@ -100,6 +100,7 @@ for (const marker of ['mfa_enabled','mfa_secret_ciphertext','mfa_recovery_codes'
   if (!read('migrations/0003_security_mfa_ai.sql').includes(marker)) errors.push('Existing MFA migration marker missing: ' + marker)
 }
 if (!wrangler.includes('run_worker_first = ["/api/*"]')) errors.push('Worker API routing must precede SPA asset fallback')
+if (!wrangler.includes('crons = ["*/15 * * * *"]') || !worker.includes('async scheduled(') || !worker.includes('retryImageKitCleanup(env.DB, env)')) errors.push('ImageKit orphan cleanup must have a scheduled 15-minute retry handler')
 if (wrangler.includes('RESEND_API_KEY')) errors.push('RESEND_API_KEY must be stored as a Worker Secret, not in wrangler.toml')
 if (!read('public/_headers').includes('Strict-Transport-Security:')) errors.push('Static deployment headers are missing HSTS')
 if (!read('src/account-security.tsx').includes('/api/account/delete')

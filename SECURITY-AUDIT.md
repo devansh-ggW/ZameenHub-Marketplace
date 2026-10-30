@@ -20,7 +20,7 @@
 - Each property upload is authenticated and scoped to a property owned by that user. Profile photo upload is authenticated and scoped to the current session user.
 - Uploads have an 8 MiB per-file limit, unpredictable filenames, five-image property cap and D1 metadata for ImageKit file ID/path, MIME type, size and uploader.
 - Worker verifies the returned provider URL host/path against the configured endpoint before persisting the record.
-- Provider deletion is attempted when records are removed or replaced. Failures are queued in D1 for retry; account deletion queues media cleanup in the same D1 transaction as dependent-data removal.
+- Provider deletion is attempted when records are removed or replaced. Media rows and cleanup-queue entries are changed transactionally in D1; a 15-minute scheduled Worker event retries due provider deletions. Account deletion queues media cleanup in the same D1 transaction as dependent-data removal.
 - Existing URL-only media records remain readable. No legacy binary migration was performed because source ownership, access and transfer rights have not been independently established.
 
 ### Seller evidence

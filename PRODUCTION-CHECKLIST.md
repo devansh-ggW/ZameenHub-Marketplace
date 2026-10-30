@@ -23,7 +23,7 @@ This checklist is for a controlled release. The engineering branch is not deploy
 - [ ] Confirm a sixth property image is rejected by both Worker validation and D1 constraints.
 - [ ] Confirm gallery ordering and ImageKit transformations render on desktop and mobile.
 - [ ] Confirm profile photo upload and removal work.
-- [ ] Confirm provider failure and D1 failure do not leave untracked uploads; test the cleanup queue.
+- [ ] Confirm provider failure and D1 failure do not leave untracked uploads; test the cleanup queue and 15-minute cron retry.
 - [ ] Confirm the ImageKit private key is absent from built frontend bundles, API responses and logs.
 - [ ] Audit existing media URLs. Migrate only files whose source and transfer rights are confirmed; do not silently overwrite unavailable sources.
 
@@ -65,6 +65,7 @@ This checklist is for a controlled release. The engineering branch is not deploy
 - [ ] Test all navigation, menus, forms, dropdowns, dialogs and public/private routes.
 - [ ] Test mobile layouts, keyboard navigation, visible focus, labels, errors and reduced motion.
 - [ ] Confirm no severe console errors, unhandled promise rejections, or avoidable failed requests.
+- [ ] Verify the 15-minute ImageKit cleanup cron is active after migration 0006 is applied.
 - [ ] Verify Cloudflare Worker asset/API routing and inspect wrangler deploy --dry-run output.
 - [ ] Obtain explicit approval before remote D1 migration or production deployment.
 
