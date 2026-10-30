@@ -48,5 +48,22 @@ export function sanitizeDocumentLabel(input:unknown,fallback:string):string|null
  if(normalized.length<2||normalized.length>100)return null
  return normalized
 }
+export function sanitizePublicReviewSummary(input:unknown):string|null {
+ if(typeof input!=='string'||input.length>1000)return null
+ const summary=input.normalize('NFKC')
+  .replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,'')
+  .replace(/\s+/g,' ').trim()
+ if(summary.length<15||summary.length>280||/[<>]/.test(summary))return null
+ const commonPersonalData=[
+  /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
+  /\b[A-Z]{5}\d{4}[A-Z]\b/i,
+  /(?<!\d)(?:\d[\s-]?){11}\d(?!\d)/,
+  /(?<!\d)(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\d)/,
+  /\bhttps?:\/\//i,
+  /\bwww\./i,
+ ]
+ if(commonPersonalData.some(pattern=>pattern.test(summary)))return null
+ return summary
+}
 export function isPropertyDocumentType(input:unknown):input is PropertyDocumentType{return typeof input==='string'&&Object.prototype.hasOwnProperty.call(DOCUMENT_TYPE_LABELS,input)}
 export function isPropertyDocumentRole(input:unknown):input is PropertyDocumentRole{return input==='private_original'||input==='public_copy'}

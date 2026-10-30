@@ -1,5 +1,5 @@
 import { base32Encode, matchedTotpCounter } from './totp'
-import { DOCUMENT_TYPE_LABELS, detectDocumentFormat, isPropertyDocumentRole, isPropertyDocumentType, MAX_PROPERTY_DOCUMENT_BYTES, MAX_PROPERTY_DOCUMENTS_PER_PROPERTY, sanitizeDocumentFileName, sanitizeDocumentLabel } from './property-documents'
+import { DOCUMENT_TYPE_LABELS, detectDocumentFormat, isPropertyDocumentRole, isPropertyDocumentType, MAX_PROPERTY_DOCUMENT_BYTES, MAX_PROPERTY_DOCUMENTS_PER_PROPERTY, sanitizeDocumentFileName, sanitizeDocumentLabel, sanitizePublicReviewSummary } from './property-documents'
 export type Env = {
   DB?: D1Database
   R2?: R2Bucket
@@ -954,8 +954,8 @@ export default {
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review property documents.',403)
       if(!await authLimit(request,db,'property-document-review',30)||!await limited(db,'property-document-review-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid document review.')
-      const status=clean(input.reviewStatus,20),note=clean(input.reviewNote,1200),publicSummary=clean(input.publicSummary,280),documentId=decodeURIComponent(documentReviewMatch[1])
-      if(!['reviewed','inconclusive'].includes(status)||note.trim().length<20||publicSummary.trim().length<15)return fail('Choose Reviewed or Inconclusive, provide 20+ characters of internal notes and a 15–280 character public summary of the limited checks performed.')
+      const status=clean(input.reviewStatus,20),note=clean(input.reviewNote,1200),publicSummary=sanitizePublicReviewSummary(input.publicSummary),documentId=decodeURIComponent(documentReviewMatch[1])
+      if(!['reviewed','inconclusive'].includes(status)||note.trim().length<20||!publicSummary)return fail('Choose Reviewed or Inconclusive, add 20+ characters of internal notes, and provide a 15–280 character public summary without common personal identifiers or private URLs.')
       const current=await db.prepare('SELECT review_status,updated_at FROM property_documents WHERE id=?').bind(documentId).first<{review_status:string;updated_at:string}>()
       if(!current)return fail('Document not found.',404)
       if(current.review_status===status)return fail('This document already has that review status. Refresh the queue.',409)

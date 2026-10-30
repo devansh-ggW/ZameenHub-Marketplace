@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { MAX_PROPERTY_DOCUMENT_BYTES,detectDocumentFormat,sanitizeDocumentFileName,sanitizeDocumentLabel,isPropertyDocumentType,isPropertyDocumentRole } from '../worker/property-documents.ts'
+import { MAX_PROPERTY_DOCUMENT_BYTES,detectDocumentFormat,sanitizeDocumentFileName,sanitizeDocumentLabel,sanitizePublicReviewSummary,isPropertyDocumentType,isPropertyDocumentRole } from '../worker/property-documents.ts'
 const ascii=value=>new TextEncoder().encode(value)
 assert.equal(MAX_PROPERTY_DOCUMENT_BYTES,8*1024*1024)
 const pdf=ascii('%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\nxref\n0 1\n0000000000 65535 f\ntrailer\n<< /Size 1 >>\nstartxref\n42\n%%EOF\n')
@@ -26,6 +26,13 @@ assert.equal(sanitizeDocumentLabel('   ','Sale deed'),'Sale deed')
 assert.equal(sanitizeDocumentLabel('Approved <script> plan','Plan'),'Approved script plan')
 assert.equal(sanitizeDocumentLabel('a'.repeat(101),'Plan'),null)
 assert.equal(sanitizeDocumentLabel('A\n\tB','Plan'),'AB')
+assert.equal(sanitizePublicReviewSummary('Compared the property ID and issue date with the public registry entry.'),'Compared the property ID and issue date with the public registry entry.')
+assert.equal(sanitizePublicReviewSummary('Contact seller at owner@example.com for more.'),null)
+assert.equal(sanitizePublicReviewSummary('PAN ABCDE1234F was included in the note.'),null)
+assert.equal(sanitizePublicReviewSummary('Aadhaar 1234 5678 9012 appeared.'),null)
+assert.equal(sanitizePublicReviewSummary('Call owner at +91 98765 43210.'),null)
+assert.equal(sanitizePublicReviewSummary('See https://private.example/document.pdf'),null)
+assert.equal(sanitizePublicReviewSummary('Too short'),null)
 assert.equal(isPropertyDocumentType('sale_deed'),true)
 assert.equal(isPropertyDocumentType('administrator'),false)
 assert.equal(isPropertyDocumentRole('public_copy'),true)
