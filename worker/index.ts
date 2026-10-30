@@ -712,8 +712,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const propertyId=decodeURIComponent(propertyImageMatch[1])
       const property=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
       if(!property)return fail('Property not found in your account.',404)
-      const current=await db.prepare("SELECT COUNT(*) AS total,COALESCE(MAX(sort_order),-1)+1 AS nextOrder FROM property_media WHERE property_id=? AND media_type='image'").bind(propertyId).first<{total:number;nextOrder:number}>()
-      if((current?.total||0)>=5)return fail('A property can have no more than five photos.',409)
+      const current=await db.prepare("SELECT id,sort_order AS sortOrder FROM property_media WHERE property_id=? AND media_type='image' ORDER BY sort_order ASC,created_at ASC").bind(propertyId).all<{id:string;sortOrder:number}>()
+      if(current.results.length>=5)return fail('A property can have no more than five photos.',409)
+      // Compact gaps left by earlier removals so every remaining slot 0–4 stays reusable.
+      const normalize=current.results
+        .map((row,index)=>({row,index}))
+        .filter(({row,index})=>row.sortOrder!==index)
+        .map(({row,index})=>db.prepare('UPDATE property_media SET sort_order=? WHERE id=? AND property_id=?').bind(index,row.id,propertyId))
+      if(normalize.length)await db.batch(normalize)
+      const nextOrder=current.results.length
       const image=await readValidatedImage(request)
       if(!image)return fail('Upload a valid JPEG, PNG or WebP image no larger than 8 MB.')
       await retryImageKitCleanup(db,env)
@@ -722,7 +729,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const mediaId=uuid()
       try {
         await db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,imagekit_file_path,mime_type,file_size,uploader_id) VALUES(?,?,'image',?,?,?,?,?,?,?,?)")
-          .bind(mediaId,propertyId,uploaded.url,'Property image '+((current?.nextOrder||0)+1),current?.nextOrder||0,uploaded.fileId,uploaded.filePath,uploaded.mimeType,uploaded.size,user.id).run()
+          .bind(mediaId,propertyId,uploaded.url,'Property image '+(nextOrder+1),nextOrder,uploaded.fileId,uploaded.filePath,uploaded.mimeType,uploaded.size,user.id).run()
       } catch {
         if(!await deleteImageKitFile(env,uploaded.fileId))await queueImageKitCleanup(db,uploaded.fileId)
         return fail('The image uploaded but its listing record could not be saved. Please retry.',503)
