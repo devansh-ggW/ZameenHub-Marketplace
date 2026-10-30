@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS property_document_events (
  id TEXT PRIMARY KEY,
  document_id TEXT REFERENCES property_documents(id) ON DELETE SET NULL,
  property_id TEXT REFERENCES properties(id) ON DELETE SET NULL,
+ document_id_snapshot TEXT,
+ property_id_snapshot TEXT,
  actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
  event_type TEXT NOT NULL CHECK(event_type IN ('uploaded','published','withdrawn','reviewed','inconclusive','deleted','private_download')),
  prior_state TEXT,new_state TEXT,note TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL
@@ -69,8 +71,9 @@ CREATE TRIGGER IF NOT EXISTS property_documents_audit_review AFTER UPDATE OF rev
  VALUES(lower(hex(randomblob(16))),NEW.id,NEW.property_id,NEW.reviewer_id,CASE WHEN NEW.review_status='reviewed' THEN 'reviewed' ELSE 'inconclusive' END,OLD.review_status,NEW.review_status,NEW.review_note,NEW.reviewed_at);
 END;
 CREATE TRIGGER IF NOT EXISTS property_documents_audit_delete BEFORE DELETE ON property_documents BEGIN
- INSERT INTO property_document_events(id,document_id,property_id,actor_id,event_type,prior_state,new_state,note,created_at)
- VALUES(lower(hex(randomblob(16))),OLD.id,OLD.property_id,OLD.last_actor_id,'deleted',OLD.visibility,NULL,'Document metadata removed; private object cleanup is queued separately.',datetime('now'));
+ -- Keep stable text snapshots while avoiding foreign keys to rows being cascade-deleted.
+ INSERT INTO property_document_events(id,document_id,property_id,document_id_snapshot,property_id_snapshot,actor_id,event_type,prior_state,new_state,note,created_at)
+ VALUES(lower(hex(randomblob(16))),NULL,NULL,OLD.id,OLD.property_id,OLD.last_actor_id,'deleted',OLD.visibility,NULL,'Document metadata removed; private object cleanup is queued separately.',datetime('now'));
 END;
 CREATE TABLE IF NOT EXISTS property_document_object_cleanup(object_key TEXT PRIMARY KEY CHECK(substr(object_key,1,19)='property-documents/'),created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_property_document_object_cleanup_created ON property_document_object_cleanup(created_at ASC);

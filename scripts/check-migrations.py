@@ -269,10 +269,11 @@ def main() -> int:
     expect({"id","property_id","owner_id","document_role","document_type","content_type","size_bytes","sha256","object_key","visibility","review_status"} <= document_columns,
            "Property document metadata is incomplete")
     doc_tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    event_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_document_events)")}
+    expect({"document_id_snapshot","property_id_snapshot"} <= event_columns, "Document audit snapshot columns are missing")
     expect({"property_document_reports","property_document_events","property_document_object_cleanup"} <= doc_tables,
            "Property document support tables are missing")
 
-    print('DOC-TEST: begin document schema tests', flush=True)
     # Synthetic metadata only: no customer documents or contents are used.
     for index in range(10):
         doc_id = f"doc-{index}"
@@ -323,17 +324,12 @@ def main() -> int:
     else:
         raise AssertionError("Eleventh property document was accepted")
 
-    print('DOC-TEST: document schema tests complete; now delete the owner property', flush=True)
     # Exercise the same owned-data cleanup order as account deletion.
-    print('DELETE-TEST: before properties', flush=True)
     db.execute("DELETE FROM properties WHERE owner_id=?", ("owner",))
-    print('DELETE-TEST: after properties', flush=True)
-    print('DELETE-TEST: before inquiries', flush=True)
+    deleted_document_events = db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='deleted' AND document_id_snapshot LIKE 'doc-%' AND property_id_snapshot='published'").fetchone()[0]
+    expect(deleted_document_events == 10, "Document deletion audit snapshots did not survive owner property cascade")
     db.execute("DELETE FROM inquiries WHERE sender_id=?", ("owner",))
-    print('DELETE-TEST: after inquiries', flush=True)
-    print('DELETE-TEST: before user', flush=True)
     db.execute("DELETE FROM users WHERE id=?", ("owner",))
-    print('DELETE-TEST: after user', flush=True)
     expect(db.execute("SELECT COUNT(*) FROM users WHERE id='owner'").fetchone()[0] == 0,
            "Account row was not removed")
     expect(db.execute("SELECT COUNT(*) FROM sessions WHERE user_id='owner'").fetchone()[0] == 0,
