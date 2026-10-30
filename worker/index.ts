@@ -631,13 +631,22 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       // Keep the last-admin guard inside the atomic batch as well: two admins
       // attempting deletion at once must not both observe a count of two.
       const canDeleteAdmin=`(role<>'admin' OR (SELECT COUNT(*) FROM users WHERE role='admin')>1)`
+      // Queue all provider file deletions in the same D1 transaction as account
+      // removal. The cleanup queue has no owner FK, so it survives the cascade.
+      const ownedImageFiles=await db.prepare("SELECT pm.imagekit_file_id AS fileId FROM property_media pm JOIN properties p ON p.id=pm.property_id WHERE p.owner_id=? AND pm.imagekit_file_id IS NOT NULL").bind(user.id).all<{fileId:string}>()
+      const profileImage=await db.prepare('SELECT profile_image_file_id AS fileId FROM users WHERE id=?').bind(user.id).first<{fileId:string|null}>()
+      const cleanupStatements=[...ownedImageFiles.results.map(item=>item.fileId),...(profileImage?.fileId?[profileImage.fileId]:[])]
+        .filter((fileId,index,all)=>all.indexOf(fileId)===index)
+        .map(fileId=>db.prepare('INSERT INTO imagekit_cleanup_queue(file_id,attempts,next_attempt_at,created_at) VALUES(?,0,?,?) ON CONFLICT(file_id) DO NOTHING').bind(fileId,nowIso(),nowIso()))
       const deletion=await db.batch([
+        ...cleanupStatements,
         db.prepare(`DELETE FROM inquiries WHERE sender_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
         db.prepare(`DELETE FROM properties WHERE owner_id=? AND EXISTS (SELECT 1 FROM users WHERE id=? AND ${canDeleteAdmin})`).bind(user.id,user.id),
         db.prepare(`DELETE FROM users WHERE id=? AND ${canDeleteAdmin}`).bind(user.id),
         ...accountRateKeys.map(key=>db.prepare('DELETE FROM auth_rate_limits WHERE key_hash=? AND NOT EXISTS (SELECT 1 FROM users WHERE id=?)').bind(key,user.id))
       ])
-      if(!deletion[2]?.meta?.changes)return fail('The last administrator cannot delete this account. Assign another trusted administrator first.',409)
+      if(!deletion[cleanupStatements.length+2]?.meta?.changes)return fail('The last administrator cannot delete this account. Assign another trusted administrator first.',409)
+      await retryImageKitCleanup(db,env)
       return okWithCookies({deleted:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/properties'&&method==='GET') {
