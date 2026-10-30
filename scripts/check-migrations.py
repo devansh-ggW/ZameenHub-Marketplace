@@ -283,6 +283,8 @@ def main() -> int:
     doc_tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     event_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_document_events)")}
     expect({"document_id_snapshot","property_id_snapshot"} <= event_columns, "Document audit snapshot columns are missing")
+    report_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_document_reports)")}
+    expect({"document_id_snapshot","property_id_snapshot"} <= report_columns, "Document report snapshot columns are missing")
     expect({"property_document_reports","property_document_events","property_document_object_cleanup"} <= doc_tables,
            "Property document support tables are missing")
 
@@ -292,7 +294,7 @@ def main() -> int:
         db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at)
                       VALUES(?,?,?,?,?,?,?,?,?,?,?,'private','stored','pending',?,'',?,?)""",
                    (doc_id,"published","owner","public_copy","sale_deed","Supporting record",".pdf","application/pdf",100,format(index+1,"064x"),"property-documents/"+doc_id,now,"owner",now))
-    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='uploaded' AND property_id='published'").fetchone()[0] == 10,
+    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='uploaded' AND property_id='published' AND document_id_snapshot LIKE 'doc-%' AND property_id_snapshot='published'").fetchone()[0] == 10,
            "Private upload audit events were not created")
     try:
         db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,published_at,last_actor_id,updated_at)
