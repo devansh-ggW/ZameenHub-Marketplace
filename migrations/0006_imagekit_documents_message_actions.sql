@@ -49,3 +49,14 @@ CREATE TABLE IF NOT EXISTS property_message_hidden (
 );
 CREATE INDEX IF NOT EXISTS idx_property_message_hidden_user
   ON property_message_hidden(user_id, hidden_at);
+
+-- Provider files are deleted outside the D1 transaction. Failed deletions are
+-- queued here for bounded retry and are deliberately independent of user rows.
+CREATE TABLE IF NOT EXISTS imagekit_cleanup_queue (
+  file_id TEXT PRIMARY KEY,
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_imagekit_cleanup_due
+  ON imagekit_cleanup_queue(next_attempt_at, created_at);
