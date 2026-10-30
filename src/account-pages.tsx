@@ -4,6 +4,7 @@ import { EmptyState, PropertyCard, SectionKicker } from './components'
 import type { Property } from './lib/data'
 import { apiRequest, getSession, type AppUser } from './lib/auth'
 import { AccountSecurity } from './account-security'
+import { uploadProfileImage } from './lib/media'
 
 type AccountKind = 'profile' | 'saved' | 'my-listings' | 'review-queue'
 export function AccountPage({ kind }: { kind: AccountKind }) {
@@ -16,6 +17,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   const [workingId, setWorkingId] = useState('')
   const [notice, setNotice] = useState('')
   const [profileImageUrl, setProfileImageUrl] = useState('')
+  const [profileImageFile, setProfileImageFile] = useState<File | null>(null)
   const [savingProfile, setSavingProfile] = useState(false)
 
   async function load() {
@@ -94,9 +96,39 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   }
 
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
-  return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Review unverified public listings and handle older pending submissions. Only administrators can mark a listing Verified.' : kind === 'my-listings' ? 'New submissions publish immediately and carry an Unverified badge until an administrator checks the details.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
+  return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Review unverified public listings and handle older pending submissions. Only administrators can mark a listing Verified.' : kind === 'my-listings' ? 'New submissions remain private while pending moderation. Verification is a separate administrator review.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
     {loading ? <p className="status-message">Loading your account…</p> : <>
-      {kind === 'profile' && user && <><div className="form-card account-profile"><div className="profile-heading"><div className="profile-avatar">{profileImageUrl ? <img src={profileImageUrl} alt={user.name + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>}</div><div><h2>Account details</h2><p className="muted">Your profile image appears beside your public listing contact details.</p></div></div><p><strong>Name</strong><br />{user.name}</p><p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role}</p><form className="profile-image-form" onSubmit={async event => { event.preventDefault(); setError(''); setNotice(''); setSavingProfile(true); const result = await apiRequest<{ profileImageUrl: string }>('/api/account/profile', { method: 'PATCH', body: JSON.stringify({ profileImageUrl: profileImageUrl.trim() }) }); setSavingProfile(false); if (!result.ok) { setError(result.error); return } setProfileImageUrl(result.data.profileImageUrl || ''); setUser(current => current ? { ...current, profileImageUrl: result.data.profileImageUrl || '' } : current); setNotice('Profile image URL saved.') }}><div className="form-field"><label htmlFor="profile-image-url">Profile image URL</label><input className="form-control" id="profile-image-url" type="url" maxLength={1500} value={profileImageUrl} onChange={event => setProfileImageUrl(event.target.value)} placeholder="https://example.com/your-profile-photo.jpg" /><small>Use a public HTTPS image URL. You can clear it to use your initials. ZameenHub stores the URL in D1 and does not upload the image.</small></div><div className="listing-actions"><button className="btn btn-outline" type="button" disabled={savingProfile || !profileImageUrl} onClick={() => setProfileImageUrl('')}>Remove image</button><button className="btn btn-primary" disabled={savingProfile}>{savingProfile ? 'Saving…' : 'Save profile image'}</button></div></form>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice}</p>}<Link to="/list-property" className="btn btn-primary">List a property</Link></div><AccountSecurity user={user} /></>}
+      {kind === 'profile' && user && <><div className="form-card account-profile"><div className="profile-heading"><div className="profile-avatar">{profileImageUrl ? <img src={profileImageUrl} alt={user.name + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>}</div><div><h2>Account details</h2><p className="muted">Your profile image appears beside your public listing contact details.</p></div></div><p><strong>Name</strong><br />{user.name}</p><p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role}</p><form className="profile-image-form" onSubmit={async event => {
+          event.preventDefault(); setError(''); setNotice(''); setSavingProfile(true)
+          if (!profileImageFile) { setSavingProfile(false); setError('Choose a JPEG, PNG or WebP image first.'); return }
+          const result = await uploadProfileImage(profileImageFile)
+          setSavingProfile(false)
+          if (!result.ok) { setError(result.error); return }
+          setProfileImageUrl(result.data.profileImageUrl)
+          setProfileImageFile(null)
+          setUser(current => current ? { ...current, profileImageUrl: result.data.profileImageUrl } : current)
+          setNotice('Profile photo uploaded to ImageKit.')
+        }}>
+          <div className="form-field">
+            <label htmlFor="profile-image-file">Profile photo</label>
+            <input className="form-control" id="profile-image-file" type="file" accept="image/jpeg,image/png,image/webp"
+              onChange={event => setProfileImageFile(event.currentTarget.files?.[0] || null)} />
+            <small>JPEG, PNG or WebP. Maximum 8 MB. Your photo is uploaded through the secure ImageKit Worker endpoint.</small>
+          </div>
+          {profileImageFile && <p className="muted">{profileImageFile.name} · {(profileImageFile.size / 1024 / 1024).toFixed(2)} MB</p>}
+          <div className="listing-actions">
+            <button className="btn btn-outline" type="button" disabled={savingProfile || !profileImageUrl} onClick={async () => {
+              setError(''); setNotice(''); setSavingProfile(true)
+              const cleared = await apiRequest<{ profileImageUrl: string }>('/api/account/profile', { method: 'PATCH', body: JSON.stringify({ profileImageUrl: '' }) })
+              setSavingProfile(false)
+              if (!cleared.ok) { setError(cleared.error); return }
+              setProfileImageUrl(''); setProfileImageFile(null)
+              setUser(current => current ? { ...current, profileImageUrl: '' } : current)
+              setNotice('Profile photo removed.')
+            }}>Remove image</button>
+            <button className="btn btn-primary" disabled={savingProfile || !profileImageFile}>{savingProfile ? 'Uploading…' : 'Upload profile photo'}</button>
+          </div>
+        </form>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice}</p>}<Link to="/list-property" className="btn btn-primary">List a property</Link></div><AccountSecurity user={user} /></>}
       {kind !== 'profile' && error && <p className="status-message error" role="alert">{error}</p>}
       {kind !== 'profile' && notice && <p className="status-message success" role="status">{notice}</p>}
       {kind !== 'profile' && !error && items.length > 0 && <div className="property-grid">{items.map(item => <div className="account-property" key={item.id}>
