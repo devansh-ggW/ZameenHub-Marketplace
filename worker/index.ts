@@ -1012,11 +1012,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           ru.name AS replyToName,fu.name AS forwardedFromName
           FROM property_messages m JOIN users u ON u.id=m.sender_id
           LEFT JOIN property_messages r ON r.id=m.reply_to_message_id
+            AND NOT EXISTS (SELECT 1 FROM property_message_hidden hr WHERE hr.message_id=r.id AND hr.user_id=?)
           LEFT JOIN users ru ON ru.id=r.sender_id
           LEFT JOIN users fu ON fu.id=m.forwarded_from_sender_id
           LEFT JOIN property_message_hidden h ON h.message_id=m.id AND h.user_id=?
           WHERE m.conversation_id=? AND h.message_id IS NULL
-          ORDER BY m.created_at DESC LIMIT 100`).bind(user.id,id).all<Record<string,unknown>>()
+          ORDER BY m.created_at DESC LIMIT 100`).bind(user.id,user.id,id).all<Record<string,unknown>>()
         return ok(result.results.reverse())
       }
       if(conversation.status!=='open')return fail('This conversation is closed.',409)
@@ -1069,6 +1070,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       if(method==='POST'&&action==='forward') {
         if(record.deletedAt)return fail('A deleted message cannot be forwarded.',409)
+        const hidden=await db.prepare('SELECT 1 AS hidden FROM property_message_hidden WHERE message_id=? AND user_id=?').bind(messageId,user.id).first<{hidden:number}>()
+        if(hidden)return fail('This message is no longer available in your inbox.',404)
         const input=await body(request);if(!input)return fail('Choose a destination conversation.')
         const targetId=clean(input.targetConversationId,80)
         const target=await db.prepare("SELECT id FROM property_conversations WHERE id=? AND status='open' AND (buyer_id=? OR owner_id=?)").bind(targetId,user.id,user.id).first<{id:string}>()
