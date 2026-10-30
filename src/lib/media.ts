@@ -18,8 +18,12 @@ export function uploadPropertyImage(propertyId: string, file: File) {
   return upload('/api/my/properties/' + encodeURIComponent(propertyId) + '/images', file)
 }
 
+export type UploadedProfileImage = { profileImageUrl: string }
+
 export function uploadProfileImage(file: File) {
-  return upload('/api/account/profile-image', file)
+  const form = new FormData()
+  form.append('file', file, file.name)
+  return apiRequest<UploadedProfileImage>('/api/account/profile-image', { method: 'POST', body: form })
 }
 
 export function imageKitVariant(url: string, width: number): string {
