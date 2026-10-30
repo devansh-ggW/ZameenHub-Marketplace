@@ -29,8 +29,6 @@ export function ListingPage() {
   const [imageFiles, setImageFiles] = useState<File[]>([])
   const [documents, setDocuments] = useState<Array<Omit<PropertyDocument, 'id' | 'sourceDomain' | 'sortOrder'>>>([])
   const [uploadStatus, setUploadStatus] = useState('')
-  const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
-  const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
   const steps = ['Purpose', 'Details', 'Description', 'Review']
 
   useEffect(() => {

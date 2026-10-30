@@ -33,7 +33,7 @@ const docs = read('README.md') + read('PRODUCTION-CHECKLIST.md')
 for (const route of ['/signup','/login','/list-property','/edit-listing/:id','/messages','/review-queue','/profile']) {
   if (!app.includes(route)) errors.push('Missing application route: ' + route)
 }
-for (const endpoint of ['/api/account/profile-image','/api/my/properties/','/api/properties','/api/conversations','/api/messages/','/api/auth/mfa/setup','/api/auth/mfa/verify']) {
+for (const endpoint of ['/api/account/profile-image','propertyImageMatch','/api/properties','/api/conversations','messageActionMatch','/api/auth/mfa/setup','/api/auth/mfa/verify']) {
   if (!worker.includes(endpoint)) errors.push('Worker route marker missing: ' + endpoint)
 }
 if (worker.includes('R2Bucket') || wrangler.includes('[[r2_buckets]]') || docs.includes('Cloudflare R2')) {
@@ -83,7 +83,9 @@ if (!messages.includes("method: 'PATCH'") || !messages.includes('/for-me') || !m
 for (const marker of ['replyToMessageId','edited_at','deleted_at','property_message_hidden','forwarded_from_sender_id']) {
   if (!worker.includes(marker)) errors.push('Messaging Worker is missing action marker: ' + marker)
 }
-if (messages.includes('void loadConversations()') && messages.includes('setInterval(() => {\n      if (!document.hidden) void loadMessages(true)')) {
+const pollStart = messages.indexOf('const loadMessages')
+const pollEnd = messages.indexOf('const timer = window.setInterval', pollStart)
+if (pollStart < 0 || pollEnd < 0 || messages.slice(pollStart, pollEnd).includes('loadConversations')) {
   errors.push('Message polling must not refresh the full conversation list on each five-second message poll')
 }
 if (!messages.includes('60_000') || !messages.includes('document.hidden')) {
@@ -94,7 +96,6 @@ if (!listing.includes('uploadPropertyImage') || !listing.includes('seller-hosted
 if (!editing.includes('uploadPropertyImage') || !editing.includes('seller-hosted property evidence')
   || !editing.includes('/images/')) errors.push('Edit-listing form must manage ImageKit photos and seller evidence')
 if (!read('src/account-pages.tsx').includes('uploadProfileImage')) errors.push('Profile photo UI is not wired to ImageKit')
-if (!read('src/checklist-does-not-exist')) { /* no-op: static check remains intentionally side-effect-free */ }
 for (const marker of ['mfa_enabled','mfa_secret_ciphertext','mfa_recovery_codes']) {
   if (!read('migrations/0003_security_mfa_ai.sql').includes(marker)) errors.push('Existing MFA migration marker missing: ' + marker)
 }
