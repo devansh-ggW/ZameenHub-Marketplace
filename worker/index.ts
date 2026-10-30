@@ -684,7 +684,6 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const mediaImages=sanitizeImageUrls(input.images),documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
       if(!mediaImages||mediaImages.length)return fail('Property photos must be uploaded using the ImageKit photo uploader.')
       if(!documents)return fail('Add up to ten valid seller-hosted PDF or image evidence links using HTTPS.')
-      if(input.videoUrl!==undefined&&clean(input.videoUrl,1500))return fail('Video uploads are not available in this release.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
@@ -786,7 +785,6 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
       if(input.images!==undefined&&Array.isArray(input.images)&&input.images.some(value=>typeof value==='string'&&value.trim()))return fail('Property photos must be uploaded using the ImageKit photo uploader.')
-      if(input.videoUrl!==undefined&&clean(input.videoUrl,1500))return fail('Video uploads are not available in this release.')
       if(!documents)return fail('Add up to ten valid seller-hosted PDF or image evidence links using HTTPS.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
