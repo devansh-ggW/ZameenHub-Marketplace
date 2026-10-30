@@ -299,7 +299,7 @@ def main() -> int:
            "Document withdrawal state was not persisted")
     expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='withdrawn'").fetchone()[0] == 1,
            "Document withdrawal was not audited")
-    db.execute("UPDATE property_documents SET review_status='reviewed',reviewer_id='reviewer',reviewed_at=?,review_note=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"Checked property identifier and dates; title not legally certified.","reviewer",now))
+    db.execute("UPDATE property_documents SET review_status='reviewed',reviewer_id='second-admin',reviewed_at=?,review_note=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"Checked property identifier and dates; title not legally certified.","second-admin",now))
     expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='reviewed'").fetchone()[0] == 1,
            "Document review was not audited")
     db.execute("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)",
