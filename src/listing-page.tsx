@@ -3,6 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { SectionKicker } from './components'
 import { apiRequest, getSession } from './lib/auth'
 import { PROPERTY_AMENITIES } from './lib/property-options'
+import { uploadPropertyImage } from './lib/media'
+import type { PropertyDocument } from './lib/data'
 
 export function ListingPage() {
   const navigate = useNavigate()
@@ -24,8 +26,9 @@ export function ListingPage() {
   const [area, setArea] = useState('')
   const [description, setDescription] = useState('')
   const [amenities, setAmenities] = useState<string[]>([])
-  const [imageUrls, setImageUrls] = useState<string[]>([''])
-  const [videoUrl, setVideoUrl] = useState('')
+  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const [documents, setDocuments] = useState<Array<Omit<PropertyDocument, 'id' | 'sourceDomain' | 'sortOrder'>>>([])
+  const [uploadStatus, setUploadStatus] = useState('')
   const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
   const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
   const steps = ['Purpose', 'Details', 'Description', 'Review']
@@ -50,31 +53,88 @@ export function ListingPage() {
       setStep(2); return
     }
     setBusy(true)
-    const result = await apiRequest<{ id: string; status: 'published'; verified: false; message?: string }>('/api/properties', {
+    const result = await apiRequest<{ id: string; status: 'pending'; verified: false; message?: string }>('/api/properties', {
       method: 'POST',
-      body: JSON.stringify({ title: title.trim(), location: locationText.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: Number(bedrooms), bathrooms: Number(bathrooms), area: Number(area || 0), description: description.trim(), amenities, images: imageUrls.map(url => url.trim()).filter(Boolean), videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim() }),
+      body: JSON.stringify({
+        title: title.trim(), location: locationText.trim(), city: city.trim(), purpose, propertyType,
+        price: numericPrice, bedrooms: Number(bedrooms), bathrooms: Number(bathrooms), area: Number(area || 0),
+        description: description.trim(), amenities, documents,
+        verificationEvidenceType: 'none', verificationEvidenceUrl: '',
+      }),
     })
+    if (result.ok) {
+      let uploaded = 0
+      let uploadError = ''
+      for (const file of imageFiles) {
+        const imageResult = await uploadPropertyImage(result.data.id, file)
+        if (!imageResult.ok) { uploadError = imageResult.error; break }
+        uploaded += 1
+      }
+      setUploadStatus(uploadError
+        ? `Listing saved. ${uploaded} photo(s) uploaded; the remaining photos need retry: ${uploadError}`
+        : `${uploaded} photo(s) uploaded to ImageKit.`)
+      setNotice(result.data.message ?? 'Your listing is pending moderation.')
+    } else if (result.status === 401) {
+      navigate('/login?next=' + encodeURIComponent('/list-property'), { replace: true })
+      setError(result.error)
+    } else setError(result.error)
     setBusy(false)
-    if (result.ok) setNotice(result.data.message ?? 'Your listing is now live. It is marked Unverified until an administrator manually checks the property details.')
-    else if (result.status === 401) navigate('/login?next=' + encodeURIComponent('/list-property'), { replace: true })
-    else setError(result.error)
   }
 
   if (checking) return <main className="page-shell"><div className="container"><p className="status-message">Checking your account…</p></div></main>
   if (!authorized) return <main className="page-shell"><div className="container"><p className="status-message">Redirecting to sign in…</p></div></main>
 
   return <main className="page-shell"><div className="container">
-    <div className="page-title"><SectionKicker>Property owners</SectionKicker><h1>List a property.<br /><span className="serif">With clarity.</span></h1><p>Sign-in is required to publish a listing. Submitted properties go live immediately and are marked Unverified until an administrator manually checks the details.</p></div>
+    <div className="page-title"><SectionKicker>Property owners</SectionKicker><h1>List a property.<br /><span className="serif">With clarity.</span></h1><p>Submit your details and seller-hosted evidence links for review. Your listing appears publicly only after moderation approves it.</p></div>
     <div className="stepper">{steps.map((label, index) => <div className={'step ' + (step === index + 1 ? 'active' : '')} key={label}><span className="mono">0{index + 1}</span> {label}</div>)}</div>
     <form className="form-card" style={{ maxWidth: 820 }} onSubmit={submit}>
       {step === 1 && <><h2>What are you listing?</h2><div className="form-grid"><div className="form-field"><label htmlFor="listing-purpose">Purpose</label><select className="form-control" id="listing-purpose" value={purpose} onChange={e => setPurpose(e.target.value as 'sale' | 'rent')}><option value="sale">For sale</option><option value="rent">For rent</option></select></div><div className="form-field"><label htmlFor="listing-type">Property type</label><select className="form-control" id="listing-type" value={propertyType} onChange={e => setPropertyType(e.target.value)}>{['Apartment', 'House', 'Villa', 'Studio', 'Plot'].map(type => <option key={type}>{type}</option>)}</select></div></div></>}
       {step === 2 && <><h2>Start with the essentials.</h2><div className="form-grid"><div className="form-field"><label htmlFor="listing-title">Listing title</label><input className="form-control" id="listing-title" required minLength={6} maxLength={120} value={title} onChange={e => setTitle(e.target.value)} placeholder="A clear description of the property" /></div><div className="form-field"><label htmlFor="listing-location">Address / neighbourhood</label><input className="form-control" id="listing-location" required maxLength={240} value={locationText} onChange={e => setLocationText(e.target.value)} placeholder="Neighbourhood, city" /></div><div className="form-field"><label htmlFor="listing-city">City</label><input className="form-control" id="listing-city" required maxLength={100} value={city} onChange={e => setCity(e.target.value)} placeholder="City" /></div><div className="form-field"><label htmlFor="listing-price">Price (₹)</label><input className="form-control" id="listing-price" required type="number" min="1" step="1" value={price} onChange={e => setPrice(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-beds">Bedrooms</label><input className="form-control" id="listing-beds" type="number" min="0" max="100" value={bedrooms} onChange={e => setBedrooms(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-baths">Bathrooms</label><input className="form-control" id="listing-baths" type="number" min="0" max="100" value={bathrooms} onChange={e => setBathrooms(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-area">Area (sq ft)</label><input className="form-control" id="listing-area" type="number" min="0" max="100000000" value={area} onChange={e => setArea(e.target.value)} /></div></div></>}
       {step === 3 && <><h2>Add the details that help someone decide.</h2><div className="form-field"><label htmlFor="listing-description">Description</label><textarea className="form-control" id="listing-description" maxLength={8000} value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the layout, condition, nearby conveniences and important details." /><small>Do not include personal documents or sensitive information.</small></div><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset>
-      <section className="media-editor" aria-labelledby="property-media-heading"><h3 id="property-media-heading">Property photos and video</h3><p className="muted">Paste public HTTPS URLs. ZameenHub stores the URLs in D1; the files stay on the host you choose. No R2 bucket or file upload is used. Keep links public and stable.</p><div className="media-url-list">{imageUrls.map((imageUrl, index) => <div className="media-url-row" key={index}><div className="form-field"><label htmlFor={`property-image-${index}`}>Photo URL {index + 1}</label><input className="form-control" id={`property-image-${index}`} type="url" maxLength={1500} value={imageUrl} onChange={event => setImageUrls(current => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} placeholder="https://example.com/property-photo.jpg" /></div><button className="btn btn-outline media-remove" type="button" onClick={() => setImageUrls(current => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove photo URL ${index + 1}`}>Remove</button></div>)}</div>{imageUrls.length < 5 && <button className="btn btn-outline" type="button" onClick={() => setImageUrls(current => current.length < 5 ? [...current, ''] : current)}>Add another photo URL</button>}<div className="form-field" style={{ marginTop: 18 }}><label htmlFor="property-video">Video URL (optional)</label><input className="form-control" id="property-video" type="url" maxLength={1500} value={videoUrl} onChange={event => setVideoUrl(event.target.value)} placeholder="YouTube, Vimeo, or direct .mp4/.webm URL" /><small>One video per property. Use a public HTTPS YouTube/Vimeo link or a direct MP4, WebM, Ogg or HLS URL.</small></div></section>
-      <section className="verification-editor" aria-labelledby="verification-evidence-heading"><h3 id="verification-evidence-heading">Property verification evidence (optional)</h3><p className="muted">A public reference to an official registry or property record is optional and can help with manual verification. Never paste Aadhaar/PAN numbers, personal identity documents, or private document links.</p><div className="form-field"><label htmlFor="evidence-type">Evidence type</label><select className="form-control" id="evidence-type" value={verificationEvidenceType} onChange={event => setVerificationEvidenceType(event.target.value)}><option value="none">No evidence reference yet</option><option value="official_record">Official public land/property record</option><option value="property_tax_record">Public property-tax record</option><option value="registry_reference">Registration/registry reference</option><option value="other_public_record">Other public record</option></select></div><div className="form-field"><label htmlFor="evidence-url">Public evidence URL</label><input className="form-control" id="evidence-url" type="url" maxLength={1500} value={verificationEvidenceUrl} onChange={event => setVerificationEvidenceUrl(event.target.value)} placeholder="https://official-record-portal.example/record" /><small>The listing goes live as Unverified. This reference is private and is not shown publicly.</small></div></section></>}
-      {step === 4 && <><h2>Review before submission.</h2><p><strong>{title || 'Untitled property'}</strong></p><p className="muted">{locationText}{city ? ', ' + city : ''} · {purpose === 'sale' ? 'For sale' : 'For rent'} · ₹{Number(price || 0).toLocaleString('en-IN')}</p>{amenities.length > 0 && <p><strong>Amenities:</strong> {amenities.join(', ')}</p>}<p><strong>Photos:</strong> {imageUrls.filter(url => url.trim()).length} of 5 · <strong>Video:</strong> {videoUrl.trim() ? 'added' : 'not added'}</p><p className="status-message">Your listing will go live immediately after submission and display an Unverified badge until an administrator manually verifies it. A supplied URL is a reference for the review, not proof on its own.</p></>}
+      <section className="media-editor" aria-labelledby="property-media-heading">
+        <h3 id="property-media-heading">Property photos</h3>
+        <p className="muted">Upload up to five JPEG, PNG or WebP photos. Images are stored and delivered by ImageKit. Maximum 8 MB per photo.</p>
+        <div className="form-field">
+          <label htmlFor="property-image-files">Choose property photos</label>
+          <input className="form-control" id="property-image-files" type="file" accept="image/jpeg,image/png,image/webp" multiple
+            onChange={event => {
+              const selected = Array.from(event.currentTarget.files || [])
+              setImageFiles(current => [...current, ...selected].slice(0, 5))
+              event.currentTarget.value = ''
+            }} />
+          <small>{imageFiles.length} of 5 selected. Each file is checked again on the server.</small>
+        </div>
+        {imageFiles.map((file, index) => <div className="media-url-row" key={file.name + file.lastModified + index}>
+          <span>{file.name} · {(file.size / 1024 / 1024).toFixed(2)} MB</span>
+          <button className="btn btn-outline media-remove" type="button" onClick={() => setImageFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+        </div>)}
+      </section>
+      <section className="verification-editor" aria-labelledby="seller-documents-heading">
+        <h3 id="seller-documents-heading">Seller-hosted property evidence</h3>
+        <p className="muted">Add links to PDFs or images hosted on your own website or another website you control. Buyers open the original source themselves. ZameenHub does not download, host or legally authenticate these documents.</p>
+        {documents.map((document, index) => <div className="form-grid" key={index}>
+          <div className="form-field"><label htmlFor={`seller-doc-type-${index}`}>Document format</label>
+            <select className="form-control" id={`seller-doc-type-${index}`} value={document.type}
+              onChange={event => setDocuments(current => current.map((item, i) => i === index ? { ...item, type: event.target.value as 'pdf' | 'image' } : item))}>
+              <option value="pdf">PDF</option><option value="image">Image</option>
+            </select>
+          </div>
+          <div className="form-field"><label htmlFor={`seller-doc-description-${index}`}>Description</label>
+            <input className="form-control" id={`seller-doc-description-${index}`} maxLength={180} minLength={3} required value={document.description}
+              onChange={event => setDocuments(current => current.map((item, i) => i === index ? { ...item, description: event.target.value } : item))} placeholder="e.g. Property tax receipt" />
+          </div>
+          <div className="form-field full"><label htmlFor={`seller-doc-url-${index}`}>Original HTTPS link</label>
+            <input className="form-control" id={`seller-doc-url-${index}`} type="url" maxLength={1500} required value={document.url}
+              onChange={event => setDocuments(current => current.map((item, i) => i === index ? { ...item, url: event.target.value } : item))} placeholder="https://your-website.com/property-document.pdf" />
+          </div>
+          <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.filter((_, i) => i !== index))}>Remove evidence link</button>
+        </div>)}
+        {documents.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length < 10 ? [...current, { type: 'pdf', description: '', url: '' }] : current)}>Add document link</button>}
+        <p className="muted">Use direct links that open on your source website. HTTPS is required. Do not share Aadhaar/PAN or another person's private identity information.</p>
+      </section></>}
+      {step === 4 && <><h2>Review before submission.</h2><p><strong>{title || 'Untitled property'}</strong></p><p className="muted">{locationText}{city ? ', ' + city : ''} · {purpose === 'sale' ? 'For sale' : 'For rent'} · ₹{Number(price || 0).toLocaleString('en-IN')}</p>{amenities.length > 0 && <p><strong>Amenities:</strong> {amenities.join(', ')}</p>}<p><strong>Photos:</strong> {imageFiles.length} of 5 · <strong>Evidence links:</strong> {documents.length} of 10</p><p className="status-message">Your listing will be pending moderation after submission. Evidence links remain on their original website; adding them does not mean ZameenHub has authenticated them.</p></>}
       {error && <p className="status-message error" role="alert">{error}</p>}
-      {notice && <div className="status-message success" role="status">{notice} <a href="/my-listings">View my listings</a></div>}
+      {notice && <div className="status-message success" role="status">{notice} {uploadStatus && <span>{uploadStatus} </span>}<a href="/my-listings">View my listings</a></div>}
       <div className="listing-actions"><button className="btn btn-outline" type="button" disabled={step === 1 || busy} onClick={() => setStep(Math.max(1, step - 1))}>Back</button>{!notice && <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Submitting…' : step === 4 ? 'Publish listing' : 'Continue'}</button>}</div>
     </form>
   </div></main>
