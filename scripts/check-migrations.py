@@ -292,7 +292,7 @@ def main() -> int:
         db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at)
                       VALUES(?,?,?,?,?,?,?,?,?,?,?,'private','stored','pending',?,'',?,?)""",
                    (doc_id,"published","owner","public_copy","sale_deed","Supporting record",".pdf","application/pdf",100,format(index+1,"064x"),"property-documents/"+doc_id,now,"owner",now))
-    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='uploaded'").fetchone()[0] == 10,
+    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='uploaded' AND property_id='published'").fetchone()[0] == 10,
            "Private upload audit events were not created")
     try:
         db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,published_at,last_actor_id,updated_at)
