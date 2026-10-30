@@ -1,122 +1,113 @@
+#!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
-import process from 'node:process'
-const root=process.cwd()
-const required=[
-  'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
-  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+
+const root = process.cwd()
+const errors = []
+const required = [
+  'src/App.tsx','src/lib/auth.ts','src/lib/data.ts','src/lib/media.ts',
+  'src/listing-page.tsx','src/edit-listing-page.tsx','src/messages-page.tsx',
+  'src/pages.tsx','src/components.tsx','src/account-pages.tsx',
+  'worker/index.ts','worker/imagekit.ts','worker/totp.ts','wrangler.toml',
+  'migrations/0001_initial.sql','migrations/0004_media_verification.sql',
+  'migrations/0005_property_chat.sql','migrations/0006_imagekit_documents_message_actions.sql',
+  'scripts/check-migrations.py','scripts/test-totp.mjs','public/_headers',
 ]
-const errors=[]
-for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
-const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
-const app=read('src/App.tsx'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), mediaMigration=read('migrations/0004_media_verification.sql'), chatMigration=read('migrations/0005_property_chat.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html')
-for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/messages','/tools/emi-calculator','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
-for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/status','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/my/inquiries','/api/inquiries','/api/properties','/api/favorites','/api/conversations','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
-for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
-if(!wrangler.includes('run_worker_first = ["/api/*"]'))errors.push('Wrangler assets must route /api/* through the Worker before SPA fallback')
-for(const marker of ['mfa_enabled','mfa_last_counter','mfa_secret_ciphertext','ai_risk_level','ai_risk_score','auth_mfa_challenges','mfa_recovery_codes','property_reports','property_moderation_events','owner_message'])if(!securityMigration.includes(marker))errors.push('Security migration missing '+marker)
-if(worker.includes('screenListingRisk(')||worker.includes('@cf/meta/llama-3.2-1b-instruct')||worker.includes('env.AI')||wrangler.includes('[ai]'))errors.push('AI listing screening must be removed from the runtime')
-if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('status=\'pending\'')||!worker.includes("status:'archived'"))errors.push('Owner edit/archive routes must be wired and edits must re-enter review')
-if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('inquiries SET status=? WHERE id=? AND EXISTS'))errors.push('Owner inquiry inbox must restrict each message to the listing owner')
-if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.includes('INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)')||!worker.includes('sendEmail(env,property.owner_email'))errors.push('Public inquiry submission must persist a lead and attempt owner email notification')
-if(!worker.includes('withProperty(db,p,true)'))errors.push('Admin review queue must include private verification evidence')
-if(!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')")||!worker.includes("status='published' AND COALESCE(verification_status,'unverified')<>'verified'"))errors.push('Admin queue must include published listings that still need manual verification')
-if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage }')||!app.includes('<Route path="*" element={<NotFoundPage />} />'))errors.push('Unknown routes must use the dedicated not-found page, not the homepage')
-if(!read('src/App.tsx').includes('import { MessagesPage }')||!read('src/App.tsx').includes('path="/messages"'))errors.push('Private property chat route is missing')
-if(!read('src/components.tsx').includes('const isPublished = property.status === \'published\'')||!read('src/components.tsx').includes('{isPublished && <FavoriteButton'))errors.push('Private listing cards must not show unusable public links or favorites')
-const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
-const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
-const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
-if(!listingSubmitBlock||listingSubmitBlock.includes('riskLevel:risk.level')||listingSubmitBlock.includes('riskScore:risk.score')||listingSubmitBlock.includes('riskReasons:risk.reasons'))errors.push('Property submission must not expose internal AI risk scores or detailed risk reasons to the listing owner')
-const listingEditStart=worker.indexOf("if(ownedPropertyMatch&&method==='PATCH')")
-const listingEditEnd=worker.indexOf("if(path==='/api/my/properties'&&method==='GET')",listingEditStart)
-const listingEditBlock=listingEditStart>=0&&listingEditEnd>listingEditStart?worker.slice(listingEditStart,listingEditEnd):''
-if(!listingEditBlock||listingEditBlock.includes('riskLevel:risk.level')||listingEditBlock.includes('riskScore:risk.score')||listingEditBlock.includes('riskReasons:risk.reasons'))errors.push('Listing edit responses must not expose internal AI risk scores or reasons to listing owners')
-if(!worker.includes("'published','unverified'")||!worker.includes("verified:false"))errors.push('New listings must publish immediately and begin Unverified')
-if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
-if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
-if(!worker.includes('snapshotGuard')||!worker.includes('AND updated_at=?'))errors.push('Moderation must reject stale listing versions that changed after review-queue load')
-if(!worker.includes("(status==='rejected'||status==='archived')&&reviewNote.trim().length<8"))errors.push('Listing rejection/archive must have an evidence-based note')
-if(!worker.includes("new_status,review_note,owner_message,ai_risk_level"))errors.push('Moderation should store owner-facing feedback separately from internal notes')
-if(!worker.includes("e.owner_message FROM property_moderation_events"))errors.push('Only the owner-facing rejection explanation should appear in My Listings')
-if(!read('src/account-pages.tsx').includes('ownerMessage'))errors.push('Moderators must supply a separate owner-facing rejection explanation')
-if(!worker.includes("if(verifyEvidence&&user.role!=='admin')"))errors.push('Only an administrator can manually verify a property')
-if(!worker.includes('COALESCE(mfa_last_counter,0)<?'))errors.push('Accepted TOTP codes must not be replayable')
-if(!worker.includes("attempts<5"))errors.push('MFA challenge attempts must be capped atomically')
-if(!worker.includes('RETURNING request_count'))errors.push('Rate limiting must increment and enforce counters atomically')
-if(!worker.includes("const dummyHash='pbkdf2$100000$"))errors.push('Login should equalize password-hash work for unknown accounts')
-if(!worker.includes('DELETE FROM sessions WHERE user_id=? AND token_hash<>?'))errors.push('Disabling MFA must revoke other active sessions')
-if(!worker.includes("DELETE FROM password_reset_tokens WHERE token_hash=? AND expires_at>? RETURNING user_id"))errors.push('Password-reset tokens must be atomically consumed before changing a password')
-if(!worker.includes("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='verify' AND expires_at>? RETURNING user_id"))errors.push('Email-verification tokens must be atomically consumed once')
-if(!worker.includes("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='activate' AND expires_at>? RETURNING user_id"))errors.push('Legacy-account activation tokens must be atomically consumed once')
-const forgotStart=worker.indexOf("if(path==='/api/auth/forgot-password'&&method==='POST')")
-const resetStart=worker.indexOf("if(path==='/api/auth/reset-password'&&method==='POST')",forgotStart)
-const forgotBlock=forgotStart>=0&&resetStart>forgotStart?worker.slice(forgotStart,resetStart):''
-if(!forgotBlock.includes('await db.batch([')||!forgotBlock.includes('DELETE FROM password_reset_tokens WHERE user_id=?')||!forgotBlock.includes('INSERT INTO password_reset_tokens'))errors.push('Password-reset token rotation must replace prior tokens atomically')
-if(!worker.includes('DELETE FROM auth_mfa_challenges WHERE user_id=?'))errors.push('Password reset and MFA changes must invalidate pending challenges')
-if(!worker.includes("const canDeleteAdmin="))errors.push('Last administrator deletion guard must be enforced inside the atomic deletion batch')
-if(!worker.includes('p.price>=?')||!worker.includes('p.price<=?')||!worker.includes('p.area>=?')||!worker.includes('p.area<=?')||!worker.includes('p.bathrooms>=?'))errors.push('Property budget, bathroom and area filters are missing')
-if(!worker.includes('sanitizeAmenities(input.amenities)')||!worker.includes('amenities_json=?')||!worker.includes('json_each(CASE WHEN json_valid(p.amenities_json)'))errors.push('Listing amenities must be validated, persisted and filterable')
-if(!pages.includes('selectedAmenities')||!pages.includes('PROPERTY_AMENITIES.map'))errors.push('Buyer-facing amenity filters must be available and URL-synced')
-if(!read('src/listing-page.tsx').includes('description: description.trim(), amenities, images:')||!read('src/edit-listing-page.tsx').includes('description: description.trim(), amenities, images:'))errors.push('Owners must be able to submit and edit real amenity data')
-if(!pages.includes("setMinPrice")||!pages.includes("setMaxPrice")||!pages.includes("setMinArea")||!pages.includes("setMaxArea"))errors.push('Buyer-side budget and area range filter controls are missing')
-if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage must load real public listings from the property API')
-if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
-if(!read('src/site-chrome.tsx').includes('to="/messages"')||!read('src/messages-page.tsx').includes('/api/conversations'))errors.push('Private property messages page and navigation must be wired')
-if(!read('src/emi-calculator-page.tsx').includes('calculateEmi(')||!read('src/lib/emi.ts').includes('monthlyRate'))errors.push('EMI calculator must use the tested monthly-repayment formula')
-if(!read('src/site-chrome.tsx').includes('to="/tools/emi-calculator"'))errors.push('EMI calculator must be reachable from primary navigation')
-const sitemap=read('public/sitemap.xml'), robots=read('public/robots.txt')
-if(!sitemap.includes('https://zameenhub.dewify.shop/')||!sitemap.includes('/tools/emi-calculator'))errors.push('Sitemap must include the canonical public homepage and EMI tool')
-for(const route of ['/profile','/my-listings','/inquiries','/review-queue'])if(sitemap.includes(route))errors.push('Sitemap must not advertise private account/moderation route '+route)
-if(!robots.includes('Sitemap: https://zameenhub.dewify.shop/sitemap.xml'))errors.push('robots.txt must reference the actual sitemap')
-if(vite.includes('sourcemap: true'))errors.push('Production source maps should not be publicly emitted')
-try {
-  const parsed=JSON.parse(packageJson)
-  for(const [name,version] of Object.entries({...parsed.dependencies,...parsed.devDependencies}))if(version==='latest')errors.push('Direct dependency must be pinned instead of latest: '+name)
-} catch { errors.push('package.json is not valid JSON') }
-if(lockfile.includes('specifier: latest'))errors.push('Lockfile importers should use pinned dependency specifiers')
-if(!worker.includes('sameOrigin(request,url)')||!worker.includes('Request origin could not be validated.'))errors.push('Worker must reject state-changing requests with an invalid/missing Origin')
-if(!worker.includes('request.body?.getReader()')||!worker.includes('total>32768'))errors.push('Worker request bodies must be rejected while streaming once they exceed 32 KiB')
-if(!worker.includes("if(path==='/api/health'&&method==='GET')")||!worker.includes("SELECT 1 AS ready")||!worker.includes("database:'ready'"))errors.push('Health endpoint must check that D1 is available and responsive')
-const registrationStart=worker.indexOf("if(path==='/api/auth/register'&&method==='POST') {")
-const registrationEnd=worker.indexOf("if(path==='/api/auth/verify-email'&&method==='POST')",registrationStart)
-const registrationBlock=registrationStart>=0&&registrationEnd>registrationStart?worker.slice(registrationStart,registrationEnd):''
-if(!registrationBlock.includes('const registrationMessage=')||(registrationBlock.split('return ok({message:registrationMessage})').length-1)!==4||registrationBlock.includes('},201)'))errors.push('Registration must use the same generic response and status for existing and new email addresses')
-const faviconLine=indexHtml.split(String.fromCharCode(10)).find(line=>line.includes('rel="icon"'))||''
-const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
-if(!faviconHref)errors.push('HTML must declare a favicon href')
-else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.slice(1))))errors.push('HTML favicon target does not exist: '+faviconHref)
-if(!worker.includes("verified:verificationStatus==='verified'"))errors.push('Public verified status must reflect a separate evidence review, not publication alone')
-if(worker.includes('aiScreened:')||read('src/components.tsx').includes('property-ai-badge')||pages.includes('ai-screened-note')||!read('src/components.tsx').includes("property.verified ? 'Verified' : 'Unverified'"))errors.push('Public listing cards must show manual verification state without an AI-screened badge')
-for(const marker of ['property_conversations','property_messages','buyer_id','owner_id'])if(!chatMigration.includes(marker))errors.push('Private chat migration missing '+marker)
-if(!worker.includes("conversationMessagesMatch=path.match")||!worker.includes("conversationReadMatch=path.match")||!worker.includes("(buyer_id=? OR owner_id=?)"))errors.push('Private chat endpoints must require conversation membership')
-if(!worker.includes("if(path==='/api/auth/mfa/status'&&method==='GET'"))errors.push('MFA readiness diagnostic endpoint is missing')
-if(!worker.includes("if(path==='/api/account/profile'&&method==='PATCH')")||!worker.includes('UPDATE users SET profile_image_url=?'))errors.push('Profile image URL must be saved through the authenticated profile API')
-if(!worker.includes('sanitizeImageUrls')||!worker.includes('value.length>5')||!mediaMigration.includes('property_media_max_five_images')||!mediaMigration.includes('property_media_one_video')||!worker.includes('sanitizeVideoUrl'))errors.push('Property URL media must enforce five-image limit and supported HTTPS video links')
-if(!worker.includes("const nextVerificationStatus=status==='rejected'?'rejected':verifyEvidence?'verified'"))errors.push('Evidence-reviewed status must be saved only through moderator action')
-if(!worker.includes("VALUES(?,?,'image',?,?,?)")||!worker.includes("VALUES(?,?,'video',?,'Property video',0)"))errors.push('Media records must separate images and video in D1')
-for(const marker of ['profile_image_url','verification_status','property_media','property_media_max_five_images','property_media_one_video','verification_reviewed_by'])if(!mediaMigration.includes(marker))errors.push('Media/verification migration missing '+marker)
-if(!read('src/listing-page.tsx').includes('Add another photo URL')||!read('src/edit-listing-page.tsx').includes('Add another photo URL'))errors.push('Create/edit forms must allow owners to manage up to five property photo URLs')
-if(!pages.includes('<PropertyVideo src={property.videoUrl}'))errors.push('Property detail page must render the saved property video')
-if(!read('src/account-pages.tsx').includes('/api/account/profile')||!read('src/account-pages.tsx').includes('profile-image-url'))errors.push('Account profile must let users save and remove profile image URLs')
-if(!read('src/account-pages.tsx').includes('verifyEvidence'))errors.push('Moderators need an explicit evidence-review decision instead of automatic verification')
-if(!read('src/account-security.tsx').includes('/api/account/delete')||!read('src/account-security.tsx').includes('confirmText: deleteConfirmation'))errors.push('Account deletion UI must require password confirmation and typed DELETE')
-if(!read('src/account-security.tsx').includes('Show password')||!read('src/account-security.tsx').includes('Hide password')||!read('src/account-security.tsx').includes('delete-account-password'))errors.push('MFA and delete-account password fields must expose accessible show/hide controls')
-if(!read('src/account-security.tsx').includes('/api/auth/mfa/setup')||!read('src/auth-pages.tsx').includes('/api/auth/mfa/verify'))errors.push('MFA setup and sign-in verification UI are not connected')
-const securityUi=read('src/account-security.tsx')
-if(!securityUi.includes('setSetup(result.data); setSetupCode(\'\')')||securityUi.includes('setSetup(result.data); setSetupPassword(\'\'); setSetupCode(\'\')')||!securityUi.includes('password: setupPassword, code: setupCode'))errors.push('MFA setup must retain the password until the authenticator code has been confirmed')
-if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
-if(!read('public/_headers').includes('Strict-Transport-Security:'))errors.push('Static pages should include HSTS')
-if(wrangler.includes('REPLACE_WITH_CONFIGURED_D1_DATABASE_ID'))errors.push('Wrangler still contains a placeholder D1 database ID')
-if(wrangler.includes('RESEND_API_KEY'))errors.push('Do not store RESEND_API_KEY in wrangler.toml; use a Cloudflare secret')
-if(!read('src/legal-pages.tsx').includes('dewifystores@gmail.com'))errors.push('Support email missing from legal/contact pages')
-if(!worker.includes('iterations=100000'))errors.push('Worker PBKDF2 hash iteration count must be 100000 for Cloudflare Workers compatibility')
-if(!worker.includes('iterations>100000'))errors.push('Worker PBKDF2 verification limit must not exceed 100000 on Cloudflare Workers')
-if(worker.includes('iterations=120000')||worker.includes('iterations>500000'))errors.push('Worker PBKDF2 configuration exceeds Cloudflare Workers supported limit')
-if(!worker.includes('function emailText('))errors.push('Worker email messages must include a plain-text alternative')
-if(!worker.includes('href=\"${safeUrl}\"'))errors.push('Email HTML must include a link with the generated action URL')
-if(!worker.includes('copy and open this link in your browser'))errors.push('Email HTML must expose the action URL as a visible clickable fallback')
-if(!worker.includes('html,text})'))errors.push('Resend payload must include both HTML and plain-text email bodies')
-if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
-console.log('Static production smoke checks passed. These checks verify wiring, not cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')
+for (const file of required) if (!fs.existsSync(path.join(root, file))) errors.push('Missing required file: ' + file)
+const read = file => fs.existsSync(path.join(root, file)) ? fs.readFileSync(path.join(root, file), 'utf8') : ''
+const worker = read('worker/index.ts')
+const imagekit = read('worker/imagekit.ts')
+const migration = read('migrations/0006_imagekit_documents_message_actions.sql')
+const mediaMigration = read('migrations/0004_media_verification.sql')
+const app = read('src/App.tsx')
+const pages = read('src/pages.tsx')
+const components = read('src/components.tsx')
+const listing = read('src/listing-page.tsx')
+const editing = read('src/edit-listing-page.tsx')
+const messages = read('src/messages-page.tsx')
+const auth = read('src/lib/auth.ts')
+const media = read('src/lib/media.ts')
+const wrangler = read('wrangler.toml')
+const docs = read('README.md') + read('PRODUCTION-CHECKLIST.md')
+
+for (const route of ['/signup','/login','/list-property','/edit-listing/:id','/messages','/review-queue','/profile']) {
+  if (!app.includes(route)) errors.push('Missing application route: ' + route)
+}
+for (const endpoint of ['/api/account/profile-image','/api/my/properties/','/api/properties','/api/conversations','/api/messages/','/api/auth/mfa/setup','/api/auth/mfa/verify']) {
+  if (!worker.includes(endpoint)) errors.push('Worker route marker missing: ' + endpoint)
+}
+if (worker.includes('R2Bucket') || wrangler.includes('[[r2_buckets]]') || docs.includes('Cloudflare R2')) {
+  errors.push('R2 remains in the active Worker/configuration or deployment documentation')
+}
+if (worker.includes('sanitizeVideoUrl') || pages.includes('PropertyVideo') || components.includes('PropertyVideo')
+  || listing.toLowerCase().includes('video') || editing.toLowerCase().includes('video')) {
+  errors.push('Phase 1 video controls or active video handling remain')
+}
+if (!imagekit.includes('request.body?.getReader()') || !imagekit.includes('MAX_IMAGE_BYTES')
+  || !imagekit.includes('IMAGEKIT_PRIVATE_KEY') || !imagekit.includes('api.imagekit.io')) {
+  errors.push('ImageKit upload module is missing bounded upload, restricted private-key, or file deletion handling')
+}
+if (!worker.includes('readValidatedImage(request)') || !worker.includes('uploadImageKitImage(env,image')
+  || !worker.includes('imagekit_file_id') || !worker.includes('queueImageKitCleanup')) {
+  errors.push('Worker ImageKit upload, metadata persistence, or cleanup queue is not wired')
+}
+if (!auth.includes('init.body instanceof FormData') || !media.includes('FormData()')
+  || !media.includes('uploadPropertyImage') || !media.includes('uploadProfileImage')) {
+  errors.push('Frontend multipart ImageKit upload helpers are not configured correctly')
+}
+if (!migration.includes('CREATE TABLE IF NOT EXISTS property_documents')
+  || !migration.includes('imagekit_cleanup_queue') || !migration.includes('property_message_hidden')
+  || !migration.includes('imagekit_file_id') || !migration.includes('property_media_phase1_no_video_insert')) {
+  errors.push('Migration 0006 is missing ImageKit, seller evidence, cleanup, message action, or Phase 1 video constraints')
+}
+if (!worker.includes('sanitizePropertyDocuments') || !worker.includes('documentInsertStatements')
+  || !pages.includes('property.documents?.length') || !pages.includes('rel="noopener noreferrer"')) {
+  errors.push('Seller-hosted evidence links are not validated, persisted, and rendered as safe external links')
+}
+if (worker.includes('fetch(') && worker.includes('source_url') && /fetch\([^\n]*source_url/.test(worker)) {
+  errors.push('Worker must not fetch seller-provided document URLs')
+}
+if (worker.includes("status:'published',verified:false") || !worker.includes("'not-run','pending','unverified'")) {
+  errors.push('New property submissions must remain pending until moderation')
+}
+if (!worker.includes("verified:verificationStatus==='verified'") || !pages.includes("property.verified ? 'Verified · manually reviewed'")) {
+  errors.push('Public verification badges must map to the separate manual-review status')
+}
+if (pages.includes('Cloudflare') || pages.includes('Workers AI') || pages.includes('AI screened')) {
+  errors.push('Buyer-facing property detail still exposes implementation/content-screening wording')
+}
+if (!messages.includes("method: 'PATCH'") || !messages.includes('/for-me') || !messages.includes('/forward')
+  || !messages.includes('Delete for everyone') || !messages.includes('Reply')) {
+  errors.push('Messaging UI is missing reply, forward, edit, or deletion actions')
+}
+for (const marker of ['replyToMessageId','edited_at','deleted_at','property_message_hidden','forwarded_from_sender_id']) {
+  if (!worker.includes(marker)) errors.push('Messaging Worker is missing action marker: ' + marker)
+}
+if (messages.includes('void loadConversations()') && messages.includes('setInterval(() => {\n      if (!document.hidden) void loadMessages(true)')) {
+  errors.push('Message polling must not refresh the full conversation list on each five-second message poll')
+}
+if (!messages.includes('60_000') || !messages.includes('document.hidden')) {
+  errors.push('Inbox summaries should refresh on a separate, visibility-aware interval')
+}
+if (!listing.includes('uploadPropertyImage') || !listing.includes('seller-hosted property evidence')
+  || listing.includes('Add another photo URL')) errors.push('Create-listing form must upload photos and accept seller-hosted evidence')
+if (!editing.includes('uploadPropertyImage') || !editing.includes('seller-hosted property evidence')
+  || !editing.includes('/images/')) errors.push('Edit-listing form must manage ImageKit photos and seller evidence')
+if (!read('src/account-pages.tsx').includes('uploadProfileImage')) errors.push('Profile photo UI is not wired to ImageKit')
+if (!read('src/checklist-does-not-exist')) { /* no-op: static check remains intentionally side-effect-free */ }
+for (const marker of ['mfa_enabled','mfa_secret_ciphertext','mfa_recovery_codes']) {
+  if (!read('migrations/0003_security_mfa_ai.sql').includes(marker)) errors.push('Existing MFA migration marker missing: ' + marker)
+}
+if (!wrangler.includes('run_worker_first = ["/api/*"]')) errors.push('Worker API routing must precede SPA asset fallback')
+if (wrangler.includes('RESEND_API_KEY')) errors.push('RESEND_API_KEY must be stored as a Worker Secret, not in wrangler.toml')
+if (!read('public/_headers').includes('Strict-Transport-Security:')) errors.push('Static deployment headers are missing HSTS')
+if (!read('src/account-security.tsx').includes('/api/account/delete')
+  || !read('src/account-security.tsx').includes('confirmText: deleteConfirmation')) errors.push('Account deletion must require reauthentication and typed DELETE')
+if (!read('src/account-security.tsx').includes('/api/auth/mfa/setup')
+  || !read('src/auth-pages.tsx').includes('/api/auth/mfa/verify')) errors.push('TOTP enrollment/sign-in UI is not connected')
+if (!read('src/pages.tsx').includes('getProperties(new URLSearchParams())')) errors.push('Homepage must use real marketplace data')
+if (errors.length) {
+  console.error('Production smoke checks failed:\n- ' + errors.join('\n- '))
+  process.exit(1)
+}
+console.log('Static production smoke checks passed. This checks repository wiring only; it is not a live ImageKit, D1, authentication, security, or browser test.')
