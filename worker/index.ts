@@ -736,10 +736,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const row=await db.prepare("SELECT pm.id,pm.imagekit_file_id FROM property_media pm JOIN properties p ON p.id=pm.property_id WHERE pm.id=? AND pm.property_id=? AND p.owner_id=? AND pm.media_type='image'")
         .bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
       if(!row)return fail('Image not found in your listing.',404)
-      let cleanupPending=false
-      if(row.imagekit_file_id&&!await deleteImageKitFile(env,row.imagekit_file_id)){await queueImageKitCleanup(db,row.imagekit_file_id);cleanupPending=true}
-      await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=?").bind(mediaId,propertyId).run()
-      return ok({deleted:true,cleanupPending})
+      const deletionStatements:D1PreparedStatement[]=[]
+      if(row.imagekit_file_id)deletionStatements.push(
+        db.prepare('INSERT INTO imagekit_cleanup_queue(file_id,attempts,next_attempt_at,created_at) VALUES(?,0,?,?) ON CONFLICT(file_id) DO NOTHING')
+          .bind(row.imagekit_file_id,nowIso(),nowIso())
+      )
+      deletionStatements.push(db.prepare("DELETE FROM property_media WHERE id=? AND property_id=?").bind(mediaId,propertyId))
+      const deletion=await db.batch(deletionStatements)
+      if(!deletion[deletion.length-1]?.meta?.changes)return fail('The image could not be removed. Refresh and try again.',409)
+      await retryImageKitCleanup(db,env)
+      const pending=row.imagekit_file_id ? await db.prepare('SELECT 1 AS pending FROM imagekit_cleanup_queue WHERE file_id=?').bind(row.imagekit_file_id).first<{pending:number}>() : null
+      return ok({deleted:true,cleanupPending:!!pending})
     }
     const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
     if(ownedPropertyMatch&&method==='DELETE') {
@@ -749,12 +756,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string}>()
       if(!owned)return fail('Listing not found in your account.',404)
       const propertyImageRows=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE property_id=? AND media_type='image' AND imagekit_file_id IS NOT NULL").bind(id).all<{imagekit_file_id:string}>()
-      for(const image of propertyImageRows.results) {
-        if(!await deleteImageKitFile(env,image.imagekit_file_id))await queueImageKitCleanup(db,image.imagekit_file_id)
-      }
-      await retryImageKitCleanup(db,env)
-      // Delete dependent rows first. Each statement is scoped to a property that still belongs to this user.
+      const cleanupStatements=propertyImageRows.results.map(image =>
+        db.prepare('INSERT INTO imagekit_cleanup_queue(file_id,attempts,next_attempt_at,created_at) VALUES(?,0,?,?) ON CONFLICT(file_id) DO NOTHING')
+          .bind(image.imagekit_file_id,nowIso(),nowIso())
+      )
+      // Persist the cleanup work in the same D1 transaction as the media/listing
+      // deletion. This way a failed external delete never leaves a stale media row.
       const deletion=await db.batch([
+        ...cleanupStatements,
         db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
         db.prepare('DELETE FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
         db.prepare('DELETE FROM inquiries WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
@@ -766,6 +775,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         db.prepare('DELETE FROM properties WHERE id=? AND owner_id=?').bind(id,user.id)
       ])
       if(!deletion[deletion.length-1]?.meta?.changes)return fail('Listing could not be deleted. Refresh and try again.',409)
+      await retryImageKitCleanup(db,env)
       return ok({id,deleted:true,message:'Property deleted permanently. Its listing, saved entries, inquiries, reports and related chat history have been removed.'})
     }
     if(ownedPropertyMatch&&method==='GET') {
