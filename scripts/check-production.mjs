@@ -5,7 +5,7 @@ const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
   'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_property_documents.sql','worker/property-documents.ts','src/property-documents.tsx','src/document-review-page.tsx','scripts/test-property-documents.mjs','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_property_documents.sql','worker/property-documents.ts','src/property-documents.tsx','src/document-review-page.tsx','scripts/test-property-documents.mjs','worker/session-policy.ts','scripts/test-session-policy.mjs','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
@@ -127,5 +127,6 @@ if(!read('src/site-chrome.tsx').includes('to="/document-review"'))errors.push('D
 if(!read('worker/property-documents.ts').includes('startxref')||!read('worker/property-documents.ts').includes('IEND'))errors.push('Document validation must reject common truncated structures')
 if(!read('migrations/0006_property_documents.sql').includes('property_documents_max_ten')||!read('migrations/0006_property_documents.sql').includes("document_role='public_copy' OR visibility='private'"))errors.push('Document schema must constrain per-property count and keep originals private')
 if(!read('src/property-documents.tsx').includes('Upload privately')||!read('src/property-documents.tsx').includes('No automated redaction is performed'))errors.push('Document UI must explain private-by-default and redaction limitations')
+if(!worker.includes('SESSION_TTL_MINUTES')||!worker.includes('SESSION_COOKIE_MAX_AGE_SECONDS')||worker.includes('sessionCookie(token,60*24*14)'))errors.push('Session database expiry and cookie Max-Age must use shared duration constants with correct units')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
 console.log('Static production smoke checks passed. These checks verify wiring, not cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')

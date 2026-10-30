@@ -1,5 +1,6 @@
 import { base32Encode, matchedTotpCounter } from './totp'
 import { DOCUMENT_TYPE_LABELS, detectDocumentFormat, isPropertyDocumentRole, isPropertyDocumentType, MAX_PROPERTY_DOCUMENT_BYTES, MAX_PROPERTY_DOCUMENTS_PER_PROPERTY, sanitizeDocumentFileName, sanitizeDocumentLabel, sanitizePublicReviewSummary } from './property-documents'
+import { SESSION_TTL_MINUTES, SESSION_COOKIE_MAX_AGE_SECONDS } from './session-policy'
 export type Env = {
   DB?: D1Database
   R2?: R2Bucket
@@ -164,7 +165,7 @@ async function issueToken(db:D1Database,userId:string,purpose:'verify'|'activate
 }
 async function createSession(db:D1Database,userId:string) {
   const token=randomToken()
-  await db.prepare('INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)').bind(uuid(),userId,await digest(token),future(60*24*14)).run()
+  await db.prepare('INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)').bind(uuid(),userId,await digest(token),future(SESSION_TTL_MINUTES)).run()
   return token
 }
 async function body(request:Request) {
@@ -458,7 +459,7 @@ export default {
         return okWithCookies({mfaRequired:true},200,[sessionCookie('',0),mfaChallengeCookie(challenge,300)])
       }
       const token=await createSession(db,user.id)
-      return okWithCookies({user:userView(user),mfaRequired:false},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
+      return okWithCookies({user:userView(user),mfaRequired:false},200,[sessionCookie(token,SESSION_COOKIE_MAX_AGE_SECONDS),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/verify'&&method==='POST') {
       if(!await authLimit(request,db,'mfa-verify',8))return fail('Too many verification attempts. Please wait before trying again.',429)
@@ -484,7 +485,7 @@ export default {
       }
       const token=await createSession(db,record.user_id)
       await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
-      return okWithCookies({user:userView(user as UserRow)},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
+      return okWithCookies({user:userView(user as UserRow)},200,[sessionCookie(token,SESSION_COOKIE_MAX_AGE_SECONDS),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/setup'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling two-factor authentication.',401)
