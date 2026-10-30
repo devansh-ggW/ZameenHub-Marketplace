@@ -303,7 +303,7 @@ def main() -> int:
     else:
         raise AssertionError("Private original was allowed to become public")
     db.execute("UPDATE property_documents SET possible_duplicate=1 WHERE id IN ('doc-0','doc-1')")
-    expect(db.execute("SELECT COUNT(*) FROM property_documents WHERE possible_duplicate=1").fetchone()[0] == 2,
+    expect(db.execute("SELECT COUNT(*) FROM property_documents WHERE possible_duplicate=1 AND property_id='published'").fetchone()[0] == 2,
            "Duplicate-file triage flags were not persisted")
     db.execute("UPDATE property_documents SET visibility='public',published_at=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"owner",now))
     expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='published'").fetchone()[0] == 1,
