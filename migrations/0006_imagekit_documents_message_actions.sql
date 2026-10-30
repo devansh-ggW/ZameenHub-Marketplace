@@ -12,6 +12,8 @@ ALTER TABLE users ADD COLUMN profile_image_mime_type TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_property_media_imagekit_file_id
   ON property_media(imagekit_file_id) WHERE imagekit_file_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_property_media_imagekit_file_unique
+  ON property_media(imagekit_file_id) WHERE imagekit_file_id IS NOT NULL;
 
 -- Seller-hosted evidence references only. ZameenHub never fetches or rehosts
 -- these URLs; buyers open the source website directly.
@@ -60,3 +62,19 @@ CREATE TABLE IF NOT EXISTS imagekit_cleanup_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_imagekit_cleanup_due
   ON imagekit_cleanup_queue(next_attempt_at, created_at);
+
+-- Phase 1 does not accept new video media. Keep historical video rows intact
+-- for non-destructive compatibility, but prevent future inserts/updates.
+DROP TRIGGER IF EXISTS property_media_one_video;
+CREATE TRIGGER IF NOT EXISTS property_media_phase1_no_video_insert
+BEFORE INSERT ON property_media
+WHEN NEW.media_type='video'
+BEGIN
+  SELECT RAISE(ABORT, 'Video media is disabled in Phase 1');
+END;
+CREATE TRIGGER IF NOT EXISTS property_media_phase1_no_video_update
+BEFORE UPDATE OF media_type ON property_media
+WHEN NEW.media_type='video'
+BEGIN
+  SELECT RAISE(ABORT, 'Video media is disabled in Phase 1');
+END;
