@@ -17,7 +17,20 @@ type Conversation = {
   lastMessageAt: string
   unreadCount: number
 }
-type ChatMessage = { id: string; senderId: string; senderName: string; body: string; createdAt: string; readAt: string | null }
+type ChatMessage = {
+  id: string
+  senderId: string
+  senderName: string
+  body: string
+  createdAt: string
+  readAt: string | null
+  editedAt?: string | null
+  deletedAt?: string | null
+  replyToMessageId?: string | null
+  replyToBody?: string | null
+  replyToName?: string | null
+  forwardedFromName?: string | null
+}
 
 export function MessagesPage() {
   const navigate = useNavigate()
@@ -27,13 +40,19 @@ export function MessagesPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [currentUserId, setCurrentUserId] = useState('')
   const [draft, setDraft] = useState('')
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
+  const [editingMessageId, setEditingMessageId] = useState('')
+  const [forwardingMessageId, setForwardingMessageId] = useState('')
+  const [forwardTargetId, setForwardTargetId] = useState('')
   const [loading, setLoading] = useState(true)
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [sending, setSending] = useState(false)
+  const [actionBusyId, setActionBusyId] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
   const selected = useMemo(() => conversations.find(item => item.id === selectedId) ?? null, [conversations, selectedId])
+  const forwardTargets = useMemo(() => conversations.filter(item => item.id !== selectedId), [conversations, selectedId])
 
   const loadConversations = useCallback(async () => {
     const result = await apiRequest<Conversation[]>('/api/conversations')
@@ -88,9 +107,7 @@ export function MessagesPage() {
 
   useEffect(() => {
     if (!currentUserId) return
-    // The inbox summary refresh is intentionally separate from message polling.
-    // Refreshing the entire conversation list on every five-second poll caused
-    // normal reading to hit the shared-IP inbox rate limit.
+    // Inbox summaries are refreshed separately from the five-second message poll.
     const timer = window.setInterval(() => {
       if (!document.hidden) void loadConversations()
     }, 60_000)
@@ -99,9 +116,8 @@ export function MessagesPage() {
 
   function openConversation(id: string) {
     setParams({ conversation: id })
-    setDraft('')
-    setNotice('')
-    setError('')
+    setDraft(''); setReplyTo(null); setEditingMessageId(''); setForwardingMessageId('')
+    setNotice(''); setError('')
   }
 
   async function sendMessage(event: FormEvent) {
@@ -109,14 +125,47 @@ export function MessagesPage() {
     const body = draft.trim()
     if (!selectedId || !body || sending) return
     setSending(true); setError(''); setNotice('')
-    const result = await apiRequest<ChatMessage>('/api/conversations/' + encodeURIComponent(selectedId) + '/messages', {
-      method: 'POST', body: JSON.stringify({ message: body }),
-    })
+    const result = editingMessageId
+      ? await apiRequest<{ id: string; body: string; editedAt: string }>('/api/messages/' + encodeURIComponent(editingMessageId), {
+          method: 'PATCH', body: JSON.stringify({ message: body }),
+        })
+      : await apiRequest<ChatMessage>('/api/conversations/' + encodeURIComponent(selectedId) + '/messages', {
+          method: 'POST', body: JSON.stringify({ message: body, replyToMessageId: replyTo?.id }),
+        })
     setSending(false)
     if (!result.ok) { setError(result.error); return }
-    setDraft('')
+    setDraft(''); setReplyTo(null); setEditingMessageId('')
     await Promise.all([loadMessages(true), loadConversations()])
-    setNotice('Message sent.')
+    setNotice(editingMessageId ? 'Message updated.' : 'Message sent.')
+  }
+
+  async function messageAction(message: ChatMessage, action: 'hide' | 'delete') {
+    setActionBusyId(message.id); setError(''); setNotice('')
+    const result = await apiRequest<{ deleted?: boolean; hidden?: boolean }>(
+      '/api/messages/' + encodeURIComponent(message.id) + (action === 'hide' ? '/for-me' : ''),
+      { method: 'DELETE' },
+    )
+    setActionBusyId('')
+    if (!result.ok) { setError(result.error); return }
+    if (editingMessageId === message.id) { setEditingMessageId(''); setDraft('') }
+    if (replyTo?.id === message.id) setReplyTo(null)
+    await Promise.all([loadMessages(true), loadConversations()])
+    setNotice(action === 'hide' ? 'Message deleted from your inbox.' : 'Message deleted for everyone.')
+  }
+
+  async function forwardMessage() {
+    if (!forwardingMessageId || !forwardTargetId || actionBusyId) return
+    setActionBusyId(forwardingMessageId); setError(''); setNotice('')
+    const result = await apiRequest<{ id: string; conversationId: string }>(
+      '/api/messages/' + encodeURIComponent(forwardingMessageId) + '/forward',
+      { method: 'POST', body: JSON.stringify({ targetConversationId: forwardTargetId }) },
+    )
+    setActionBusyId('')
+    setForwardingMessageId(''); setForwardTargetId('')
+    if (!result.ok) { setError(result.error); return }
+    await loadConversations()
+    setNotice('Message forwarded.')
+    setParams({ conversation: forwardTargetId })
   }
 
   return <main className="page-shell messages-page"><div className="container">
@@ -141,16 +190,41 @@ export function MessagesPage() {
           <div className="chat-messages" aria-live="polite">
             {messagesLoading && messages.length === 0 ? <p className="muted">Loading messages…</p> : messages.length === 0 ? <p className="muted">Start the conversation with a useful question or detail.</p> : messages.map(message => {
               const mine = message.senderId === currentUserId
+              const deleted = !!message.deletedAt
               return <article key={message.id} className={'chat-message' + (mine ? ' mine' : '')}>
+                {message.forwardedFromName && <div className="chat-message-forwarded">Forwarded from {message.forwardedFromName}</div>}
+                {message.replyToMessageId && <div className="chat-message-reply"><strong>{message.replyToName || 'Reply'}</strong><span>{message.replyToBody || 'Original message unavailable'}</span></div>}
                 <div className="chat-message-meta"><strong>{mine ? 'You' : message.senderName}</strong><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</time></div>
                 <p>{message.body}</p>
+                {message.editedAt && !deleted && <small className="muted">Edited</small>}
+                <div className="chat-message-actions">
+                  {!deleted && <button type="button" className="btn btn-outline" onClick={() => { setReplyTo(message); setEditingMessageId(''); setDraft(''); setNotice('Replying to ' + (mine ? 'your message' : message.senderName)) }}>Reply</button>}
+                  {!deleted && <button type="button" className="btn btn-outline" onClick={() => { setForwardingMessageId(message.id); setForwardTargetId(forwardTargets[0]?.id || '') }}>Forward</button>}
+                  {mine && !deleted && <button type="button" className="btn btn-outline" onClick={() => { setEditingMessageId(message.id); setReplyTo(null); setDraft(message.body); setNotice('Editing your message.') }}>Edit</button>}
+                  <button type="button" className="btn btn-outline" disabled={actionBusyId === message.id} onClick={() => void messageAction(message, 'hide')}>Delete for me</button>
+                  {mine && !deleted && <button type="button" className="btn btn-outline" disabled={actionBusyId === message.id} onClick={() => {
+                    if (window.confirm('Delete this message for everyone in the conversation?')) void messageAction(message, 'delete')
+                  }}>Delete for everyone</button>}
+                </div>
+                {forwardingMessageId === message.id && <div className="chat-forward-controls">
+                  <label htmlFor={'forward-target-' + message.id}>Send to conversation</label>
+                  <select id={'forward-target-' + message.id} className="form-control" value={forwardTargetId} onChange={event => setForwardTargetId(event.target.value)}>
+                    <option value="">Choose a conversation</option>
+                    {forwardTargets.map(target => <option key={target.id} value={target.id}>{target.otherUserName} · {target.propertyTitle}</option>)}
+                  </select>
+                  <button type="button" className="btn btn-primary" disabled={!forwardTargetId || actionBusyId === message.id} onClick={() => void forwardMessage()}>Forward message</button>
+                  <button type="button" className="btn btn-outline" onClick={() => { setForwardingMessageId(''); setForwardTargetId('') }}>Cancel</button>
+                  {!forwardTargets.length && <small className="muted">No other conversations are available.</small>}
+                </div>}
               </article>
             })}
           </div>
           <form className="chat-composer" onSubmit={sendMessage}>
-            <label htmlFor="chat-message">Message</label>
+            <label htmlFor="chat-message">{editingMessageId ? 'Edit message' : 'Message'}</label>
+            {replyTo && <div className="chat-composer-context"><span>Replying to <strong>{replyTo.senderId === currentUserId ? 'your message' : replyTo.senderName}</strong>: {replyTo.body.slice(0, 120)}</span><button className="btn btn-outline" type="button" onClick={() => setReplyTo(null)}>Cancel reply</button></div>}
+            {editingMessageId && <div className="chat-composer-context"><span>Editing your message</span><button className="btn btn-outline" type="button" onClick={() => { setEditingMessageId(''); setDraft('') }}>Cancel edit</button></div>}
             <textarea id="chat-message" className="form-control" required maxLength={2000} rows={5} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Ask about availability, location, or arrange a viewing…" />
-            <div className="chat-composer-footer"><small>{draft.trim().length}/2000 · Messages are visible only to conversation participants.</small><button className="btn btn-primary" disabled={sending || !draft.trim()}>{sending ? 'Sending…' : 'Send message'}</button></div>
+            <div className="chat-composer-footer"><small>{draft.trim().length}/2000 · Messages are visible only to conversation participants.</small><button className="btn btn-primary" disabled={sending || !draft.trim()}>{sending ? 'Sending…' : editingMessageId ? 'Save edit' : 'Send message'}</button></div>
           </form>
         </>}
       </section>
