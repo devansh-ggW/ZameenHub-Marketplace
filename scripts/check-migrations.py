@@ -126,14 +126,6 @@ def main() -> int:
     document = db.execute("SELECT source_url,source_domain,document_type FROM property_documents WHERE id='doc-1'").fetchone()
     expect(document[:] == ("https://seller.example.test/documents/tax.pdf", "seller.example.test", "pdf"),
            "Seller-hosted source document metadata was not persisted")
-    db.execute("INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES('message-reply','conversation-one','owner','Thanks, let us arrange it.',?)", (now,))
-    db.execute("UPDATE property_messages SET edited_at=?,reply_to_message_id='message-one' WHERE id='message-reply'", (now,))
-    db.execute("INSERT INTO property_message_hidden(message_id,user_id,hidden_at) VALUES('message-one','reporter',?)", (now,))
-    expect(db.execute("SELECT edited_at,reply_to_message_id FROM property_messages WHERE id='message-reply'").fetchone()[:] ==
-           (now, "message-one"), "Message edit/reply metadata was not persisted")
-    expect(db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE message_id='message-one' AND user_id='reporter'").fetchone()[0] == 1,
-           "Per-user message deletion metadata was not persisted")
-
     db.execute("UPDATE properties SET verification_status='submitted',verification_evidence_type='official_record',verification_evidence_url=?,verification_submitted_at=? WHERE id='published'",
                ("https://records.example.test/property/123", now))
     expect(db.execute("SELECT verification_status,verification_evidence_url FROM properties WHERE id='published'").fetchone()[:] ==
@@ -193,6 +185,13 @@ def main() -> int:
                   VALUES('conversation-one','published','reporter','owner',?,?,?,'open')""", (now, now, now))
     db.execute("""INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at)
                   VALUES('message-one','conversation-one','reporter','Could I arrange a viewing?',?)""", (now,))
+    db.execute("INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES('message-reply','conversation-one','owner','Thanks, let us arrange it.',?)", (now,))
+    db.execute("UPDATE property_messages SET edited_at=?,reply_to_message_id='message-one' WHERE id='message-reply'", (now,))
+    db.execute("INSERT INTO property_message_hidden(message_id,user_id,hidden_at) VALUES('message-one','reporter',?)", (now,))
+    expect(db.execute("SELECT edited_at,reply_to_message_id FROM property_messages WHERE id='message-reply'").fetchone()[:] ==
+           (now, "message-one"), "Message edit/reply metadata was not persisted")
+    expect(db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE message_id='message-one' AND user_id='reporter'").fetchone()[0] == 1,
+           "Per-user message deletion metadata was not persisted")
     buyer_conversations = db.execute("""SELECT c.id,p.title,
         (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unread
         FROM property_conversations c JOIN properties p ON p.id=c.property_id
