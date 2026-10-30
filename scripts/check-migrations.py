@@ -325,9 +325,15 @@ def main() -> int:
 
     print('DOC-TEST: document schema tests complete; now delete the owner property', flush=True)
     # Exercise the same owned-data cleanup order as account deletion.
+    print('DELETE-TEST: before properties', flush=True)
     db.execute("DELETE FROM properties WHERE owner_id=?", ("owner",))
+    print('DELETE-TEST: after properties', flush=True)
+    print('DELETE-TEST: before inquiries', flush=True)
     db.execute("DELETE FROM inquiries WHERE sender_id=?", ("owner",))
+    print('DELETE-TEST: after inquiries', flush=True)
+    print('DELETE-TEST: before user', flush=True)
     db.execute("DELETE FROM users WHERE id=?", ("owner",))
+    print('DELETE-TEST: after user', flush=True)
     expect(db.execute("SELECT COUNT(*) FROM users WHERE id='owner'").fetchone()[0] == 0,
            "Account row was not removed")
     expect(db.execute("SELECT COUNT(*) FROM sessions WHERE user_id='owner'").fetchone()[0] == 0,
