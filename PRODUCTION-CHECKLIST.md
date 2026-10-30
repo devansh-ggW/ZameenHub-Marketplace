@@ -1,88 +1,77 @@
-# ZameenHub production checklist
+# ZameenHub release checklist
 
-## Before deployment
+This checklist is for a controlled release. The engineering branch is not deployed and no live D1 migration is authorized by this document.
 
-- [ ] Confirm the Worker name and D1 database ID in wrangler.toml point to the intended existing resources.
-- [ ] Confirm run_worker_first = ["/api/*"] is under the [assets] section.
-- [ ] Confirm RESEND_API_KEY is a Cloudflare Secret; never commit it.
-- [ ] Confirm APP_URL, RESEND_FROM_EMAIL, and SUPPORT_EMAIL use the exact production values and the sender domain is Verified in Resend.
-- [ ] Back up D1 and apply all pending D1 migrations through the latest numbered file (`migrations/0005_property_chat.sql`) before deploying Worker code that references the schema. The production migration must be applied to the intended remote `zameenhub` database.
-- [ ] Run pnpm build, pnpm test:smoke, and review the final source diff. The smoke check is a wiring check, not a live integration test.
-- [ ] Review Privacy Policy and Terms with the actual operator identity, address, governing law, grievance process, and real data-retention practices.
-- [ ] Confirm the Worker CPU budget/plan can support PBKDF2 password hashing; test registration and login on the deployed plan and inspect CPU-limit errors.
-- [ ] Apply `migrations/0004_media_verification.sql` only after backing up the intended D1 database. Confirm profile image URLs, five-image cap, one-video cap, evidence fields and moderation audit columns exist.
-- [ ] URL-based media is not an upload system: owners can reference up to five public HTTPS image URLs, one supported HTTPS video URL and a profile image URL. Files remain on third-party hosts, so check host permissions, link durability and content-policy rights.
+## Before a release
 
-## End-to-end production tests
+- [ ] Confirm the intended Worker, production domain and D1 database ID.
+- [ ] Back up production D1 and verify the restore procedure.
+- [ ] Apply migrations 0001–0006 to a disposable D1 database and run python3 scripts/check-migrations.py.
+- [ ] Confirm the restricted IMAGEKIT_PRIVATE_KEY secret is configured in Worker settings and has media upload/delete permission.
+- [ ] Confirm IMAGEKIT_URL_ENDPOINT is configured as a Worker variable and matches the endpoint returned by ImageKit.
+- [ ] Confirm RESEND_API_KEY is a Worker secret, not a Wrangler variable or frontend build variable.
+- [ ] Confirm APP_URL, RESEND_FROM_EMAIL and SUPPORT_EMAIL are correct, and the sender domain is verified with Resend.
+- [ ] Run dependency installation, typecheck, production build, migration tests, TOTP/EMI tests, smoke checks and Worker dry-run in CI.
+- [ ] Inspect the exact diff and confirm no secrets or .dev.vars files are committed.
+- [ ] Review Privacy Policy, Terms, cookies and actual operator/legal details with an appropriate professional.
 
-- [ ] New user can register; duplicate registration does not leak account status.
-- [ ] Verification mail is actually delivered from the correct sender; expired and used tokens are rejected.
-- [ ] A pre-existing user row with no password hash can use email-confirmed legacy activation.
-- [ ] Unverified users cannot log in or submit listings.
-- [ ] Verified users can log in; session cookie is Secure, HttpOnly, SameSite=Lax and scoped to /.
-- [ ] Logout invalidates the server session.
-- [ ] Password-reset email is delivered; token expires and is one-use; reset revokes existing sessions.
-- [ ] Direct visit to /list-property while logged out redirects to sign-in; sign-up remains available.
-- [ ] Server rejects unauthenticated listing submissions even if the frontend guard is bypassed.
-- [ ] Low-risk, non-duplicate listings that receive a valid Cloudflare Workers AI response may be auto-published. Unscored, medium/high-risk, and duplicate submissions remain pending; AI screening never marks ownership evidence as verified.
-- [ ] Only authorized moderator/admin accounts can publish or reject listings.
-- [ ] Published listings use D1 data; AI-screened status is labelled separately from human evidence review, and no AI result is presented as proof of legal ownership.
-- [ ] Favorites persist per account and cannot be changed for unpublished/nonexistent properties.
-- [ ] Inquiry is stored and owner notification is delivered; missing notification is reported honestly.
-- [ ] Support form actually sends to dewifystores@gmail.com; failed delivery is not shown as success.
-- [ ] /api/* responds with JSON, not the SPA HTML fallback.
-- [ ] Check mobile layout, keyboard focus, reduced motion, errors, and unknown routes.
-- [ ] Test restoring a D1 backup before accepting real traffic or valuable data.
+## ImageKit acceptance
 
-## Do not skip
+- [ ] Upload a JPEG, PNG and WebP as the property owner; confirm actual ImageKit URLs and file IDs are stored in D1.
+- [ ] Reject spoofed MIME/extensions, unsupported formats, malformed images and files over 8 MiB.
+- [ ] Confirm users cannot upload or delete media for another user's property.
+- [ ] Confirm a sixth property image is rejected by both Worker validation and D1 constraints.
+- [ ] Confirm gallery ordering and ImageKit transformations render on desktop and mobile.
+- [ ] Confirm profile photo upload and removal work.
+- [ ] Confirm provider failure and D1 failure do not leave untracked uploads; test the cleanup queue and 15-minute cron retry.
+- [ ] Confirm the ImageKit private key is absent from built frontend bundles, API responses and logs.
+- [ ] Audit existing media URLs. Migrate only files whose source and transfer rights are confirmed; do not silently overwrite unavailable sources.
 
-- [ ] Apply and confirm the D1 migration before deploying Worker code that references the new columns and tables.
-- [ ] Use a verified sender address on the exact Resend-verified domain.
-- [ ] Keep RESEND_API_KEY secret.
-- [ ] Have a qualified local professional review legal pages for the real business and jurisdiction.
+## Seller-hosted evidence
 
+- [ ] Seller adds, edits and removes up to ten HTTPS PDF/image links.
+- [ ] Invalid URL schemes, malformed URLs, duplicate URLs, invalid descriptions and more than ten links are rejected.
+- [ ] Worker never fetches a seller-supplied URL.
+- [ ] Buyer sees the seller description, type and source domain and opens the original URL in a new tab.
+- [ ] No-document empty state is clear and accessible.
+- [ ] The page says seller-provided evidence has not been authenticated by ZameenHub.
+- [ ] Evidence links never set the listing's ownership verification status automatically.
 
-## Additional checks for MFA and AI risk screening
+## Listing lifecycle and verification
 
-- [ ] Back up production D1 and apply pending migrations through `migrations/0005_property_chat.sql` **before** deploying Worker code that references the new schema.
-- [ ] Add `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret (at least 32 random characters); do not commit it or place it in public vars.
-- [ ] Confirm `[ai]` / `binding = "AI"` is active for the Worker and check the Workers AI usage dashboard.
-- [ ] Configure and test authenticator MFA enrolment, invalid/expired TOTP, one-time recovery codes, rate limits, MFA disable alerts and delete-account confirmation.
-- [ ] Verify account deletion revokes sessions and deletes owned property listings; confirm the final administrator cannot self-delete.
-- [ ] Verify suspicious, duplicate, and unscored submissions remain pending; low-risk AI-screened submissions may publish, but detailed AI risk reasons stay only in the authorized moderation queue.
-- [ ] Verify the cookie banner and /cookies policy against the actual production scripts; update policy if analytics or marketing tools are added.
-- [ ] Read [SECURITY-AUDIT.md](./SECURITY-AUDIT.md) and complete every launch blocker listed there.
-- [ ] Pin direct package versions and run frozen-lockfile install, typecheck, production build and smoke tests in CI.
-- [ ] Verify concurrent reuse attempts for email verification, legacy activation and password reset accept each token only once; confirm sign-up responses do not reveal whether an email is already registered.
-- [ ] Confirm listing submitters cannot retrieve AI risk scores/reasons from the response or public property API; only the authorized review queue should contain detailed risk evidence.
-- [ ] Test that oversized request bodies are canceled while streaming and that no API mutation succeeds with a missing or mismatched Origin.
+- [ ] New submissions remain pending until an authorized moderator approves them.
+- [ ] An edited listing returns to pending moderation.
+- [ ] Only published listings are publicly discoverable.
+- [ ] Verification badges reflect the actual D1 verification_status, not moderation/content-screening status.
+- [ ] No buyer-facing listing UI mentions Cloudflare implementation details or treats moderation as proof of ownership.
+- [ ] Admin review actions are permission-checked and audit events retain the review decision.
 
+## Messaging and account security
 
-## Discovery, calculator and SEO checks
+- [ ] Normal inbox use does not produce false "too many inbox requests" errors.
+- [ ] Message polling refreshes only the selected conversation; inbox summaries refresh separately.
+- [ ] Reply is restricted to the same conversation.
+- [ ] Forward requires membership in the source and target conversations and preserves attribution.
+- [ ] Only the sender can edit or delete for everyone.
+- [ ] Delete-for-me hides a message only for the current participant.
+- [ ] Unauthorized users cannot access conversations, messages or private attachments.
+- [ ] Registration, login, logout, verification, password recovery and session expiration work.
+- [ ] TOTP enrollment is confirmed before MFA becomes enabled; test invalid, expired, replayed and recovery codes.
+- [ ] Account deletion requires reauthentication, preserves audit requirements and queues ImageKit file cleanup.
 
-- [ ] Run the EMI calculation tests; verify zero-interest and nonzero-rate examples and the estimate disclaimer.
-- [ ] Confirm sitemap.xml contains only public pages and robots.txt disallows private account/moderation routes from indexing.
-- [ ] After property inventory is real and published, consider a generated sitemap for published listing URLs; do not include pending or rejected listings.
-- [ ] Add map/autocomplete and any property value estimates only with a real, permitted data source and transparent limitations.
+## Full regression
 
+- [ ] Test property create/edit/archive, search, filters, saved listings, inquiries and review queue.
+- [ ] Test all navigation, menus, forms, dropdowns, dialogs and public/private routes.
+- [ ] Test mobile layouts, keyboard navigation, visible focus, labels, errors and reduced motion.
+- [ ] Confirm no severe console errors, unhandled promise rejections, or avoidable failed requests.
+- [ ] Verify the 15-minute ImageKit cleanup cron is active after migration 0006 is applied.
+- [ ] Verify Cloudflare Worker asset/API routing and inspect wrangler deploy --dry-run output.
+- [ ] Obtain explicit approval before remote D1 migration or production deployment.
 
-## Media and evidence-review checks
+## Scope notes
 
-- [ ] Profile image URL can be saved, cleared, and is returned only in authenticated profile/session or public property-owner context.
-- [ ] New and edited listings accept no more than five unique public HTTPS image URLs and one supported video URL. Invalid, local, credential-bearing, and non-HTTPS URLs are rejected.
-- [ ] Gallery thumbnails and detail-page video render from saved URLs; broken third-party links degrade gracefully.
-- [ ] Evidence reference URL and review note are private from public listing APIs and visible only to the owner and authorized review queue.
-- [ ] Low-risk, non-duplicate submissions may be auto-published by Cloudflare AI content-risk screening. `Evidence reviewed` / verified ownership status is separate and can only be set by an authorized moderator after inspecting the reference and documenting what was checked. AI screening alone never sets it.
-- [ ] Test the property media SQL triggers directly in D1/SQLite: a sixth image and a second video must be rejected.
-- [ ] Confirm public inquiry saves to D1 and attempts owner email notification after a listing is published.
-- [ ] Review public-record verification steps with a qualified local professional. There is no universal automated property title API configured in this release.
-
-
-## Private chat and automatic AI screening
-- [ ] Apply `migrations/0005_property_chat.sql` before deploying the conversation endpoints.
-- [ ] Verify buyers can start a private chat only for a published property, cannot chat with their own listing, and cannot read another user's conversation.
-- [ ] Verify owners can reply from /messages, messages refresh, unread counts clear, and email addresses are not exposed by the chat API.
-- [ ] Confirm Cloudflare Workers AI responds with a valid low-risk result; submit a low-risk non-duplicate listing and confirm it publishes with an “AI screened” disclosure, not an ownership-verified badge.
-- [ ] Confirm duplicate, high/medium-risk, and unscored listings remain private for review.
-- [ ] Add `MFA_ENCRYPTION_KEY` as a Cloudflare Worker Secret (at least 32 random characters) in the production and preview environments separately where required. Never commit it or place it in public vars.
-- [ ] Confirm `/api/auth/mfa/status` reports the configuration state and test authenticator enrolment, sign-in challenge, recovery codes, disable MFA, and account deletion with MFA enabled.
+- R2 is not part of the architecture.
+- Phase 1 supports images and seller-hosted PDF/image links only; video is postponed.
+- Legacy video rows and legacy image URLs are preserved for compatibility. They are not exposed as current video functionality and are not automatically migrated/deleted.
+- Static tests and a green build do not establish production security or legal verification.

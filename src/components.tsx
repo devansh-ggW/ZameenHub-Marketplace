@@ -2,26 +2,35 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode, type Mouse
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ArrowUpRight, Check, ChevronLeft, ChevronRight, Heart, Menu, Search, Share2, X } from 'lucide-react'
 import { categories, formatPrice, images, type Property } from './lib/data'
-import { apiRequest } from './lib/auth'
+import { apiRequest, getSession } from './lib/auth'
+import { imageKitVariant } from './lib/media'
 export { DepthImage, ScrollScene } from './motion'
 
 export function ImageWithFallback({ src, alt, className, onClick }: { src: string; alt: string; className?: string; onClick?: () => void }) {
   const [failed, setFailed] = useState(false)
-  return !src || failed ? <div className={`image-fallback ${className ?? ''}`} role="img" aria-label={alt}><span>Image unavailable</span></div> : <img src={src} alt={alt} className={className} loading="lazy" onClick={onClick} onError={() => setFailed(true)} />
+  return !src || failed ? <div className={`image-fallback ${className ?? ''}`} role="img" aria-label={alt}><span>Image unavailable</span></div> : <img src={imageKitVariant(src, className?.includes('gallery') ? 1280 : 720)} alt={alt} className={className} loading="lazy" decoding="async" onClick={onClick} onError={() => setFailed(true)} />
 }
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
   const location = useLocation()
   useEffect(() => setOpen(false), [location.pathname])
+  useEffect(() => {
+    let active = true
+    void getSession().then(result => {
+      if (active) setAuthenticated(result.ok && result.data.authenticated)
+    })
+    return () => { active = false }
+  }, [location.pathname])
   return <header className="site-header"><div className="container nav">
     <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link>
-    <nav className={`nav-links ${open ? 'open' : ''}`} aria-label="Primary"><NavLink to="/properties">Browse properties</NavLink><NavLink to="/saved">Saved</NavLink><NavLink to="/about">About</NavLink></nav>
+    <nav className={`nav-links ${open ? 'open' : ''}`} aria-label="Primary"><NavLink to="/properties">Browse properties</NavLink><NavLink to="/saved">Saved</NavLink><NavLink to="/about">About</NavLink>{!authenticated && <><NavLink to="/signup">Sign up</NavLink><NavLink to="/login">Log in</NavLink></>}</nav>
     <div className="nav-actions"><Link className="btn btn-outline" to="/login">Sign in</Link><Link className="btn btn-primary" to="/list-property">List a property <ArrowUpRight size={15} /></Link><button className="icon-btn mobile-toggle" onClick={() => setOpen(!open)} aria-label={open ? 'Close menu' : 'Open menu'}>{open ? <X size={18} /> : <Menu size={18} />}</button></div>
   </div></header>
 }
 
-export function SiteFooter() { return <footer className="footer"><div className="container footer-grid"><div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. The marketplace stays truthful: only verified records returned by the configured property service are shown.</p></div><div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div><div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact</Link><br /><Link to="/help">Help centre</Link></div><div><h4>Legal</h4><Link to="/privacy">Privacy</Link><br /><Link to="/terms">Terms</Link></div></div><div className="container footer-bottom"><span>© 2026 ZameenHub</span><span>Only verified property records appear here</span></div></footer> }
+export function SiteFooter() { return <footer className="footer"><div className="container footer-grid"><div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A property marketplace where sellers can share their original evidence and buyers can inspect it themselves.</p></div><div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div><div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact</Link><br /><Link to="/help">Help centre</Link></div><div><h4>Legal</h4><Link to="/privacy">Privacy</Link><br /><Link to="/terms">Terms</Link></div></div><div className="container footer-bottom"><span>© 2026 ZameenHub</span><span>Inspect seller evidence before you decide</span></div></footer> }
 
 export function PropertyCard({ property }: { property: Property }) {
   const isPublished = property.status === 'published'
@@ -53,24 +62,3 @@ export function LoadingState() { return <div className="empty-state"><div classN
 export function EmptyState({ title = 'Nothing here yet.', copy = 'When verified marketplace data is connected, it will appear here.' }: { title?: string; copy?: string }) { return <div className="empty-state"><div className="eyebrow">No live data</div><h2>{title}</h2><p className="muted">{copy}</p><Link to="/properties" className="btn btn-outline" style={{ marginTop: 16 }}>Browse all properties</Link></div> }
 export function ErrorState({ message }: { message: string }) { return <div className="status-message error">{message}</div> }
 export function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) { return <div className="lightbox" role="dialog" aria-modal="true" aria-label="Property image"><button className="icon-btn close" onClick={onClose} aria-label="Close image"><X size={20} /></button><img src={src} alt={alt} /></div> }
-
-export function PropertyVideo({ src, title }: { src: string; title: string }) {
-  if (!src) return null
-  let embed = ''
-  try {
-    const url = new URL(src)
-    const host = url.hostname.toLowerCase()
-    if (host === 'youtu.be') {
-      const id = url.pathname.split('/').filter(Boolean)[0]
-      if (id && /^[a-zA-Z0-9_-]{6,20}$/.test(id)) embed = 'https://www.youtube-nocookie.com/embed/' + id
-    } else if (host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com')) {
-      const id = url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts|live)\/([a-zA-Z0-9_-]{6,20})/)?.[1]
-      if (id && /^[a-zA-Z0-9_-]{6,20}$/.test(id)) embed = 'https://www.youtube-nocookie.com/embed/' + id
-    } else if (host === 'vimeo.com' || host.endsWith('.vimeo.com')) {
-      const id = url.pathname.match(/\/(\d{5,15})(?:\/|$)/)?.[1]
-      if (id) embed = 'https://player.vimeo.com/video/' + id
-    }
-  } catch { return null }
-  return <div className="property-video">{embed ? <iframe src={embed} title={title + ' video'} loading="lazy" referrerPolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /> : <video controls preload="metadata" src={src} aria-label={title + ' video'} />}</div>
-}
-
