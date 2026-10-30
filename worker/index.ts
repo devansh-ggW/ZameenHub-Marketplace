@@ -672,8 +672,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing request.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const mediaImages=sanitizeImageUrls(input.images),evidence=sanitizeVerificationEvidence(input)
+      const mediaImages=sanitizeImageUrls(input.images),documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
       if(!mediaImages||mediaImages.length)return fail('Property photos must be uploaded using the ImageKit photo uploader.')
+      if(!documents)return fail('Add up to ten valid seller-hosted PDF or image evidence links using HTTPS.')
       if(input.videoUrl!==undefined&&clean(input.videoUrl,1500))return fail('Video uploads are not available in this release.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
@@ -681,6 +682,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const createdAt=nowIso()
       const statements=[
         db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','pending','unverified',evidence.type,evidence.url,evidence.submittedAt),
+        ...documentInsertStatements(db,id,user.id,documents)
       ]
       await db.batch(statements)
       const message='Your listing has been submitted and is pending moderation. It will not appear in public search until approved. Verification is a separate review.'
@@ -773,14 +775,19 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const evidence=sanitizeVerificationEvidence(input)
+      const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
       if(input.images!==undefined&&Array.isArray(input.images)&&input.images.some(value=>typeof value==='string'&&value.trim()))return fail('Property photos must be uploaded using the ImageKit photo uploader.')
       if(input.videoUrl!==undefined&&clean(input.videoUrl,1500))return fail('Video uploads are not available in this release.')
+      if(!documents)return fail('Add up to ten valid seller-hosted PDF or image evidence links using HTTPS.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
-      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
-      if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
+      const result=await db.batch([
+        db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id),
+        db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(id,user.id),
+        ...documentInsertStatements(db,id,user.id,documents)
+      ])
+      if(!result[0]?.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       return ok({id,status:'pending',verified:false,message:'Changes saved. This listing is pending moderation and will not appear in public search until approved. Its verification status is Unverified.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
