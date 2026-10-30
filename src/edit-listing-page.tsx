@@ -34,7 +34,13 @@ export function EditListingPage() {
     let active = true
     async function load() {
       const session = await getSession()
-      if (!session.ok || !session.data.authenticated) {
+      if (!active) return
+      if (!session.ok) {
+        setError(session.error)
+        setLoading(false)
+        return
+      }
+      if (!session.data.authenticated) {
         navigate('/login?next=' + encodeURIComponent('/edit-listing/' + id), { replace: true })
         setLoading(false)
         return

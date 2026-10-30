@@ -46,8 +46,14 @@ export function MessagesPage() {
     let active = true
     void getSession().then(session => {
       if (!active) return
-      if (!session.ok || !session.data.authenticated || !session.data.user) {
+      if (!session.ok) {
+        setError(session.error)
+        setLoading(false)
+        return
+      }
+      if (!session.data.authenticated || !session.data.user) {
         navigate('/login?next=' + encodeURIComponent('/messages' + window.location.search), { replace: true })
+        setLoading(false)
         return
       }
       setCurrentUserId(session.data.user.id)

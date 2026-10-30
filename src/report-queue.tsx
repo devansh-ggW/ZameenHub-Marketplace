@@ -39,7 +39,11 @@ export function ReportQueuePage() {
   const load = useCallback(async () => {
     setLoading(true); setError('')
     const session = await getSession()
-    if (!session.ok || !session.data.authenticated || !session.data.user) {
+    if (!session.ok) {
+      setError(session.error)
+      setLoading(false); return
+    }
+    if (!session.data.authenticated || !session.data.user) {
       navigate('/login?next=' + encodeURIComponent('/report-queue'), { replace: true })
       setLoading(false); return
     }

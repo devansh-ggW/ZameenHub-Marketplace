@@ -21,7 +21,11 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   async function load() {
     setLoading(true); setError('')
     const session = await getSession()
-    if (!session.ok || !session.data.authenticated || !session.data.user) {
+    if (!session.ok) {
+      setError(session.error)
+      setLoading(false); return
+    }
+    if (!session.data.authenticated || !session.data.user) {
       navigate('/login?next=' + encodeURIComponent(location.pathname + location.search), { replace: true })
       setLoading(false); return
     }
