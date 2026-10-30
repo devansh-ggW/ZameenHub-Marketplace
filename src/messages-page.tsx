@@ -62,19 +62,40 @@ export function MessagesPage() {
     const result = await apiRequest<ChatMessage[]>('/api/conversations/' + encodeURIComponent(selectedId) + '/messages')
     if (result.ok) {
       setMessages(result.data)
-      await apiRequest<{ read: boolean }>('/api/conversations/' + encodeURIComponent(selectedId) + '/read', { method: 'PATCH', body: '{}' })
-      void loadConversations()
+      const hasUnreadIncoming = result.data.some(message => message.senderId !== currentUserId && !message.readAt)
+      if (hasUnreadIncoming) {
+        const readResult = await apiRequest<{ read: boolean }>('/api/conversations/' + encodeURIComponent(selectedId) + '/read', { method: 'PATCH', body: '{}' })
+        if (readResult.ok) {
+          const readAt = new Date().toISOString()
+          setMessages(current => current.map(message => message.senderId !== currentUserId && !message.readAt ? { ...message, readAt } : message))
+        }
+      }
+      const latest = result.data[result.data.length - 1]
+      if (latest) setConversations(current => current.map(item => item.id === selectedId ? { ...item, lastMessage: latest.body, lastMessageAt: latest.createdAt } : item))
       setError('')
     } else setError(result.error)
     if (!quiet) setMessagesLoading(false)
-  }, [selectedId, loadConversations])
+  }, [selectedId, currentUserId])
 
   useEffect(() => {
     if (!selectedId) { setMessages([]); return }
     void loadMessages()
-    const timer = window.setInterval(() => { void loadMessages(true) }, 5000)
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadMessages(true)
+    }, 5000)
     return () => window.clearInterval(timer)
   }, [selectedId, loadMessages])
+
+  useEffect(() => {
+    if (!currentUserId) return
+    // The inbox summary refresh is intentionally separate from message polling.
+    // Refreshing the entire conversation list on every five-second poll caused
+    // normal reading to hit the shared-IP inbox rate limit.
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadConversations()
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [currentUserId, loadConversations])
 
   function openConversation(id: string) {
     setParams({ conversation: id })
