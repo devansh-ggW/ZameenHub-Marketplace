@@ -1,7 +1,7 @@
 import { base32Encode, matchedTotpCounter } from './totp'
-export type Env = {
+import { deleteImageKitFile, readValidatedImage, uploadImageKitImage, type ImageKitEnvironment } from './imagekit'
+export type Env = ImageKitEnvironment & {
   DB?: D1Database
-  R2?: R2Bucket
   MFA_ENCRYPTION_KEY?: string
   RESEND_API_KEY?: string
   RESEND_FROM_EMAIL?: string
@@ -195,13 +195,13 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includePrivateVerification=false) {
+function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:Array<{id:string;url:string;fileId:string|null;mimeType:string|null;size:number|null}> = []) {
   const verificationStatus=p.verification_status||'unverified'
   return {
     id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
     propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
     bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
-    image:images[0]||'',gallery:images,videoUrl:videoUrl||'',description:p.description,
+    image:images[0]||'',gallery:images,imageMedia,description:p.description,
     amenities:parseArray(p.amenities_json),status:p.status,
     verified:verificationStatus==='verified',
     verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
@@ -247,20 +247,6 @@ function sanitizeImageUrls(value:unknown):string[]|null {
   }
   return urls.length<=5?urls:null
 }
-function sanitizeVideoUrl(value:unknown):string|null {
-  if(value===undefined||value===null||value==='')return ''
-  if(typeof value!=='string'||value.length>1500)return null
-  const raw=clean(value,1500)
-  if(!raw)return ''
-  const normalized=normalizeHttpsUrl(raw,1500)
-  if(!normalized)return null
-  try {
-    const parsed=new URL(normalized),host=parsed.hostname.toLowerCase(),path=parsed.pathname.toLowerCase()
-    const hostedVideo=host==='youtu.be'||host==='youtube.com'||host.endsWith('.youtube.com')||host==='youtube-nocookie.com'||host.endsWith('.youtube-nocookie.com')||host==='vimeo.com'||host.endsWith('.vimeo.com')
-    const directVideo=/\.(mp4|webm|ogg|m3u8)$/.test(path)
-    return hostedVideo||directVideo?normalized:null
-  } catch { return null }
-}
 const verificationEvidenceTypes=new Set(['none','official_record','property_tax_record','registry_reference','other_public_record'])
 function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string;url:string;status:'unverified'|'submitted';submittedAt:string|null}|null {
   const rawType=clean(input.verificationEvidenceType,40)||'none'
@@ -273,23 +259,62 @@ function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string
   if(rawType==='none'||!normalized)return null
   return {type:rawType,url:normalized,status:'submitted',submittedAt:nowIso()}
 }
-function mediaInsertStatements(db:D1Database,id:string,images:string[],videoUrl:string):D1PreparedStatement[] {
-  const statements:D1PreparedStatement[]=[]
-  images.forEach((mediaUrl,index)=>statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'image',?,?,?)").bind(uuid(),id,mediaUrl,'Property image '+(index+1),index)))
-  if(videoUrl)statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'video',?,'Property video',0)").bind(uuid(),id,videoUrl))
-  return statements
+type PropertyImageRow={id:string;media_url:string;imagekit_file_id:string|null;mime_type:string|null;file_size:number|null}
+type PropertyDocumentInput={type:'pdf'|'image';description:string;url:string;domain:string}
+function sanitizePropertyDocuments(value:unknown):PropertyDocumentInput[]|null {
+  if(value===undefined||value===null)return []
+  if(!Array.isArray(value)||value.length>10)return null
+  const items:PropertyDocumentInput[]=[]
+  const seen=new Set<string>()
+  for(const raw of value) {
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return null
+    const item=raw as Record<string,unknown>
+    const type=item.type,description=clean(item.description,180),url=normalizeHttpsUrl(item.url,1500)
+    if((type!=='pdf'&&type!=='image')||description.length<3||!url||seen.has(url))return null
+    const domain=new URL(url).hostname.toLowerCase()
+    items.push({type,description,url,domain})
+    seen.add(url)
+  }
+  return items
 }
-async function savePropertyMedia(db:D1Database,id:string,images:string[],videoUrl:string) {
-  await db.batch([db.prepare('DELETE FROM property_media WHERE property_id=?').bind(id),...mediaInsertStatements(db,id,images,videoUrl)])
+function documentInsertStatements(db:D1Database,propertyId:string,ownerId:string,documents:PropertyDocumentInput[]):D1PreparedStatement[] {
+  const timestamp=nowIso()
+  return documents.map((item,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,source_url,source_domain,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .bind(uuid(),propertyId,ownerId,item.type,item.description,item.url,item.domain,index,timestamp,timestamp))
+}
+async function propertyDocuments(db:D1Database,propertyId:string) {
+  const result=await db.prepare('SELECT id,document_type AS type,description,source_url AS url,source_domain AS sourceDomain,sort_order AS sortOrder FROM property_documents WHERE property_id=? ORDER BY sort_order ASC').bind(propertyId).all<Record<string,unknown>>()
+  return result.results
+}
+async function queueImageKitCleanup(db:D1Database,fileId:string) {
+  await db.prepare('INSERT INTO imagekit_cleanup_queue(file_id,attempts,next_attempt_at,created_at) VALUES(?,0,?,?) ON CONFLICT(file_id) DO NOTHING')
+    .bind(fileId,nowIso(),nowIso()).run()
+}
+async function retryImageKitCleanup(db:D1Database,env:Env) {
+  const due=await db.prepare('SELECT file_id,attempts FROM imagekit_cleanup_queue WHERE next_attempt_at<=? ORDER BY created_at LIMIT 5')
+    .bind(nowIso()).all<{file_id:string;attempts:number}>()
+  for(const item of due.results) {
+    if(await deleteImageKitFile(env,item.file_id)) {
+      await db.prepare('DELETE FROM imagekit_cleanup_queue WHERE file_id=?').bind(item.file_id).run()
+    } else {
+      const attempts=item.attempts+1
+      const wait=Math.min(24*60,Math.pow(2,Math.min(attempts,10))*5)
+      await db.prepare('UPDATE imagekit_cleanup_queue SET attempts=?,next_attempt_at=? WHERE file_id=?')
+        .bind(attempts,future(wait),item.file_id).run()
+    }
+  }
 }
 async function propertyMedia(db:D1Database,id:string) {
-  const result=await db.prepare('SELECT media_type,media_url FROM property_media WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{media_type:string;media_url:string}>()
+  const result=await db.prepare("SELECT id,media_url,imagekit_file_id,mime_type,file_size FROM property_media WHERE property_id=? AND media_type='image' ORDER BY sort_order ASC").bind(id).all<PropertyImageRow>()
   const rows=result.results
-  return {images:rows.filter(row=>row.media_type==='image').slice(0,5).map(row=>row.media_url),videoUrl:rows.find(row=>row.media_type==='video')?.media_url||''}
+  return {
+    images:rows.slice(0,5).map(row=>row.media_url),
+    imageMedia:rows.slice(0,5).map(row=>({id:row.id,url:row.media_url,fileId:row.imagekit_file_id,mimeType:row.mime_type,size:row.file_size}))
+  }
 }
 async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
-  const media=await propertyMedia(db,p.id)
-  return propertyView(p,media.images,media.videoUrl,includePrivateVerification)
+  const [media,documents]=await Promise.all([propertyMedia(db,p.id),propertyDocuments(db,p.id)])
+  return {...propertyView(p,media.images,includePrivateVerification,media.imageMedia),documents}
 }
 function sameOrigin(request:Request,url:URL) {
   return request.headers.get('Origin')===url.origin
@@ -546,6 +571,26 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ])
       return ok({message:'Password updated. All existing sessions have been signed out; sign in with your new password.'})
     }
+    if(path==='/api/account/profile-image'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to upload a profile image.',401)
+      if(!await authLimit(request,db,'profile-image-upload',8)||!await limited(db,'profile-image-upload-user:'+user.id,8,60))return fail('Too many profile image uploads. Please wait before trying again.',429)
+      const image=await readValidatedImage(request)
+      if(!image)return fail('Upload a valid JPEG, PNG or WebP image no larger than 8 MB.')
+      await retryImageKitCleanup(db,env)
+      const uploaded=await uploadImageKitImage(env,image,`/zameenhub/profiles/${user.id}`)
+      if(!uploaded.ok)return fail(uploaded.error,uploaded.status)
+      const old=await db.prepare('SELECT profile_image_file_id FROM users WHERE id=?').bind(user.id).first<{profile_image_file_id:string|null}>()
+      try {
+        await db.prepare('UPDATE users SET profile_image_url=?,profile_image_file_id=?,profile_image_file_path=?,profile_image_mime_type=?,updated_at=? WHERE id=?')
+          .bind(uploaded.url,uploaded.fileId,uploaded.filePath,uploaded.mimeType,nowIso(),user.id).run()
+      } catch {
+        if(!await deleteImageKitFile(env,uploaded.fileId))await queueImageKitCleanup(db,uploaded.fileId)
+        return fail('The image uploaded but the profile could not be updated. Please retry.',503)
+      }
+      if(old?.profile_image_file_id&&old.profile_image_file_id!==uploaded.fileId&&!await deleteImageKitFile(env,old.profile_image_file_id))
+        await queueImageKitCleanup(db,old.profile_image_file_id)
+      return ok({profileImageUrl:uploaded.url},201)
+    }
     if(path==='/api/account/profile'&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to update your profile.',401)
       if(!await authLimit(request,db,'profile-image',8)||!await limited(db,'profile-image-user:'+user.id,12,60))return fail('Too many profile changes. Please wait before trying again.',429)
@@ -553,10 +598,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(input.profileImageUrl!==undefined&&input.profileImageUrl!==null&&typeof input.profileImageUrl!=='string')return fail('Profile image must be a public HTTPS image URL.')
       if(typeof input.profileImageUrl==='string'&&input.profileImageUrl.length>1500)return fail('Profile image URL is too long (maximum 1500 characters).')
       const raw=clean(input.profileImageUrl,1500)
-      const profileImageUrl=raw?normalizeHttpsUrl(raw,1500):''
-      if(raw&&!profileImageUrl)return fail('Use a complete public HTTPS image URL. Local, data, and non-HTTPS URLs are not accepted.')
-      await db.prepare('UPDATE users SET profile_image_url=?,updated_at=? WHERE id=?').bind(profileImageUrl,nowIso(),user.id).run()
-      return ok({profileImageUrl:profileImageUrl||''})
+      if(raw)return fail('Profile photos must be uploaded through the secure ImageKit upload control.')
+      const old=await db.prepare('SELECT profile_image_file_id FROM users WHERE id=?').bind(user.id).first<{profile_image_file_id:string|null}>()
+      await db.prepare('UPDATE users SET profile_image_url=NULL,profile_image_file_id=NULL,profile_image_file_path=NULL,profile_image_mime_type=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id).run()
+      if(old?.profile_image_file_id&&!await deleteImageKitFile(env,old.profile_image_file_id))await queueImageKitCleanup(db,old.profile_image_file_id)
+      return ok({profileImageUrl:''})
     }
     if(path==='/api/account/delete'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before deleting your account.',401)
@@ -626,19 +672,19 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing request.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
-      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      const mediaImages=sanitizeImageUrls(input.images),evidence=sanitizeVerificationEvidence(input)
+      if(!mediaImages||mediaImages.length)return fail('Property photos must be uploaded using the ImageKit photo uploader.')
+      if(input.videoUrl!==undefined&&clean(input.videoUrl,1500))return fail('Video uploads are not available in this release.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const createdAt=nowIso()
       const statements=[
-        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','published','unverified',evidence.type,evidence.url,evidence.submittedAt),
-        ...mediaInsertStatements(db,id,mediaImages,videoUrl)
+        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','pending','unverified',evidence.type,evidence.url,evidence.submittedAt),
       ]
       await db.batch(statements)
-      const message='Your listing is now live and marked Unverified. It will remain unverified until an administrator manually verifies it.'
-      return ok({id,status:'published',verified:false,message},201)
+      const message='Your listing has been submitted and is pending moderation. It will not appear in public search until approved. Verification is a separate review.'
+      return ok({id,status:'pending',verified:false,message},201)
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
@@ -649,6 +695,42 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!result.meta.changes)return fail('Listing could not be found in your account.',404)
       return ok({id,status:'archived',message:'Your listing is archived and no longer appears in public search.'})
     }
+    const propertyImageMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/images$/)
+    if(propertyImageMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to upload property images.',401)
+      if(!await authLimit(request,db,'property-image-upload',12)||!await limited(db,'property-image-upload-user:'+user.id,15,60))return fail('Too many property image uploads. Please wait before trying again.',429)
+      const propertyId=decodeURIComponent(propertyImageMatch[1])
+      const property=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
+      if(!property)return fail('Property not found in your account.',404)
+      const current=await db.prepare("SELECT COUNT(*) AS total,COALESCE(MAX(sort_order),-1)+1 AS nextOrder FROM property_media WHERE property_id=? AND media_type='image'").bind(propertyId).first<{total:number;nextOrder:number}>()
+      if((current?.total||0)>=5)return fail('A property can have no more than five photos.',409)
+      const image=await readValidatedImage(request)
+      if(!image)return fail('Upload a valid JPEG, PNG or WebP image no larger than 8 MB.')
+      await retryImageKitCleanup(db,env)
+      const uploaded=await uploadImageKitImage(env,image,`/zameenhub/properties/${propertyId}`)
+      if(!uploaded.ok)return fail(uploaded.error,uploaded.status)
+      const mediaId=uuid()
+      try {
+        await db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,imagekit_file_path,mime_type,file_size,uploader_id) VALUES(?,?,'image',?,?,?,?,?,?,?,?)")
+          .bind(mediaId,propertyId,uploaded.url,'Property image '+((current?.nextOrder||0)+1),current?.nextOrder||0,uploaded.fileId,uploaded.filePath,uploaded.mimeType,uploaded.size,user.id).run()
+      } catch {
+        if(!await deleteImageKitFile(env,uploaded.fileId))await queueImageKitCleanup(db,uploaded.fileId)
+        return fail('The image uploaded but its listing record could not be saved. Please retry.',503)
+      }
+      return ok({id:mediaId,url:uploaded.url,fileId:uploaded.fileId,mimeType:uploaded.mimeType,size:uploaded.size},201)
+    }
+    const propertyImageDeleteMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/images\/([^/]+)$/)
+    if(propertyImageDeleteMatch&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage property images.',401)
+      const propertyId=decodeURIComponent(propertyImageDeleteMatch[1]),mediaId=decodeURIComponent(propertyImageDeleteMatch[2])
+      const row=await db.prepare("SELECT pm.id,pm.imagekit_file_id FROM property_media pm JOIN properties p ON p.id=pm.property_id WHERE pm.id=? AND pm.property_id=? AND p.owner_id=? AND pm.media_type='image'")
+        .bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
+      if(!row)return fail('Image not found in your listing.',404)
+      let cleanupPending=false
+      if(row.imagekit_file_id&&!await deleteImageKitFile(env,row.imagekit_file_id)){await queueImageKitCleanup(db,row.imagekit_file_id);cleanupPending=true}
+      await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=?").bind(mediaId,propertyId).run()
+      return ok({deleted:true,cleanupPending})
+    }
     const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
     if(ownedPropertyMatch&&method==='DELETE') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to delete your listings.',401)
@@ -656,6 +738,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=decodeURIComponent(ownedPropertyMatch[1])
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string}>()
       if(!owned)return fail('Listing not found in your account.',404)
+      const propertyImageRows=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE property_id=? AND media_type='image' AND imagekit_file_id IS NOT NULL").bind(id).all<{imagekit_file_id:string}>()
+      for(const image of propertyImageRows.results) {
+        if(!await deleteImageKitFile(env,image.imagekit_file_id))await queueImageKitCleanup(db,image.imagekit_file_id)
+      }
+      await retryImageKitCleanup(db,env)
       // Delete dependent rows first. Each statement is scoped to a property that still belongs to this user.
       const deletion=await db.batch([
         db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
@@ -686,15 +773,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
-      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      const evidence=sanitizeVerificationEvidence(input)
+      if(input.images!==undefined&&Array.isArray(input.images)&&input.images.some(value=>typeof value==='string'&&value.trim()))return fail('Property photos must be uploaded using the ImageKit photo uploader.')
+      if(input.videoUrl!==undefined&&clean(input.videoUrl,1500))return fail('Video uploads are not available in this release.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
-      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
+      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='pending',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      await savePropertyMedia(db,id,mediaImages,videoUrl)
-      return ok({id,status:'published',verified:false,message:'Changes saved and are live. Verification has reset to Unverified until an administrator checks the updated details.'})
+      return ok({id,status:'pending',verified:false,message:'Changes saved. This listing is pending moderation and will not appear in public search until approved. Its verification status is Unverified.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
