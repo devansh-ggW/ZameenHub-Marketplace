@@ -855,7 +855,7 @@ export default {
     }
     if(path==='/api/my/inquiries'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your inquiries.',401)
-      if(!await authLimit(request,db,'inquiry-inbox',20)||!await limited(db,'inquiry-inbox-user:'+user.id,60,60))return fail('Too many inbox requests. Please try again shortly.',429)
+      if(!await authLimit(request,db,'inquiry-inbox',200)||!await limited(db,'inquiry-inbox-user:'+user.id,60,60))return fail('Too many inbox requests. Please try again shortly.',429)
       const result=await db.prepare("SELECT i.id,i.property_id,i.sender_id,i.email,i.message,i.status,i.created_at,p.title AS property_title,p.slug AS property_slug,p.city AS property_city FROM inquiries i JOIN properties p ON p.id=i.property_id WHERE p.owner_id=? ORDER BY CASE i.status WHEN 'new' THEN 0 WHEN 'read' THEN 1 ELSE 2 END, i.created_at DESC LIMIT 200").bind(user.id).all<{id:string;property_id:string;sender_id:string|null;email:string;message:string;status:string;created_at:string;property_title:string;property_slug:string;property_city:string}>()
       return ok(result.results)
     }

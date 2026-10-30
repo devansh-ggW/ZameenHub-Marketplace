@@ -119,6 +119,7 @@ if(!worker.includes('href=\"${safeUrl}\"'))errors.push('Email HTML must include 
 if(!worker.includes('copy and open this link in your browser'))errors.push('Email HTML must expose the action URL as a visible clickable fallback')
 if(!worker.includes('html,text})'))errors.push('Resend payload must include both HTML and plain-text email bodies')
 if(!worker.includes('ownerDocumentsMatch')||!worker.includes('documentFileMatch')||!worker.includes('documentReviewMatch')||!worker.includes('publicDisclosureConfirmed')||!worker.includes('public_review_summary'))errors.push('Document endpoints must enforce owner access, publication consent and public review summaries')
+if(!worker.includes("authLimit(request,db,'inquiry-inbox',200)")||!worker.includes("inquiry-inbox-user:'+user.id,60,60"))errors.push('Owner inbox must retain a per-account limit without a low shared-IP false-positive threshold')
 if(!worker.includes('async scheduled')||!wrangler.includes('*/15 * * * *'))errors.push('Private R2 object cleanup must have a scheduled retry trigger')
 if(!read('src/site-chrome.tsx').includes('to="/document-review"'))errors.push('Document review must be discoverable to moderators')
 if(!read('worker/property-documents.ts').includes('startxref')||!read('worker/property-documents.ts').includes('IEND'))errors.push('Document validation must reject common truncated structures')
