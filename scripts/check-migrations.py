@@ -322,7 +322,7 @@ def main() -> int:
     db.execute("INSERT INTO property_document_reports(id,document_id,document_id_snapshot,property_id,property_id_snapshot,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,?,?,'open',?)",
                ("doc-report-1","doc-0","doc-0","published","published","reporter","privacy_exposure","Contains unrelated sensitive details",now))
     try:
-        db.execute("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)",
+        db.execute("INSERT INTO property_document_reports(id,document_id,document_id_snapshot,property_id,property_id_snapshot,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,?,?,'open',?)",
                    ("doc-report-2","doc-0","doc-0","published","published","reporter","privacy_exposure","Repeated complaint",now))
     except sqlite3.IntegrityError:
         pass
