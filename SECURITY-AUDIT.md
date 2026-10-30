@@ -152,3 +152,5 @@ Public reference pages:
 - Moderator review records a private internal note plus a separate public summary of the limited checks performed. Only the public summary is exposed on a listing; it must avoid personal data and never claim legal ownership.
 - Identical-file flags are updated in the same D1 batch as the new document insert and the just-created row is read back, avoiding a stale pre-insert count race.
 - Public PDFs can be opened inline through the document route while the explicit download endpoint remains available. Browser-native PDF preview behavior has not been manually tested across browsers.
+
+- Object cleanup now has a 15-minute scheduled Worker retry, processing up to 25 queued keys per run. It safely no-ops until a private R2 binding exists; actual Cloudflare scheduling and storage behavior still require environment-level verification.

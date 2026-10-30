@@ -317,7 +317,11 @@ function sameOrigin(request:Request,url:URL) {
   return request.headers.get('Origin')===url.origin
 }
 
-export default { async fetch(request:Request,env:Env):Promise<Response> {
+export default {
+  async scheduled(_controller:ScheduledController,env:Env):Promise<void> {
+    if(env.DB)await flushDocumentObjectCleanup(env.DB,env.R2)
+  },
+  async fetch(request:Request,env:Env):Promise<Response> {
   const url=new URL(request.url), path=url.pathname, method=request.method.toUpperCase()
   if(!path.startsWith('/api/'))return new Response('Not found',{status:404})
   if(method==='OPTIONS')return new Response(null,{status:204,headers:{'Allow':'GET, POST, PATCH, DELETE, OPTIONS','Cache-Control':'no-store'}})

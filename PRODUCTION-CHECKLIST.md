@@ -98,3 +98,5 @@
 - [ ] Test object cleanup retry behavior in an isolated environment. Never log document contents or private object keys.
 - [ ] Use synthetic files only. Signature checks are not malware scanning and do not establish legal authenticity; owners prepare and inspect redacted copies.
 - [ ] Validate remote D1 state, R2 binding and Worker routes in a non-production environment before production rollout.
+
+- [ ] Confirm the 15-minute Worker cron trigger drains up to 25 pending private R2 object-deletion keys per run; inspect retry behavior when R2 is temporarily unavailable.
