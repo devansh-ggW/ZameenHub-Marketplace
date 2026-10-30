@@ -272,6 +272,7 @@ def main() -> int:
     expect({"property_document_reports","property_document_events","property_document_object_cleanup"} <= doc_tables,
            "Property document support tables are missing")
 
+    print('DOC-TEST: begin document schema tests', flush=True)
     # Synthetic metadata only: no customer documents or contents are used.
     for index in range(10):
         doc_id = f"doc-{index}"
@@ -322,6 +323,7 @@ def main() -> int:
     else:
         raise AssertionError("Eleventh property document was accepted")
 
+    print('DOC-TEST: document schema tests complete; now delete the owner property', flush=True)
     # Exercise the same owned-data cleanup order as account deletion.
     db.execute("DELETE FROM properties WHERE owner_id=?", ("owner",))
     db.execute("DELETE FROM inquiries WHERE sender_id=?", ("owner",))
