@@ -10,6 +10,7 @@ import { ReportQueuePage } from './report-queue'
 import { InquiriesPage } from './inquiries-page'
 import { MessagesPage } from './messages-page'
 import { EmiCalculatorPage } from './emi-calculator-page'
+import { DocumentReviewPage } from './document-review-page'
 import { SiteFooter, SiteHeader } from './site-chrome'
 import { CookieNotice } from './cookie-notice'
 
@@ -37,6 +38,7 @@ export default function App() {
       <Route path="/inquiries" element={<InquiriesPage />} />
       <Route path="/messages" element={<MessagesPage />} />
       <Route path="/tools/emi-calculator" element={<EmiCalculatorPage />} />
+      <Route path="/document-review" element={<DocumentReviewPage />} />
       <Route path="/about" element={<InfoPage kind="about" />} />
       <Route path="/contact" element={<InfoPage kind="contact" />} />
       <Route path="/help" element={<InfoPage kind="help" />} />

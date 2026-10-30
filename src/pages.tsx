@@ -7,6 +7,7 @@ import { getProperties, getProperty, submitInquiry } from './lib/api'
 import { apiRequest, getSession } from './lib/auth'
 import { ReportProperty } from './report-property'
 import { PROPERTY_AMENITIES } from './lib/property-options'
+import { PublicPropertyDocuments } from './property-documents'
 
 export function HomePage() {
   const [recent, setRecent] = useState<Property[]>([])
@@ -196,6 +197,7 @@ export function PropertyDetailPage() {
         {property.videoUrl && <div className="detail-section"><SectionKicker>Property video</SectionKicker><PropertyVideo src={property.videoUrl} title={property.title} /></div>}
         <div className="detail-section"><SectionKicker>About this place</SectionKicker><h2>{property.title}</h2><p>{property.description}</p></div>
         <div className="detail-section"><SectionKicker>Features</SectionKicker><div className="amenities">{property.amenities.map(amenity => <span className="amenity" key={amenity}><Check size={13} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--blue)' }} />{amenity}</span>)}</div></div>
+        <PublicPropertyDocuments propertySlug={property.slug} />
       </div>
       <aside className="detail-panel">
         <div className="eyebrow">Published listing</div>

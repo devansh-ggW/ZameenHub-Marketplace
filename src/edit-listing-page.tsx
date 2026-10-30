@@ -4,6 +4,7 @@ import { SectionKicker } from './components'
 import type { Property, PropertyType } from './lib/data'
 import { apiRequest, getSession } from './lib/auth'
 import { PROPERTY_AMENITIES } from './lib/property-options'
+import { PropertyDocumentsManager } from './property-documents'
 
 export function EditListingPage() {
   const { id = '' } = useParams()
@@ -121,5 +122,6 @@ export function EditListingPage() {
       {notice && <p className="status-message success" role="status">{notice}</p>}
       <div className="listing-actions"><Link className="btn btn-outline" to="/my-listings">Back to my listings</Link><button className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button></div>
     </form>}
+    {property && <PropertyDocumentsManager propertyId={property.id} propertyStatus={property.status} />}
   </div></main>
 }

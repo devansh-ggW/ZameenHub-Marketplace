@@ -639,3 +639,30 @@ img { max-width: 100%; display: block; }
   .nav-authenticated .nav-links.open > .nav-account-menu-link { display: flex !important; }
 }
 
+
+
+.document-section{margin-top:30px;padding-top:26px;border-top:1px solid var(--line)}
+.document-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.document-heading h2,.document-manager h2{margin:8px 0;font-size:clamp(22px,3vw,30px)}
+.document-disclosure{padding:14px 16px;margin:14px 0;background:#fff;border:1px solid var(--line);font-size:12px;line-height:1.7;color:var(--muted)}
+.document-empty{padding:18px;margin:14px 0;background:var(--soft);border:1px dashed var(--line);font-size:12px;line-height:1.7;color:var(--muted)}
+.document-list{display:grid;gap:12px;margin-top:16px}
+.document-card{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px;padding:16px;background:#fff;border:1px solid var(--line)}
+.document-title{display:flex;align-items:flex-start;gap:12px;min-width:0;flex:1}
+.document-title>svg{flex:none;color:var(--blue)}
+.document-title h3{margin:0;font-size:15px;overflow-wrap:anywhere}
+.document-title p{margin:6px 0;color:var(--muted);font-size:11px;line-height:1.6}
+.document-state{display:inline-block;padding:5px 8px;margin-top:6px;border:1px solid var(--line);background:var(--soft);font-size:10px;color:var(--muted)}
+.document-state.reviewed{background:#edf7f0;color:#24643c;border-color:#c9e2ce}
+.document-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.document-actions .btn{min-height:36px;padding:8px 11px;font-size:11px}
+.document-report,.document-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);width:100%}
+.document-report label,.document-form label{display:grid;gap:6px;font-size:12px;font-weight:700;min-width:0}
+.document-form input[type=file]{width:100%;max-width:100%;font-size:11px}
+.document-form .btn{width:fit-content}
+.document-manager{margin-top:28px;padding:22px;border:1px solid var(--line);background:#fff}
+.document-manager>p{line-height:1.7}
+.document-duplicate{color:#9a5d09}
+.document-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}
+.document-review-card{padding:18px}
+@media(max-width:650px){.document-card{display:block}.document-actions{justify-content:flex-start;margin-top:12px}.document-form,.document-report{grid-template-columns:1fr}.document-manager{padding:16px}}
