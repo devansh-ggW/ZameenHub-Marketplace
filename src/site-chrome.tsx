@@ -31,7 +31,7 @@ export function SiteHeader() {
       {user && <NavLink className="nav-account-menu-link" to="/my-listings">My listings</NavLink>}
       {user && <><NavLink className="nav-account-menu-link" to="/inquiries">Inquiries</NavLink><NavLink className="nav-account-menu-link" to="/messages">Messages</NavLink></>}
       {user && <NavLink className="nav-account-menu-link" to="/profile">Account</NavLink>}
-      {user && ['admin','moderator'].includes(user.role) && <><NavLink className="nav-account-menu-link" to="/review-queue">Review queue</NavLink><NavLink className="nav-account-menu-link" to="/report-queue">Listing reports</NavLink></>}
+      {user && ['admin','moderator'].includes(user.role) && <><NavLink className="nav-account-menu-link" to="/review-queue">Review queue</NavLink><NavLink className="nav-account-menu-link" to="/report-queue">Listing reports</NavLink><NavLink className="nav-account-menu-link" to="/document-review">Document review</NavLink></>}
       <NavLink to="/about">About</NavLink>
       {user ? <>
         <NavLink className="mobile-menu-link mobile-menu-list nav-account-menu-link" to="/list-property">List a property <ArrowUpRight size={15} /></NavLink>

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS property_documents (
  submitted_at TEXT NOT NULL,published_at TEXT,withdrawn_at TEXT,reviewed_at TEXT,
  reviewer_id TEXT REFERENCES users(id) ON DELETE SET NULL,
  review_note TEXT NOT NULL DEFAULT '',
+ public_review_summary TEXT NOT NULL DEFAULT '' CHECK(length(public_review_summary)<=280),
  last_actor_id TEXT REFERENCES users(id) ON DELETE SET NULL,
  updated_at TEXT NOT NULL,
  CHECK(document_role='public_copy' OR visibility='private'),

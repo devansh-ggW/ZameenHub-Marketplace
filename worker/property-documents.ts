@@ -20,10 +20,24 @@ export function detectDocumentFormat(bytes:Uint8Array,fileName:unknown):Property
  let contentType:PropertyDocumentFormat['contentType']|null=null
  const starts=(signature:number[])=>bytes.length>=signature.length&&signature.every((value,index)=>bytes[index]===value)
  const asciiAt=(offset:number,value:string)=>bytes.length>=offset+value.length&&[...value].every((character,index)=>bytes[offset+index]===character.charCodeAt(0))
- if(asciiAt(0,'%PDF-'))contentType='application/pdf'
- else if(starts([0xff,0xd8,0xff]))contentType='image/jpeg'
- else if(starts([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))contentType='image/png'
- else if(asciiAt(0,'RIFF')&&asciiAt(8,'WEBP'))contentType='image/webp'
+ const u32=(offset:number)=>new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(offset,true)
+
+ // Lightweight structure checks reject common truncation, but do not fully parse or scan files.
+ if(asciiAt(0,'%PDF-')&&bytes.length>=32){
+  const tail=new TextDecoder().decode(bytes.subarray(Math.max(0,bytes.length-2048)))
+  const eof=tail.lastIndexOf('%%EOF'),xref=tail.lastIndexOf('startxref')
+  if(eof>=0&&xref>=0&&xref<eof&&tail.slice(eof+5).trim()==='')contentType='application/pdf'
+ }else if(starts([0xff,0xd8,0xff])&&bytes.length>=16&&bytes[bytes.length-2]===0xff&&bytes[bytes.length-1]===0xd9){
+  contentType='image/jpeg'
+ }else if(starts([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])&&bytes.length>=45&&bytes[12]===0&&bytes[13]===0&&bytes[14]===0&&bytes[15]===13&&asciiAt(16,'IHDR')&&bytes[bytes.length-12]===0&&bytes[bytes.length-11]===0&&bytes[bytes.length-10]===0&&bytes[bytes.length-9]===0&&asciiAt(bytes.length-8,'IEND')){
+  contentType='image/png'
+ }else if(asciiAt(0,'RIFF')&&asciiAt(8,'WEBP')&&bytes.length>=21){
+  try{
+   const chunkSize=u32(16),chunkType=['VP8 ','VP8L','VP8X'].some(type=>asciiAt(12,type))
+   const required=20+chunkSize+(chunkSize%2)
+   if(u32(4)===bytes.length-8&&chunkType&&chunkSize>0&&required<=bytes.length)contentType='image/webp'
+  }catch{/* truncated RIFF/WebP structures are rejected */}
+ }
  if(!contentType||!allowedExtensions[contentType].includes(file.extension))return null
  return {extension:('.'+file.extension) as PropertyDocumentFormat['extension'],contentType}
 }
