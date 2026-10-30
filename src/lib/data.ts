@@ -2,6 +2,22 @@ export type ListingPurpose = 'sale' | 'rent'
 export type PropertyType = 'Apartment' | 'Villa' | 'House' | 'Plot' | 'Studio'
 export type ListingStatus = 'published' | 'pending' | 'rejected' | 'draft' | 'archived'
 
+export type PropertyImageMedia = {
+  id: string
+  url: string
+  fileId: string | null
+  mimeType: string | null
+  size: number | null
+}
+export type PropertyDocument = {
+  id: string
+  type: 'pdf' | 'image'
+  description: string
+  url: string
+  sourceDomain: string
+  sortOrder: number
+}
+
 export type Property = {
   id: string
   slug: string
@@ -18,6 +34,8 @@ export type Property = {
   areaUnit: 'sq ft'
   image: string
   gallery: string[]
+  imageMedia?: PropertyImageMedia[]
+  documents?: PropertyDocument[]
   description: string
   amenities: string[]
   featured?: boolean
@@ -29,7 +47,6 @@ export type Property = {
   verificationSubmittedAt?: string
   verificationReviewedAt?: string
   verificationNote?: string
-  videoUrl?: string
   status: ListingStatus
   ownerName: string
   ownerProfileImageUrl?: string
@@ -37,8 +54,7 @@ export type Property = {
   reviewMessage?: string
 }
 
-// These are editorial architectural images for brand composition only.
-// They are never attached to, or presented as, marketplace property records.
+// Editorial images for brand composition only. Never presented as marketplace property records.
 export const images = {
   hero: 'https://images.unsplash.com/photo-1600607687920-4e2a09cf159d?auto=format&fit=crop&w=1800&q=85',
   secondary: 'https://images.unsplash.com/photo-1600566753190-17f0baa2a6c3?auto=format&fit=crop&w=1200&q=80',

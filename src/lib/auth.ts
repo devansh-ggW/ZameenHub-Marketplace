@@ -15,7 +15,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   try {
     const headers = new Headers(init.headers)
     headers.set('Accept', 'application/json')
-    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+    // Let fetch create the multipart boundary for FormData uploads.
+    if (init.body && !(typeof FormData !== 'undefined' && init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
     const response = await fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' })
     let body: { ok?: boolean; data?: T; error?: string }
     try { body = await response.json() as typeof body }
