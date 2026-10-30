@@ -15,6 +15,9 @@ database_name = "zameenhub"
 database_id = "771caa73-f1ec-4f51-b2f2-06b94fd3f5c1"
 migrations_dir = "migrations"
 
+[triggers]
+crons = ["*/15 * * * *"]
+
 [vars]
 APP_URL = "https://zameenhub.dewify.shop"
 RESEND_FROM_EMAIL = "ZameenHub <verify@zameenhub.dewify.shop>"

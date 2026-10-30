@@ -1103,4 +1103,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     console.error('ZameenHub API error',error instanceof Error?error.message:'unknown error')
     return fail('The service could not complete this request. Please try again.',500)
   }
-} }
+},
+async scheduled(_controller: unknown, env: Env, context: { waitUntil(promise: Promise<unknown>): void }): Promise<void> {
+  if (!env.DB) return
+  context.waitUntil(retryImageKitCleanup(env.DB, env))
+}
+}
