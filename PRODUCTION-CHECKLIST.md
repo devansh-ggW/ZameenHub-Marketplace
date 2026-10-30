@@ -86,3 +86,15 @@
 - [ ] Confirm duplicate, high/medium-risk, and unscored listings remain private for review.
 - [ ] Add `MFA_ENCRYPTION_KEY` as a Cloudflare Worker Secret (at least 32 random characters) in the production and preview environments separately where required. Never commit it or place it in public vars.
 - [ ] Confirm `/api/auth/mfa/status` reports the configuration state and test authenticator enrolment, sign-in challenge, recovery codes, disable MFA, and account deletion with MFA enabled.
+
+
+## Property document transparency (migration 0006)
+- [ ] Back up intended D1 and apply migration 0006 before deploying Worker routes that query document tables.
+- [ ] Provision a private R2 bucket and bind as \`R2\` in the correct Worker environment. Until configured, uploads fail closed; no public/static fallback is allowed.
+- [ ] Test owner-only upload/manage/withdrawal; private originals must remain private even if a request attempts to publish them.
+- [ ] Test streamed 8 MiB upload cap, supported extension/signature matching, ten-document DB limit, duplicate hash flags and rate limits.
+- [ ] Confirm public endpoints serve only public copies on published listings with \`Cache-Control: no-store\`.
+- [ ] Confirm reports and moderation endpoints reject non-moderators and audit review/withdraw decisions.
+- [ ] Test object cleanup retry behavior in an isolated environment. Never log document contents or private object keys.
+- [ ] Use synthetic files only. Signature checks are not malware scanning and do not establish legal authenticity; owners prepare and inspect redacted copies.
+- [ ] Validate remote D1 state, R2 binding and Worker routes in a non-production environment before production rollout.

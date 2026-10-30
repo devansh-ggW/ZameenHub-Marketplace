@@ -137,3 +137,11 @@ Public reference pages:
 - [ ] Complete the legal/operator details and test the actual production deployment before publicly claiming “production ready”.
 
 **No source-code review can guarantee a website is “perfect.”** This report records concrete changes and the remaining checks instead of claiming a complete penetration test.
+
+
+## Property document implementation (branch pending review/deployment)
+- Separates private originals from seller-prepared public copies. D1 stores metadata, SHA-256, visibility and audit state; bytes are intended for private R2 storage only.
+- Worker routes check listing ownership, stream a maximum 8 MiB upload, match supported PDF/JPEG/PNG/WebP signatures to extensions, cap documents at ten per listing, flag identical hashes for triage, and require explicit publication confirmation.
+- Public file requests check current visibility and listing status, disable caching and use safe content headers. Private access requires the owner or authorized moderator. Reports and moderation routes enforce roles and request limits.
+- Identical hashes are not fraud conclusions. Format validation is not malware scanning; there is no OCR, automated PII redaction, land-record lookup or proof of ownership. Sellers prepare and inspect public copies themselves.
+- Uploads remain disabled until migration 0006 is applied and a private R2 bucket is bound. This branch has not provisioned Cloudflare resources, applied production migrations or deployed production.

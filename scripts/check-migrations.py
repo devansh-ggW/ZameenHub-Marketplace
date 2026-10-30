@@ -29,6 +29,7 @@ def main() -> int:
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
         "property_moderation_events", "property_media", "property_conversations", "property_messages",
+        "property_documents", "property_document_reports", "property_document_events", "property_document_object_cleanup",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
@@ -262,6 +263,64 @@ def main() -> int:
     db.execute("UPDATE mfa_recovery_codes SET used_at=? WHERE id=? AND used_at IS NULL", (now, "recovery-1"))
     expect(db.execute("SELECT used_at FROM mfa_recovery_codes WHERE id='recovery-1'").fetchone()[0] == now,
            "Recovery-code consumption failed")
+
+
+    document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
+    expect({"id","property_id","owner_id","document_role","document_type","content_type","size_bytes","sha256","object_key","visibility","review_status"} <= document_columns,
+           "Property document metadata is incomplete")
+    doc_tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    expect({"property_document_reports","property_document_events","property_document_object_cleanup"} <= doc_tables,
+           "Property document support tables are missing")
+
+    # Synthetic metadata only: no customer documents or contents are used.
+    for index in range(10):
+        doc_id = f"doc-{index}"
+        db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at)
+                      VALUES(?,?,?,?,?,?,?,?,?,?,?,'private','stored','pending',?,'',?,?)""",
+                   (doc_id,"published","owner","public_copy","sale_deed","Supporting record",".pdf","application/pdf",100,format(index+1,"064x"),"property-documents/"+doc_id,now,"owner",now))
+    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE event_type='uploaded'").fetchone()[0] == 10,
+           "Private upload audit events were not created")
+    try:
+        db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,published_at,last_actor_id,updated_at)
+                      VALUES('private-public','other-property','other-owner','private_original','sale_deed','Private deed','.pdf','application/pdf',100,?,'property-documents/private-public','public','stored','pending',?,?,?,?)""",
+                   (format(30,"064x"),now,now,"other-owner",now))
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("Private original was allowed to become public")
+    db.execute("UPDATE property_documents SET possible_duplicate=1 WHERE id IN ('doc-0','doc-1')")
+    expect(db.execute("SELECT COUNT(*) FROM property_documents WHERE possible_duplicate=1").fetchone()[0] == 2,
+           "Duplicate-file triage flags were not persisted")
+    db.execute("UPDATE property_documents SET visibility='public',published_at=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"owner",now))
+    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='published'").fetchone()[0] == 1,
+           "Document publication was not audited")
+    db.execute("UPDATE property_documents SET visibility='withdrawn',withdrawn_at=?,review_note=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"Owner withdrew publication","owner",now))
+    expect(db.execute("SELECT visibility FROM property_documents WHERE id='doc-0'").fetchone()[0] == "withdrawn",
+           "Document withdrawal state was not persisted")
+    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='withdrawn'").fetchone()[0] == 1,
+           "Document withdrawal was not audited")
+    db.execute("UPDATE property_documents SET review_status='reviewed',reviewer_id='reviewer',reviewed_at=?,review_note=?,last_actor_id=?,updated_at=? WHERE id='doc-0'",(now,"Checked property identifier and dates; title not legally certified.","reviewer",now))
+    expect(db.execute("SELECT COUNT(*) FROM property_document_events WHERE document_id='doc-0' AND event_type='reviewed'").fetchone()[0] == 1,
+           "Document review was not audited")
+    db.execute("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)",
+               ("doc-report-1","doc-0","published","reporter","privacy_exposure","Contains unrelated sensitive details",now))
+    try:
+        db.execute("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)",
+                   ("doc-report-2","doc-0","published","reporter","privacy_exposure","Repeated complaint",now))
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("Duplicate open document report was allowed")
+    db.execute("INSERT OR IGNORE INTO property_document_object_cleanup(object_key,created_at) VALUES(?,?)",("property-documents/old-object",now))
+    expect(db.execute("SELECT COUNT(*) FROM property_document_object_cleanup").fetchone()[0] == 1,
+           "Object cleanup queue failed")
+    try:
+        db.execute("""INSERT INTO property_documents(id,property_id,owner_id,document_role,document_type,display_label,file_extension,content_type,size_bytes,sha256,object_key,visibility,processing_status,review_status,submitted_at,review_note,last_actor_id,updated_at)
+                      VALUES('eleventh','published','owner','public_copy','sale_deed','Another record','.pdf','application/pdf',100,?,'property-documents/eleventh','private','stored','pending',?,'','owner',?)""",(format(50,"064x"),now,now))
+    except sqlite3.IntegrityError:
+        pass
+    else:
+        raise AssertionError("Eleventh property document was accepted")
 
     # Exercise the same owned-data cleanup order as account deletion.
     db.execute("DELETE FROM properties WHERE owner_id=?", ("owner",))
