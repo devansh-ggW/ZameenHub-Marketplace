@@ -660,7 +660,7 @@ export default {
       if(!env.R2)return fail('Private property document storage is not configured for this environment.',503)
       const object=await env.R2.get(doc.object_key);if(!object||!object.body)return fail('The document file is unavailable.',404)
       if(viewer&&viewer.id!==doc.owner_id&&['admin','moderator'].includes(viewer.role)){
-        try{await db.prepare("INSERT INTO property_document_events(id,document_id,property_id,actor_id,event_type,prior_state,new_state,note,created_at) VALUES(?,?,?,?, 'private_download',?,?,?,?)").bind(uuid(),doc.id,doc.property_id,viewer.id,doc.visibility,doc.review_status,'Authorized moderator download of a non-public document.',nowIso()).run()}
+        try{await db.prepare("INSERT INTO property_document_events(id,document_id,property_id,document_id_snapshot,property_id_snapshot,actor_id,event_type,prior_state,new_state,note,created_at) VALUES(?,?,?,?,?,?, 'private_download',?,?,?,?)").bind(uuid(),doc.id,doc.property_id,doc.id,doc.property_id,viewer.id,doc.visibility,doc.review_status,'Authorized moderator download of a non-public document.',nowIso()).run()}
         catch{return fail('The access audit could not be recorded. Retry later.',503)}
       }
       const download=url.searchParams.get('download')==='1'||!isPublic
@@ -678,7 +678,7 @@ export default {
       if(!doc)return fail('This published document is no longer available to report.',404)
       if(doc.owner_id===user.id)return fail('You cannot report a document on your own listing.',403)
       if(await db.prepare("SELECT id FROM property_document_reports WHERE document_id=? AND reporter_id=? AND status IN ('open','reviewing')").bind(documentId,user.id).first())return fail('You already have an open report for this document.',409)
-      try{const id=uuid();await db.prepare("INSERT INTO property_document_reports(id,document_id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,'open',?)").bind(id,doc.id,doc.property_id,user.id,reason,details,nowIso()).run();return ok({id,status:'open',message:'Document report received. A report alone is not proof of fraud.'},201)}
+      try{const id=uuid();await db.prepare("INSERT INTO property_document_reports(id,document_id,document_id_snapshot,property_id,property_id_snapshot,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,?,?,'open',?)").bind(id,doc.id,doc.id,doc.property_id,doc.property_id,user.id,reason,details,nowIso()).run();return ok({id,status:'open',message:'Document report received. A report alone is not proof of fraud.'},201)}
       catch{return fail('The report could not be saved. Refresh and try again.',409)}
     }
     const detailMatch=path.match(/^\/api\/properties\/([^/]+)$/)
