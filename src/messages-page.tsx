@@ -77,6 +77,7 @@ export function MessagesPage() {
 
   const loadMessages = useCallback(async (quiet = false) => {
     if (!selectedId) { setMessages([]); return }
+    if (!currentUserId) return
     if (!quiet) setMessagesLoading(true)
     const result = await apiRequest<ChatMessage[]>('/api/conversations/' + encodeURIComponent(selectedId) + '/messages')
     if (result.ok) {
