@@ -21,7 +21,7 @@ if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('st
 if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('inquiries SET status=? WHERE id=? AND EXISTS'))errors.push('Owner inquiry inbox must restrict each message to the listing owner')
 if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.includes('INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)')||!worker.includes('sendEmail(env,property.owner_email'))errors.push('Public inquiry submission must persist a lead and attempt owner email notification')
 if(!worker.includes('withProperty(db,p,true)'))errors.push('Admin review queue must include private verification evidence')
-if(!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')")||!worker.includes("status='published' AND COALESCE(verification_status,'unverified')<>'verified'"))errors.push('Admin queue must include published listings that still need manual verification')
+if(!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')")||!worker.includes("p.status='published' AND COALESCE(p.verification_status,'unverified')<>'verified'"))errors.push('Admin queue must include published listings that still need manual verification')
 if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage }')||!app.includes('<Route path="*" element={<NotFoundPage />} />'))errors.push('Unknown routes must use the dedicated not-found page, not the homepage')
 if(!read('src/App.tsx').includes('import { MessagesPage }')||!read('src/App.tsx').includes('path="/messages"'))errors.push('Private property chat route is missing')
 if(!read('src/components.tsx').includes('const isPublished = property.status === \'published\'')||!read('src/components.tsx').includes('{isPublished && <FavoriteButton'))errors.push('Private listing cards must not show unusable public links or favorites')
@@ -68,7 +68,7 @@ if(!worker.includes("const canDeleteAdmin="))errors.push('Last administrator del
 if(!worker.includes('p.price>=?')||!worker.includes('p.price<=?')||!worker.includes('p.area>=?')||!worker.includes('p.area<=?')||!worker.includes('p.bathrooms>=?'))errors.push('Property budget, bathroom and area filters are missing')
 if(!worker.includes('sanitizeAmenities(input.amenities)')||!worker.includes('amenities_json=?')||!worker.includes('json_each(CASE WHEN json_valid(p.amenities_json)'))errors.push('Listing amenities must be validated, persisted and filterable')
 if(!pages.includes('selectedAmenities')||!pages.includes('PROPERTY_AMENITIES.map'))errors.push('Buyer-facing amenity filters must be available and URL-synced')
-if(!read('src/listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/edit-listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/listing-page.tsx').includes('documents: documents.filter')||!read('src/edit-listing-page.tsx').includes('documents: documents.filter'))errors.push('Owners must be able to submit and edit real amenity data and seller-hosted documents')
+if(!read('src/listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/edit-listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/listing-page.tsx').includes('documents: publicDocuments')||!read('src/edit-listing-page.tsx').includes('documents: submittedDocuments')||!read('src/listing-page.tsx').includes('const publicDocuments = documents.filter')||!read('src/edit-listing-page.tsx').includes('const submittedDocuments = documents.filter'))errors.push('Owners must be able to submit and edit real amenity data and seller-hosted documents')
 if(!pages.includes("setMinPrice")||!pages.includes("setMaxPrice")||!pages.includes("setMinArea")||!pages.includes("setMaxArea"))errors.push('Buyer-side budget and area range filter controls are missing')
 if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage must load real public listings from the property API')
 if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
@@ -169,14 +169,14 @@ const authScreens=['src/account-pages.tsx','src/inquiries-page.tsx','src/message
 if(!app.includes('SessionKeepAlive')||!app.includes('getSession'))errors.push('The application must periodically renew persistent sessions')
 if(!worker.includes('SESSION_INACTIVITY_MS=30*24*60*60_000')||!worker.includes('SESSION_ABSOLUTE_MS=90*24*60*60_000'))errors.push('Session inactivity and absolute lifetime defaults must be 30 and 90 days')
 if(!worker.includes('refreshUserSession')||!worker.includes('absolute_expires_at>?')||!worker.includes('last_seen_at=?'))errors.push('Session checks must renew active DB sessions without exceeding absolute expiry')
-if(!worker.includes('/api/auth/logout-all')||!read('src/account-security.tsx').includes('/api/auth/logout-all'))errors.push('Users must be able to revoke all device sessions')
+if(!worker.includes("path==='/api/auth/logout-all'&&method==='POST'")||!read('src/account-security.tsx').includes("allDevices ? 'logout-all' : 'logout'")||!read('src/account-security.tsx').includes('Sign out all devices'))errors.push('Users must be able to revoke all device sessions')
 if(!worker.includes("HttpOnly; Secure; SameSite=Lax")||worker.includes('localStorage.setItem')||read('src/lib/auth.ts').includes('localStorage.setItem'))errors.push('Persistent authentication must remain in secure HttpOnly cookies, not browser local storage')
 for(const file of authScreens) {
   const source=read(file)
   if(source.includes('!session.ok || !session.data.authenticated')||source.includes('!result.ok || !result.data.authenticated'))errors.push(file+' must not redirect users on temporary session API errors')
 }
 if(!read('src/site-chrome.tsx').includes('Keep the last known navigation state on transient network failures'))errors.push('A temporary session check failure must not clear the existing authenticated navigation')
-if(!read('scripts/check-migrations.py').includes('logout-all must revoke every active user session')||!read('scripts/check-migrations.py').includes('Rolling activity must never extend a session beyond its 90-day absolute expiry'))errors.push('Migration tests must cover session renewal caps and revocation')
+if(!read('scripts/check-migrations.py').includes('Logout-all must revoke every active user session')||!read('scripts/check-migrations.py').includes('Rolling activity must never extend a session beyond its 90-day absolute expiry'))errors.push('Migration tests must cover session renewal caps and revocation')
 
 // Evidence Room and Listing History.
 if(!pages.includes('Property Evidence Room')||!pages.includes('Seller-provided · Not independently authenticated')||!pages.includes('document.createdAt')||!pages.includes('document.updatedAt'))errors.push('Buyer Evidence Room must show seller attribution and document added/updated dates')
@@ -185,7 +185,7 @@ if(!pages.includes('Listing History')||!pages.includes('/api/properties/')||!pag
 if(!worker.includes('property_listing_history')||!worker.includes('listingHistoryStatement')||!worker.includes('tracking_started'))errors.push('Listing change history must be recorded by the Worker and backfilled with an honest tracking-start marker')
 if(!worker.includes("event_type")||!worker.includes("'price_increased'")||!worker.includes("'price_decreased'")||!worker.includes("'document_replaced'")||!worker.includes("'listing_unpublished'"))errors.push('Listing history must cover price, documents and publication state changes')
 if(!worker.includes("WHERE id=? AND owner_id=? AND updated_at=?"))errors.push('Listing edits must guard against overwriting a newer concurrent edit')
-if(!read('src/edit-listing-page.tsx').includes('{ ...(item.id ? { id: item.id } : {}) }'))errors.push('Seller edits must preserve existing property document IDs and added dates')
+if(!read('src/edit-listing-page.tsx').includes('item.id ? { id: item.id } : {}'))errors.push('Seller edits must preserve existing property document IDs and added dates')
 if(!read('src/styles.css').includes('.listing-history-list')||!read('src/styles.css').includes('.evidence-image-preview'))errors.push('Evidence Room and timeline responsive styles are missing')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
 console.log('Static production smoke checks passed. These checks verify wiring, not cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')
