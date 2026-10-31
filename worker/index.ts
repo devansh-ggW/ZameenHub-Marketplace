@@ -977,10 +977,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,c.last_message_at AS lastMessageAt,
         CASE WHEN c.buyer_id=? THEN 'buyer' ELSE 'owner' END AS role,
         CASE WHEN c.buyer_id=? THEN uo.name ELSE ub.name END AS otherUserName,
-        COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
-        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unreadCount
+        COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id
+          AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)
+          ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
+        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)) AS unreadCount
         FROM property_conversations c JOIN properties p ON p.id=c.property_id JOIN users ub ON ub.id=c.buyer_id JOIN users uo ON uo.id=c.owner_id
-        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
+        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
       return ok(result.results)
     }
     if(path==='/api/conversations'&&method==='POST') {
@@ -1021,12 +1024,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           FROM property_messages m
           JOIN users u ON u.id=m.sender_id
           LEFT JOIN property_messages rm ON rm.id=m.reply_to_message_id
+            AND NOT EXISTS (SELECT 1 FROM property_message_hidden rh WHERE rh.message_id=rm.id AND rh.user_id=?)
           LEFT JOIN users ru ON ru.id=rm.sender_id
           LEFT JOIN property_messages fm ON fm.id=m.forwarded_from_message_id
           LEFT JOIN users fu ON fu.id=fm.sender_id
           WHERE m.conversation_id=?
             AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)
-          ORDER BY m.created_at DESC LIMIT 100`).bind(id,user.id).all<Record<string,unknown>>()
+          ORDER BY m.created_at DESC LIMIT 100`).bind(user.id,id,user.id).all<Record<string,unknown>>()
         return ok(result.results.reverse())
       }
       if(conversation.status!=='open')return fail('This conversation is closed.',409)
@@ -1064,7 +1068,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         const editedAt=nowIso()
         const updated=await db.prepare('UPDATE property_messages SET body=?,edited_at=? WHERE id=? AND conversation_id=? AND sender_id=? AND deleted_at IS NULL').bind(nextBody,editedAt,messageId,conversationId,user.id).run()
         if(!updated.meta.changes)return fail('The message changed before the edit could be saved. Refresh and retry.',409)
-        await db.prepare('UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=?').bind(editedAt,editedAt,conversationId).run()
+        await db.prepare('UPDATE property_conversations SET updated_at=? WHERE id=?').bind(editedAt,conversationId).run()
         return ok({id:messageId,body:nextBody,editedAt})
       }
       if(messageRow.sender_id!==user.id)return fail('Only the original sender can delete a message for everyone.',403)
@@ -1073,7 +1077,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const deletedAt=nowIso()
       const deleted=await db.prepare("UPDATE property_messages SET body='This message was deleted.',deleted_at=?,edited_at=NULL WHERE id=? AND conversation_id=? AND sender_id=? AND deleted_at IS NULL").bind(deletedAt,messageId,conversationId,user.id).run()
       if(!deleted.meta.changes)return fail('The message could not be deleted. Refresh and retry.',409)
-      await db.prepare('UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=?').bind(deletedAt,deletedAt,conversationId).run()
+      await db.prepare('UPDATE property_conversations SET updated_at=? WHERE id=?').bind(deletedAt,conversationId).run()
       return ok({id:messageId,deleted:true,deletedAt})
     }
     const messageDeleteForMeMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)\/me$/)
@@ -1099,6 +1103,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!source)return fail('Source conversation not found.',404)
       const target=await db.prepare('SELECT id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(targetConversationId,user.id,user.id).first<{id:string;status:string}>()
       if(!target)return fail('You cannot forward messages to a conversation you do not participate in.',403)
+      if(targetConversationId===sourceConversationId)return fail('Choose a different conversation to forward this message to.',400)
       if(target.status!=='open')return fail('The destination conversation is closed.',409)
       const original=await db.prepare("SELECT id,body FROM property_messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=property_messages.id AND h.user_id=?)").bind(messageId,sourceConversationId,user.id).first<{id:string;body:string}>()
       if(!original)return fail('The source message is no longer available to forward.',404)
