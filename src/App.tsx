@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { Route, Routes } from 'react-router-dom'
+import { getSession } from './lib/auth'
 import { MotionProvider, ScrollProgress } from './motion'
 import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage } from './pages'
 import { AccountPage } from './account-pages'
@@ -13,9 +15,33 @@ import { EmiCalculatorPage } from './emi-calculator-page'
 import { SiteFooter, SiteHeader } from './site-chrome'
 import { CookieNotice } from './cookie-notice'
 
+function SessionKeepAlive() {
+  useEffect(() => {
+    let active = true
+    let pending = false
+    const refresh = async () => {
+      if (!active || pending || document.visibilityState === 'hidden') return
+      pending = true
+      try { await getSession() } catch { /* A transient failure must not clear a valid session. */ }
+      finally { pending = false }
+    }
+    void refresh()
+    const interval = window.setInterval(() => { void refresh() }, 6 * 60 * 60 * 1000)
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') void refresh() }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
+  return null
+}
+
 export default function App() {
   return <MotionProvider>
     <ScrollProgress />
+    <SessionKeepAlive />
     <SiteHeader />
     <Routes>
       <Route path="/" element={<HomePage />} />
