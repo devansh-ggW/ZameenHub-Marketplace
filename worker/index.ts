@@ -308,7 +308,9 @@ async function readLimitedMultipart(request:Request,maxBytes=MAX_IMAGE_MULTIPART
   } catch {
     return {formData:null,tooLarge:false}
   }
-  const rebuilt=new Request(request.url,{method:'POST',headers:new Headers(request.headers),body:new Blob(chunks)})
+  const headers=new Headers(request.headers)
+  headers.delete('content-length')
+  const rebuilt=new Request(request.url,{method:'POST',headers,body:new Blob(chunks)})
   const formData=await rebuilt.formData().catch(()=>null)
   return {formData,tooLarge:false}
 }
@@ -1063,7 +1065,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/conversations'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your messages.',401)
       if(!await authLimit(request,db,'conversation-list',30)||!await limited(db,'conversation-list-user:'+user.id,90,60))return fail('Too many inbox requests. Please try again shortly.',429)
-      const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,c.last_message_at AS lastMessageAt,
+      const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,COALESCE((SELECT m.created_at FROM property_messages m WHERE m.conversation_id=c.id
+          AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)
+          ORDER BY m.created_at DESC LIMIT 1),c.created_at) AS lastMessageAt,
         CASE WHEN c.buyer_id=? THEN 'buyer' ELSE 'owner' END AS role,
         CASE WHEN c.buyer_id=? THEN uo.name ELSE ub.name END AS otherUserName,
         COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id
@@ -1072,7 +1076,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)) AS unreadCount
         FROM property_conversations c JOIN properties p ON p.id=c.property_id JOIN users ub ON ub.id=c.buyer_id JOIN users uo ON uo.id=c.owner_id
-        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
+        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY lastMessageAt DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
       return ok(result.results)
     }
     if(path==='/api/conversations'&&method==='POST') {
@@ -1129,7 +1133,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const replyToMessageId=clean(input.replyToMessageId,80)
       if(!message||message.length>2000)return fail('Write a message of 1–2,000 characters.')
       if(replyToMessageId) {
-        const original=await db.prepare('SELECT id FROM property_messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL').bind(replyToMessageId,id).first<{id:string}>()
+        const original=await db.prepare('SELECT id FROM property_messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=property_messages.id AND h.user_id=?)').bind(replyToMessageId,id,user.id).first<{id:string}>()
         if(!original)return fail('The message you are replying to is no longer available.',409)
       }
       const timestamp=nowIso(),messageId=uuid()
