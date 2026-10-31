@@ -38,7 +38,11 @@ export function ListingPage() {
     void getSession().then(result => {
       if (!current) return
       setChecking(false)
-      if (result.ok && result.data.authenticated) setAuthorized(true)
+      if (!result.ok) {
+        setError('We could not check your sign-in right now. Your session has not been cleared. Check your connection and retry.')
+        return
+      }
+      if (result.data.authenticated) setAuthorized(true)
       else navigate('/login?next=' + encodeURIComponent(location.pathname + location.search), { replace: true })
     })
     return () => { current = false }
