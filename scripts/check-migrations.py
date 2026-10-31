@@ -210,8 +210,8 @@ def main() -> int:
         (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unread
         FROM property_conversations c JOIN properties p ON p.id=c.property_id
         WHERE c.buyer_id=? OR c.owner_id=?""", ("reporter", "reporter", "reporter")).fetchall()
-    expect(len(buyer_conversations) == 1 and buyer_conversations[0]["id"] == "conversation-one" and buyer_conversations[0]["unread"] == 0,
-           "Buyer conversation list did not return the right private conversation")
+    expect(len(buyer_conversations) == 1 and buyer_conversations[0]["id"] == "conversation-one" and buyer_conversations[0]["unread"] == 2,
+           "Buyer conversation list did not count the two incoming owner messages")
     owner_unread = db.execute("""SELECT COUNT(*) FROM property_messages
         WHERE conversation_id='conversation-one' AND sender_id<>? AND read_at IS NULL""", ("owner",)).fetchone()[0]
     expect(owner_unread == 1, "Property owner unread count did not include the buyer's message")
