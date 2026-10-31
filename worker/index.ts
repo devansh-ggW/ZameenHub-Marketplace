@@ -763,9 +763,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const propertyId=decodeURIComponent(propertyImageDeleteMatch[1]),mediaId=decodeURIComponent(propertyImageDeleteMatch[2])
       const media=await db.prepare("SELECT m.id,m.imagekit_file_id FROM property_media m JOIN properties p ON p.id=m.property_id WHERE m.id=? AND m.property_id=? AND p.owner_id=? AND m.media_type='image'").bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
       if(!media)return fail('Property image not found in your account.',404)
-      if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env))return fail('The image could not be removed from ImageKit. The listing was not changed.',502)
+      const hidden=await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
+      if(!hidden.meta.changes)return fail('The image could not be removed. Refresh and retry.',409)
+      if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env))return fail('The image is hidden from the listing but ImageKit could not delete it yet. Retry the removal later.',502)
       const deleted=await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
-      if(!deleted.meta.changes)return fail('The image could not be removed. Refresh and retry.',409)
+      if(!deleted.meta.changes)return fail('The image was removed from ImageKit and is hidden from the listing; metadata cleanup still needs retry.',409)
       return ok({id:mediaId,deleted:true})
     }
     const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
@@ -775,11 +777,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=decodeURIComponent(ownedPropertyMatch[1])
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string}>()
       if(!owned)return fail('Listing not found in your account.',404)
-      const mediaFiles=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE property_id=? AND imagekit_file_id IS NOT NULL").bind(id).all<{imagekit_file_id:string}>()
+      // Hide every media row first. If ImageKit is temporarily unavailable,
+      // the listing remains usable without broken image URLs and deletion can be retried.
+      await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE property_id=? AND imagekit_file_id IS NOT NULL").bind(id).run()
+      const mediaFiles=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE property_id=? AND imagekit_file_id IS NOT NULL AND status='deletion_pending'").bind(id).all<{imagekit_file_id:string}>()
       for(const media of mediaFiles.results) {
-        if(!await imageKitDelete(media.imagekit_file_id,env))return fail('A property image could not be removed from ImageKit. The listing has not been deleted.',502)
+        if(!await imageKitDelete(media.imagekit_file_id,env))return fail('Property photos are hidden, but ImageKit could not delete every file yet. Retry the listing deletion later.',502)
       }
-      // Delete dependent rows only after all provider media cleanup succeeds.
+      // Remove D1 ownership and dependent rows only after provider cleanup succeeds.
       const deletion=await db.batch([
         db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
         db.prepare('DELETE FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
