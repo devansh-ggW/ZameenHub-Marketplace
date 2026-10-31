@@ -639,3 +639,18 @@ img { max-width: 100%; display: block; }
   .nav-authenticated .nav-links.open > .nav-account-menu-link { display: flex !important; }
 }
 
+
+
+/* Seller-hosted property evidence links */
+.document-link-list { display: grid; gap: 10px; margin-top: 16px; }
+.document-link-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 18px; border: 1px solid var(--line); background: #fff; min-width: 0; }
+.document-link-card > div { min-width: 0; }
+.document-link-card strong { display: block; overflow-wrap: anywhere; }
+.document-link-card p { margin: 5px 0 0; font-size: 11px; }
+.document-link-card a { flex: 0 0 auto; color: var(--blue); font-size: 12px; font-weight: 800; text-decoration: none; }
+.document-link-card a:hover { text-decoration: underline; }
+.media-url-row > img { display: block; width: 112px; height: 80px; object-fit: cover; border: 1px solid var(--line); background: #f4f6f9; }
+@media (max-width: 640px) {
+  .document-link-card { align-items: flex-start; flex-direction: column; gap: 10px; padding: 14px; }
+  .document-link-card a { max-width: 100%; overflow-wrap: anywhere; }
+}
