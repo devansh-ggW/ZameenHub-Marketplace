@@ -1,14 +1,15 @@
 import { base32Encode, matchedTotpCounter } from './totp'
 export type Env = {
   DB?: D1Database
-  R2?: R2Bucket
+  IMAGEKIT_PRIVATE_KEY?: string
+  IMAGEKIT_URL_ENDPOINT?: string
   MFA_ENCRYPTION_KEY?: string
   RESEND_API_KEY?: string
   RESEND_FROM_EMAIL?: string
   SUPPORT_EMAIL?: string
   APP_URL?: string
 }
-type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
+type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; profile_image_file_id?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
 type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
@@ -195,19 +196,23 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includePrivateVerification=false) {
+type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; sortOrder:number }
+type PropertyImageView = { id:string; url:string; fileId:string|null; sortOrder:number }
+function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:PropertyImageView[]=[],documents:PropertyDocumentView[]=[]) {
   const verificationStatus=p.verification_status||'unverified'
   return {
     id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
     propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
     bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
-    image:images[0]||'',gallery:images,videoUrl:videoUrl||'',description:p.description,
+    image:images[0]||'',gallery:images,description:p.description,
     amenities:parseArray(p.amenities_json),status:p.status,
     verified:verificationStatus==='verified',
     verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
     ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',
     favorite:!!p.favorite,
+    documents,
     ...(includePrivateVerification ? {
+      imageMedia,
       verificationEvidenceType:p.verification_evidence_type||'none',
       verificationEvidenceUrl:p.verification_evidence_url||'',
       verificationSubmittedAt:p.verification_submitted_at||undefined,
@@ -233,33 +238,92 @@ function normalizeHttpsUrl(value:unknown,max=1500):string|null {
     return parsed.toString()
   } catch { return null }
 }
-function sanitizeImageUrls(value:unknown):string[]|null {
+const allowedDocumentTypes=new Set(['pdf','image'])
+function sanitizePropertyDocuments(value:unknown):Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>|null {
   if(value===undefined||value===null)return []
-  if(!Array.isArray(value)||value.length>5)return null
-  const urls:string[]=[]
+  if(!Array.isArray(value)||value.length>10)return null
+  const seen=new Set<string>()
+  const documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>=[]
   for(const item of value) {
-    if(typeof item!=='string'||item.length>1500)return null
-    const raw=clean(item,1500)
-    if(!raw)continue
-    const normalized=normalizeHttpsUrl(raw,1500)
-    if(!normalized)return null
-    if(!urls.includes(normalized))urls.push(normalized)
+    if(!item||typeof item!=='object'||Array.isArray(item))return null
+    const record=item as Record<string,unknown>
+    const type=clean(record.documentType,12)
+    const description=clean(record.description,180)
+    const url=normalizeHttpsUrl(record.url,2000)
+    if(!allowedDocumentTypes.has(type)||description.length<3||!url)return null
+    if(seen.has(url))return null
+    seen.add(url)
+    const sourceDomain=new URL(url).hostname.toLowerCase()
+    documents.push({type:type as 'pdf'|'image',description,url,sourceDomain})
   }
-  return urls.length<=5?urls:null
+  return documents
 }
-function sanitizeVideoUrl(value:unknown):string|null {
-  if(value===undefined||value===null||value==='')return ''
-  if(typeof value!=='string'||value.length>1500)return null
-  const raw=clean(value,1500)
-  if(!raw)return ''
-  const normalized=normalizeHttpsUrl(raw,1500)
-  if(!normalized)return null
+function propertyDocumentInsertStatements(db:D1Database,propertyId:string,ownerId:string,documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>):D1PreparedStatement[] {
+  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order) VALUES(?,?,?,?,?,?,?,?)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index))
+}
+async function replacePropertyDocuments(db:D1Database,propertyId:string,ownerId:string,documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>) {
+  await db.batch([
+    db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId),
+    ...propertyDocumentInsertStatements(db,propertyId,ownerId,documents)
+  ])
+}
+function imageKitAuthorization(env:Env):string|null {
+  if(!env.IMAGEKIT_PRIVATE_KEY)return null
+  return 'Basic '+btoa(env.IMAGEKIT_PRIVATE_KEY+':')
+}
+function imageKitUrlAllowed(value:unknown,env:Env):value is string {
+  if(typeof value!=='string'||!env.IMAGEKIT_URL_ENDPOINT)return false
   try {
-    const parsed=new URL(normalized),host=parsed.hostname.toLowerCase(),path=parsed.pathname.toLowerCase()
-    const hostedVideo=host==='youtu.be'||host==='youtube.com'||host.endsWith('.youtube.com')||host==='youtube-nocookie.com'||host.endsWith('.youtube-nocookie.com')||host==='vimeo.com'||host.endsWith('.vimeo.com')
-    const directVideo=/\.(mp4|webm|ogg|m3u8)$/.test(path)
-    return hostedVideo||directVideo?normalized:null
-  } catch { return null }
+    const actual=new URL(value),endpoint=new URL(env.IMAGEKIT_URL_ENDPOINT)
+    const prefix=endpoint.pathname.replace(/\\/$/,'')
+    return actual.protocol==='https:'&&actual.hostname===endpoint.hostname&&(!prefix||prefix==='/ '||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
+  } catch { return false }
+}
+async function sniffImageFile(file:File):Promise<{mime:string;extension:string}|null> {
+  if(file.size<12||file.size>10*1024*1024)return null
+  const header=new Uint8Array(await file.slice(0,12).arrayBuffer())
+  const mime=file.type.toLowerCase()
+  if(mime==='image/jpeg'&&header[0]===0xff&&header[1]===0xd8&&header[2]===0xff)return {mime,extension:'jpg'}
+  if(mime==='image/png'&&header[0]===0x89&&header[1]===0x50&&header[2]===0x4e&&header[3]===0x47&&header[4]===0x0d&&header[5]===0x0a&&header[6]===0x1a&&header[7]===0x0a)return {mime,extension:'png'}
+  if(mime==='image/webp'&&String.fromCharCode(...header.slice(0,4))==='RIFF'&&String.fromCharCode(...header.slice(8,12))==='WEBP')return {mime,extension:'webp'}
+  return null
+}
+async function imageKitUpload(file:File,fileName:string,folder:string,env:Env):Promise<{fileId:string;url:string;filePath:string;size:number}|null> {
+  const authorization=imageKitAuthorization(env)
+  if(!authorization||!env.IMAGEKIT_URL_ENDPOINT)return null
+  const form=new FormData()
+  form.append('file',file,fileName)
+  form.append('fileName',fileName)
+  form.append('folder',folder)
+  form.append('useUniqueFileName','true')
+  form.append('tags','zameenhub,property-image')
+  const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
+  const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string}|null
+  if(!response.ok||!result?.fileId||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env))return null
+  if(!result.filePath.startsWith(folder.replace(/\\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size)return null
+  return {fileId:result.fileId,url:result.url,filePath:result.filePath,size:Number(result.size)}
+}
+async function imageKitDelete(fileId:string,env:Env):Promise<boolean> {
+  const authorization=imageKitAuthorization(env)
+  if(!authorization)return false
+  const response=await fetch('https://api.imagekit.io/v1/files/'+encodeURIComponent(fileId),{method:'DELETE',headers:{authorization,accept:'application/json'}})
+  return response.ok||response.status===404
+}
+async function propertyMedia(db:D1Database,id:string,includeMetadata=false) {
+  const result=await db.prepare("SELECT id,media_url,imagekit_file_id,sort_order FROM property_media WHERE property_id=? AND media_type='image' AND status='active' ORDER BY sort_order ASC").bind(id).all<{id:string;media_url:string;imagekit_file_id:string|null;sort_order:number}>()
+  const rows=result.results.slice(0,5)
+  return {
+    images:rows.map(row=>row.media_url),
+    imageMedia:includeMetadata?rows.map(row=>({id:row.id,url:row.media_url,fileId:row.imagekit_file_id,sortOrder:row.sort_order})):[],
+  }
+}
+async function propertyDocuments(db:D1Database,id:string):Promise<PropertyDocumentView[]> {
+  const result=await db.prepare('SELECT id,document_type,description,url,source_domain,sort_order FROM property_documents WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;sort_order:number}>()
+  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,sortOrder:row.sort_order}))
+}
+async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
+  const [media,documents]=await Promise.all([propertyMedia(db,p.id,includePrivateVerification),propertyDocuments(db,p.id)])
+  return propertyView(p,media.images,includePrivateVerification,media.imageMedia,documents)
 }
 const verificationEvidenceTypes=new Set(['none','official_record','property_tax_record','registry_reference','other_public_record'])
 function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string;url:string;status:'unverified'|'submitted';submittedAt:string|null}|null {
