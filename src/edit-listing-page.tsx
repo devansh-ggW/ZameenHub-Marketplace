@@ -83,7 +83,7 @@ export function EditListingPage() {
       return
     }
     setSaving(true)
-    const submittedDocuments = documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ documentType: item.documentType, description: item.description.trim(), url: item.url.trim() }))
+    const submittedDocuments = documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ ...(item.id ? { id: item.id } : {}), documentType: item.documentType, description: item.description.trim(), url: item.url.trim() }))
     const hasPublicPhoto = (property?.gallery.length || 0) > 0 || imageFiles.length > 0
     const hasPublicDocument = submittedDocuments.length > 0
     const result = await apiRequest<{ id: string; status: 'published' | 'draft'; verified: false; message: string }>('/api/my/properties/' + encodeURIComponent(id), {
