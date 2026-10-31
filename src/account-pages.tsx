@@ -96,7 +96,39 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
   return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Review unverified public listings and handle older pending submissions. Only administrators can mark a listing Verified.' : kind === 'my-listings' ? 'New submissions publish immediately and carry an Unverified badge until an administrator checks the details.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
     {loading ? <p className="status-message">Loading your account…</p> : <>
-      {kind === 'profile' && user && <><div className="form-card account-profile"><div className="profile-heading"><div className="profile-avatar">{profileImageUrl ? <img src={profileImageUrl} alt={user.name + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>}</div><div><h2>Account details</h2><p className="muted">Your profile image appears beside your public listing contact details.</p></div></div><p><strong>Name</strong><br />{user.name}</p><p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role}</p><form className="profile-image-form" onSubmit={async event => { event.preventDefault(); setError(''); setNotice(''); setSavingProfile(true); const result = await apiRequest<{ profileImageUrl: string }>('/api/account/profile', { method: 'PATCH', body: JSON.stringify({ profileImageUrl: profileImageUrl.trim() }) }); setSavingProfile(false); if (!result.ok) { setError(result.error); return } setProfileImageUrl(result.data.profileImageUrl || ''); setUser(current => current ? { ...current, profileImageUrl: result.data.profileImageUrl || '' } : current); setNotice('Profile image URL saved.') }}><div className="form-field"><label htmlFor="profile-image-url">Profile image URL</label><input className="form-control" id="profile-image-url" type="url" maxLength={1500} value={profileImageUrl} onChange={event => setProfileImageUrl(event.target.value)} placeholder="https://example.com/your-profile-photo.jpg" /><small>Use a public HTTPS image URL. You can clear it to use your initials. ZameenHub stores the URL in D1 and does not upload the image.</small></div><div className="listing-actions"><button className="btn btn-outline" type="button" disabled={savingProfile || !profileImageUrl} onClick={() => setProfileImageUrl('')}>Remove image</button><button className="btn btn-primary" disabled={savingProfile}>{savingProfile ? 'Saving…' : 'Save profile image'}</button></div></form>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice}</p>}<Link to="/list-property" className="btn btn-primary">List a property</Link></div><AccountSecurity user={user} /></>}
+      {kind === 'profile' && user && <><div className="form-card account-profile"><div className="profile-heading"><div className="profile-avatar">{profileImageUrl ? <img src={profileImageUrl} alt={user.name + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>}</div><div><h2>Account details</h2><p className="muted">Your profile image appears beside your public listing contact details.</p></div></div><p><strong>Name</strong><br />{user.name}</p><p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role}</p><form className="profile-image-form" onSubmit={async event => {
+        event.preventDefault()
+        const fileInput = event.currentTarget.elements.namedItem('profile-image-file') as HTMLInputElement | null
+        const file = fileInput?.files?.[0]
+        if (!file) { setError('Choose a JPEG, PNG or WebP image first.'); return }
+        setError(''); setNotice(''); setSavingProfile(true)
+        const form = new FormData(); form.append('file', file)
+        const result = await apiRequest<{ profileImageUrl: string; cleanupPending?: boolean }>('/api/account/profile-image', { method: 'POST', body: form })
+        setSavingProfile(false)
+        if (!result.ok) { setError(result.error); return }
+        setProfileImageUrl(result.data.profileImageUrl)
+        setUser(current => current ? { ...current, profileImageUrl: result.data.profileImageUrl } : current)
+        if (fileInput) fileInput.value = ''
+        setNotice(result.data.cleanupPending ? 'New profile image saved. The old ImageKit file needs cleanup.' : 'Profile image uploaded to ImageKit.')
+      }}>
+        <div className="form-field">
+          <label htmlFor="profile-image-file">Profile image</label>
+          <input className="form-control" id="profile-image-file" name="profile-image-file" type="file" accept="image/jpeg,image/png,image/webp" />
+          <small>JPEG, PNG or WebP · maximum 10 MB. Your image is uploaded to ImageKit; the original file is not stored in D1.</small>
+        </div>
+        <div className="listing-actions">
+          <button className="btn btn-outline" type="button" disabled={savingProfile || !profileImageUrl} onClick={async () => {
+            setError(''); setNotice(''); setSavingProfile(true)
+            const result = await apiRequest<{ profileImageUrl: string }>('/api/account/profile-image', { method: 'DELETE' })
+            setSavingProfile(false)
+            if (!result.ok) { setError(result.error); return }
+            setProfileImageUrl('')
+            setUser(current => current ? { ...current, profileImageUrl: '' } : current)
+            setNotice('Profile image removed from ImageKit.')
+          }}>Remove image</button>
+          <button className="btn btn-primary" disabled={savingProfile}>{savingProfile ? 'Uploading…' : 'Upload profile image'}</button>
+        </div>
+      </form>{error && <p className="status-message error" role="alert">{error}</p>}{notice && <p className="status-message success" role="status">{notice}</p>}<Link to="/list-property" className="btn btn-primary">List a property</Link></div><AccountSecurity user={user} /></>}
       {kind !== 'profile' && error && <p className="status-message error" role="alert">{error}</p>}
       {kind !== 'profile' && notice && <p className="status-message success" role="status">{notice}</p>}
       {kind !== 'profile' && !error && items.length > 0 && <div className="property-grid">{items.map(item => <div className="account-property" key={item.id}>
