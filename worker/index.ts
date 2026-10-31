@@ -275,7 +275,7 @@ function imageKitUrlAllowed(value:unknown,env:Env):value is string {
   if(typeof value!=='string'||!env.IMAGEKIT_URL_ENDPOINT)return false
   try {
     const actual=new URL(value),endpoint=new URL(env.IMAGEKIT_URL_ENDPOINT)
-    const prefix=endpoint.pathname.replace(/\\/$/,'')
+    const prefix=endpoint.pathname.replace(/\/$/,'')
     return actual.protocol==='https:'&&actual.hostname===endpoint.hostname&&(!prefix||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
   } catch { return false }
 }
@@ -300,7 +300,7 @@ async function imageKitUpload(file:File,fileName:string,folder:string,env:Env):P
   const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
   const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string}|null
   if(!response.ok||!result?.fileId||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env))return null
-  if(!result.filePath.startsWith(folder.replace(/\\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size)return null
+  if(!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size)return null
   return {fileId:result.fileId,url:result.url,filePath:result.filePath,size:Number(result.size)}
 }
 async function imageKitDelete(fileId:string,env:Env):Promise<boolean> {
@@ -336,24 +336,6 @@ function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string
   const normalized=normalizeHttpsUrl(rawUrl,1500)
   if(rawType==='none'||!normalized)return null
   return {type:rawType,url:normalized,status:'submitted',submittedAt:nowIso()}
-}
-function mediaInsertStatements(db:D1Database,id:string,images:string[],videoUrl:string):D1PreparedStatement[] {
-  const statements:D1PreparedStatement[]=[]
-  images.forEach((mediaUrl,index)=>statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'image',?,?,?)").bind(uuid(),id,mediaUrl,'Property image '+(index+1),index)))
-  if(videoUrl)statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'video',?,'Property video',0)").bind(uuid(),id,videoUrl))
-  return statements
-}
-async function savePropertyMedia(db:D1Database,id:string,images:string[],videoUrl:string) {
-  await db.batch([db.prepare('DELETE FROM property_media WHERE property_id=?').bind(id),...mediaInsertStatements(db,id,images,videoUrl)])
-}
-async function propertyMedia(db:D1Database,id:string) {
-  const result=await db.prepare('SELECT media_type,media_url FROM property_media WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{media_type:string;media_url:string}>()
-  const rows=result.results
-  return {images:rows.filter(row=>row.media_type==='image').slice(0,5).map(row=>row.media_url),videoUrl:rows.find(row=>row.media_type==='video')?.media_url||''}
-}
-async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
-  const media=await propertyMedia(db,p.id)
-  return propertyView(p,media.images,media.videoUrl,includePrivateVerification)
 }
 function sameOrigin(request:Request,url:URL) {
   return request.headers.get('Origin')===url.origin
@@ -790,7 +772,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=decodeURIComponent(ownedPropertyMatch[1])
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string}>()
       if(!owned)return fail('Listing not found in your account.',404)
-      // Delete dependent rows first. Each statement is scoped to a property that still belongs to this user.
+      const mediaFiles=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE property_id=? AND imagekit_file_id IS NOT NULL").bind(id).all<{imagekit_file_id:string}>()
+      for(const media of mediaFiles.results) {
+        if(!await imageKitDelete(media.imagekit_file_id,env))return fail('A property image could not be removed from ImageKit. The listing has not been deleted.',502)
+      }
+      // Delete dependent rows only after all provider media cleanup succeeds.
       const deletion=await db.batch([
         db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
         db.prepare('DELETE FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
@@ -820,8 +806,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
-      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
+       if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
