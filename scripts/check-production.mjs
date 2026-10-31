@@ -33,6 +33,7 @@ const listingEditStart=worker.indexOf("if(ownedPropertyMatch&&method==='PATCH')"
 const listingEditEnd=worker.indexOf("if(path==='/api/my/properties'&&method==='GET')",listingEditStart)
 const listingEditBlock=listingEditStart>=0&&listingEditEnd>listingEditStart?worker.slice(listingEditStart,listingEditEnd):''
 if(!listingEditBlock||listingEditBlock.includes('riskLevel:risk.level')||listingEditBlock.includes('riskScore:risk.score')||listingEditBlock.includes('riskReasons:risk.reasons'))errors.push('Listing edit responses must not expose internal AI risk scores or reasons to listing owners')
+if(!listingEditBlock.includes("ai_model='not-run'")||/ai_model\s*=\s*NULL/i.test(listingEditBlock))errors.push('Listing edits must reset ai_model to not-run; NULL violates the properties.ai_model NOT NULL constraint')
 if(!worker.includes("'published','unverified'")||!worker.includes("verified:false"))errors.push('New listings must publish immediately and begin Unverified')
 if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
 if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
