@@ -29,7 +29,7 @@ export function ListingPage() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
   const [documents, setDocuments] = useState<Array<{ documentType: 'pdf' | 'image'; description: string; url: string }>>([])
-  const steps = ['Purpose', 'Details', 'Description', 'Review']
+  const steps = ['Purpose', 'Details', 'Photos & documents']
   const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
   const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
 
@@ -46,21 +46,25 @@ export function ListingPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setNotice('')
-    if (step < 4) { setStep(step + 1); return }
+    if (step < 3) { setStep(step + 1); return }
     const numericPrice = Number(price)
     if (!title.trim() || title.trim().length < 6 || !locationText.trim() || !city.trim() || description.trim().length < 20 || !Number.isSafeInteger(numericPrice) || numericPrice < 1) {
       setError('Enter a clear title, location, city, a valid positive price, and a description of at least 20 characters.')
       setStep(2); return
     }
+    const publicDocuments = documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ ...item, url: item.url.trim(), description: item.description.trim() }))
+    if (imageFiles.length === 0) { setError('Upload at least one property photo before submitting.'); return }
+    if (publicDocuments.length === 0) { setError('Add at least one seller-provided property document link before submitting.'); return }
+
     setBusy(true)
     setUploadStatus('')
-    const result = await apiRequest<{ id: string; status: 'published'; verified: false; message?: string }>('/api/properties', {
+    const result = await apiRequest<{ id: string; status: 'draft'; verified: false; message?: string }>('/api/properties', {
       method: 'POST',
       body: JSON.stringify({
         title: title.trim(), location: locationText.trim(), city: city.trim(), purpose, propertyType,
         price: numericPrice, bedrooms: Number(bedrooms), bathrooms: Number(bathrooms), area: Number(area || 0),
         description: description.trim(), amenities,
-        documents: documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ ...item, url: item.url.trim(), description: item.description.trim() })),
+        documents: publicDocuments,
         verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(),
       }),
     })
@@ -84,16 +88,22 @@ export function ListingPage() {
       knownMediaIds.add(uploaded.data.id)
       setUploadProgress(0)
     }
+    const publication = await apiRequest<{ id: string; status: 'published'; message: string }>('/api/my/properties/' + encodeURIComponent(result.data.id) + '/publish', { method: 'POST' })
     setBusy(false)
-    setNotice(result.data.message ?? 'Your listing is now live and marked Unverified until an administrator reviews it.')
-    setUploadStatus(imageFiles.length ? 'All photos uploaded to ImageKit.' : '')
+    if (!publication.ok) {
+      setError('Your draft is saved, but it could not be published: ' + publication.error)
+      setNotice('Your listing remains private. Check that it has at least one photo and one seller-provided document.')
+      return
+    }
+    setNotice(publication.data.message)
+    setUploadStatus('All photos uploaded and listing published.')
   }
 
   if (checking) return <main className="page-shell"><div className="container"><p className="status-message">Checking your account…</p></div></main>
   if (!authorized) return <main className="page-shell"><div className="container"><p className="status-message">Redirecting to sign in…</p></div></main>
 
   return <main className="page-shell"><div className="container">
-    <div className="page-title"><SectionKicker>Property owners</SectionKicker><h1>List a property.<br /><span className="serif">With clarity.</span></h1><p>Sign-in is required to publish a listing. Submitted properties go live immediately and are marked Unverified until an administrator manually checks the details.</p></div>
+    <div className="page-title"><SectionKicker>Property owners</SectionKicker><h1>List a property.<br /><span className="serif">With clarity.</span></h1><p>Sign-in is required. A listing is published after at least one property photo and one seller-provided PDF/image document are saved. It remains Unverified until an administrator manually checks the details.</p></div>
     <div className="stepper">{steps.map((label, index) => <div className={'step ' + (step === index + 1 ? 'active' : '')} key={label}><span className="mono">0{index + 1}</span> {label}</div>)}</div>
     <form className="form-card" style={{ maxWidth: 820 }} onSubmit={submit}>
       {step === 1 && <><h2>What are you listing?</h2><div className="form-grid"><div className="form-field"><label htmlFor="listing-purpose">Purpose</label><select className="form-control" id="listing-purpose" value={purpose} onChange={e => setPurpose(e.target.value as 'sale' | 'rent')}><option value="sale">For sale</option><option value="rent">For rent</option></select></div><div className="form-field"><label htmlFor="listing-type">Property type</label><select className="form-control" id="listing-type" value={propertyType} onChange={e => setPropertyType(e.target.value)}>{['Apartment', 'House', 'Villa', 'Studio', 'Plot'].map(type => <option key={type}>{type}</option>)}</select></div></div></>}
@@ -101,7 +111,7 @@ export function ListingPage() {
       {step === 3 && <><h2>Add the details that help someone decide.</h2><div className="form-field"><label htmlFor="listing-description">Description</label><textarea className="form-control" id="listing-description" maxLength={8000} value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the layout, condition, nearby conveniences and important details." /><small>Do not include personal documents or sensitive information.</small></div><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset>
       <section className="media-editor" aria-labelledby="property-media-heading">
         <h3 id="property-media-heading">Property photos</h3>
-        <p className="muted">Upload up to five JPEG, PNG or WebP photos. ZameenHub stores the media in ImageKit and keeps only the file reference in D1. Maximum 10 MB per image.</p>
+        <p className="muted">At least one photo is required for public publishing. Upload up to five JPEG, PNG or WebP photos. ZameenHub stores the media in ImageKit and keeps only the file reference in D1. Maximum 10 MB per image.</p>
         <div className="form-field">
           <label htmlFor="property-images">Choose property photos</label>
           <input className="form-control" id="property-images" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => {
@@ -115,7 +125,7 @@ export function ListingPage() {
       </section>
       <section className="verification-editor" aria-labelledby="property-documents-heading">
         <h3 id="property-documents-heading">Property documents</h3>
-        <p className="muted">Add links to PDF or image documents hosted on your own website. Buyers open the original links and inspect the evidence themselves. ZameenHub does not download, store or legally authenticate these documents.</p>
+        <p className="muted">At least one supporting property document is required for public publishing. Add an original HTTPS link to a seller-hosted PDF or image, such as a registered deed copy, property-tax receipt or registry extract. Buyers inspect the source themselves; ZameenHub does not download, store or legally authenticate these documents.</p>
         {documents.map((document, index) => <div className="media-url-row" key={index}>
           <div className="form-field"><label htmlFor={`property-document-type-${index}`}>Seller-declared format</label><select className="form-control" id={`property-document-type-${index}`} value={document.documentType} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, documentType: event.target.value as 'pdf' | 'image' } : item))}><option value="pdf">PDF</option><option value="image">Image</option></select></div>
           <div className="form-field"><label htmlFor={`property-document-description-${index}`}>What does this document represent?</label><input className="form-control" id={`property-document-description-${index}`} value={document.description} maxLength={180} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} placeholder="e.g. Sale deed / property tax receipt" /></div>
@@ -145,10 +155,9 @@ export function ListingPage() {
         </div>
       </section>
     </>}
-      {step === 4 && <><h2>Review before submission.</h2><p><strong>{title || 'Untitled property'}</strong></p><p className="muted">{locationText}{city ? ', ' + city : ''} · {purpose === 'sale' ? 'For sale' : 'For rent'} · ₹{Number(price || 0).toLocaleString('en-IN')}</p>{amenities.length > 0 && <p><strong>Amenities:</strong> {amenities.join(', ')}</p>}<p><strong>Photos:</strong> {imageFiles.length} of 5 · <strong>Public documents:</strong> {documents.filter(item => item.url.trim() && item.description.trim()).length} of 10</p><p className="status-message">Your listing will go live immediately after submission and display an Unverified badge until an administrator manually verifies it. A supplied URL is a reference for the review, not proof on its own.</p></>}
       {error && <p className="status-message error" role="alert">{error}</p>}
       {notice && <div className="status-message success" role="status">{notice} <a href="/my-listings">View my listings</a></div>}
-      <div className="listing-actions"><button className="btn btn-outline" type="button" disabled={step === 1 || busy} onClick={() => setStep(Math.max(1, step - 1))}>Back</button>{!notice && <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Submitting…' : step === 4 ? 'Publish listing' : 'Continue'}</button>}</div>
+      <div className="listing-actions"><button className="btn btn-outline" type="button" disabled={step === 1 || busy} onClick={() => setStep(Math.max(1, step - 1))}>Back</button>{!notice && <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Submitting…' : step === 3 ? 'Publish listing' : 'Continue'}</button>}</div>
     </form>
   </div></main>
 }
