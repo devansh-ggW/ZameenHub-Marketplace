@@ -58,6 +58,8 @@ def main() -> int:
     hidden_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_message_hidden)")}
     expect({"message_id", "user_id", "hidden_at"} <= hidden_columns,
            "Per-user message hiding columns are incomplete")
+    now = "2026-10-28T00:00:00.000Z"
+
     cleanup_columns = {row["name"] for row in db.execute("PRAGMA table_info(imagekit_cleanup_queue)")}
     expect({"file_id", "file_path", "reason", "attempts", "created_at", "last_attempt_at"} <= cleanup_columns,
            "ImageKit cleanup queue columns are incomplete")
@@ -68,7 +70,6 @@ def main() -> int:
            "ImageKit cleanup retry metadata did not persist")
     db.execute("DELETE FROM imagekit_cleanup_queue WHERE file_id='orphan-file-1'")
 
-    now = "2026-10-28T00:00:00.000Z"
 
     # Exercise the atomic UPSERT used by the Worker rate limiter. The allowed
     # count is never decided from a stale SELECT result.
