@@ -145,7 +145,7 @@ export function EditListingPage() {
                   setError(''); setNotice('')
                   const result = await apiRequest<{ id: string; deleted: boolean; cleanupPending?: boolean }>('/api/my/properties/' + encodeURIComponent(id) + '/images/' + encodeURIComponent(media.id), { method: 'DELETE' })
                   if (!result.ok) { setError(result.error); return }
-                  setProperty(current => current ? { ...current, gallery: current.gallery.filter((_, i) => i !== index), image: current.gallery.filter((_, i) => i !== index)[0] || '', imageMedia: (current.imageMedia || []).filter(item => item.id !== media.id) } : current)
+                  setProperty(current => current ? { ...current, gallery: current.gallery.filter((_, i) => i !== index), image: current.gallery.filter((_, i) => i !== index)[0] || '', imageMedia: (current.imageMedia || []).filter(item => item.id !== media.id), verificationStatus: 'unverified', verified: false } : current)
                   setNotice(result.data.cleanupPending ? 'Photo removed from the listing. ImageKit cleanup is queued for an administrator.' : 'Photo removed.')
                 }}>Remove</button>}
               </div>
