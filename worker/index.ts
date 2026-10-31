@@ -940,6 +940,25 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!result.meta.changes)return fail('Report was already handled or could not be found.',409)
       return ok({id:reportId,status})
     }
+    if(path==='/api/admin/imagekit-cleanup'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Only an administrator can retry media cleanup.',403)
+      if(!imageKitAuthorization(env))return fail('ImageKit restricted private key is not configured.',503)
+      if(!await authLimit(request,db,'imagekit-cleanup',4)||!await limited(db,'imagekit-cleanup-user:'+user.id,8,60))return fail('Too many cleanup attempts. Please wait before trying again.',429)
+      const pending=await db.prepare('SELECT file_id FROM imagekit_cleanup_queue ORDER BY created_at ASC LIMIT 25').all<{file_id:string}>()
+      let deleted=0
+      for(const item of pending.results) {
+        const success=await imageKitDelete(item.file_id,env).catch(()=>false)
+        if(success) {
+          await db.prepare('DELETE FROM imagekit_cleanup_queue WHERE file_id=?').bind(item.file_id).run()
+          deleted++
+        } else {
+          await db.prepare('UPDATE imagekit_cleanup_queue SET attempts=attempts+1,last_attempt_at=? WHERE file_id=?').bind(nowIso(),item.file_id).run()
+        }
+      }
+      const remaining=await db.prepare('SELECT COUNT(*) AS total FROM imagekit_cleanup_queue').first<{total:number}>()
+      return ok({processed:pending.results.length,deleted,remaining:Number(remaining?.total||0)})
+    }
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
