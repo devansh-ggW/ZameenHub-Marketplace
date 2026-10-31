@@ -749,15 +749,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing request.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
-      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
+      if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const createdAt=nowIso()
       const statements=[
         db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','published','unverified',evidence.type,evidence.url,evidence.submittedAt),
-        ...mediaInsertStatements(db,id,mediaImages,videoUrl)
+        ...propertyDocumentInsertStatements(db,id,user.id,documents)
       ]
       await db.batch(statements)
       const message='Your listing is now live and marked Unverified. It will remain unverified until an administrator manually verifies it.'
@@ -827,7 +827,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const updateTime=nowIso()
       const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
       if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      await savePropertyMedia(db,id,mediaImages,videoUrl)
+      await replacePropertyDocuments(db,id,user.id,documents)
       return ok({id,status:'published',verified:false,message:'Changes saved and are live. Verification has reset to Unverified until an administrator checks the updated details.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
