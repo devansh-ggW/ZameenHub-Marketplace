@@ -782,7 +782,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!uploaded)return fail('ImageKit could not accept this image. Check the restricted key permissions and retry.',502)
       const mediaId=uuid()
       try {
-        await db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,file_path,uploader_id,status) VALUES(?,?,'image',?,?,?,?,?,?, 'active')").bind(mediaId,propertyId,uploaded.url,'Property image '+(sortOrder+1),sortOrder,uploaded.fileId,uploaded.filePath,user.id).run()
+        await db.batch([
+          db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,file_path,uploader_id,status) VALUES(?,?,'image',?,?,?,?,?,?, 'active')").bind(mediaId,propertyId,uploaded.url,'Property image '+(sortOrder+1),sortOrder,uploaded.fileId,uploaded.filePath,user.id),
+          db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),propertyId,user.id)
+        ])
       } catch {
         const cleaned=await imageKitDelete(uploaded.fileId,env).catch(()=>false)
         if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'property-media-d1-insert-failed').catch(()=>{})
@@ -826,8 +829,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const propertyId=decodeURIComponent(propertyImageDeleteMatch[1]),mediaId=decodeURIComponent(propertyImageDeleteMatch[2])
       const media=await db.prepare("SELECT m.id,m.imagekit_file_id FROM property_media m JOIN properties p ON p.id=m.property_id WHERE m.id=? AND m.property_id=? AND p.owner_id=? AND m.media_type='image'").bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
       if(!media)return fail('Property image not found in your account.',404)
-      const hidden=await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
-      if(!hidden.meta.changes)return fail('The image could not be removed. Refresh and retry.',409)
+      const hidden=await db.batch([
+        db.prepare("UPDATE property_media SET status='deletion_pending' WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id),
+        db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),propertyId,user.id)
+      ])
+      if(!hidden[0]?.meta?.changes||!hidden[1]?.meta?.changes)return fail('The image could not be removed or the listing changed. Refresh and retry.',409)
       if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env)) {
         await queueImageKitCleanup(db,media.imagekit_file_id,'','property-image-delete').catch(()=>{})
         return fail('The image is hidden from the listing but ImageKit could not delete it yet. An administrator can retry the cleanup.',502)
