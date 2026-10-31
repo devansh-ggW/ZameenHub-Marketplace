@@ -26,7 +26,7 @@ This comparison uses the competitors' publicly reachable pages, not their privat
 | Photo/document media | Current engineering branch uses ImageKit for up to five property photos and profile images; seller-hosted PDF/image evidence is stored as links only. No Phase 1 video upload/playback and no R2 | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
 | Advanced map and filter experience | Basic filters; no map or locality autocomplete | Broader discovery experience | Broader project/locality discovery experience |
 | Account controls | Email authentication, optional TOTP MFA, recovery codes, delete-account flow | Mature marketplace account workflows | Mature marketplace account workflows |
-| Owner/agent workflow | My listings, edit/archive, private inquiry inbox; no buyer-seller chat, listing expiry, repost, lead feedback, or promoted-placement packages | Seller dashboard documents listing create/edit/delete/repost, filters, lead panel, chat/feedback, listing validity, profile editing, and promotional packages | Public search and builder/project pages; a complete current seller-dashboard audit was not available |
+| Owner/agent workflow | My listings, edit/archive, private inquiry inbox, private buyer-owner chat and message actions; listing expiry, repost, lead feedback and promoted-placement packages remain gaps | Seller dashboard documents listing create/edit/delete/repost, filters, lead panel, chat/feedback, listing validity, profile editing, and promotional packages | Public search and builder/project pages; a complete current seller-dashboard audit was not available |
 | Listing media and project evidence | ImageKit-backed property gallery plus seller-hosted PDF/image evidence links; optional private review reference remains separate, with no automated government record matching | Seller help documents optional photo uploads and listing self-verification | Public project pages can display configurations, amenities, RERA/possession details when supplied; this is not proof those details have been independently validated |
 
 Public reference pages:
@@ -90,7 +90,7 @@ Public reference pages:
 
 ## High-priority gaps before public launch
 
-1. **Apply and test the database migrations.** Back up production D1 and apply pending migrations through `migrations/0004_media_verification.sql` before deploying Worker code that references those columns/tables.
+1. **Apply and test the database migrations.** Back up production D1 and apply pending migrations through `migrations/0008_imagekit_cleanup_queue.sql` before deploying Worker code that references those columns/tables.
 2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. Workers AI calls incur usage charges under Cloudflare's current pricing and quotas; verify the current pricing and account limits before launch. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
 3. **Do not advertise automated ownership verification.** This implementation can flag scam language and exact duplicates, and lets a moderator document a check of an owner-supplied public record reference. It does not call government record APIs or establish legal title, prove identity, validate a sale mandate, or verify that photos depict the claimed property. Add evidence-backed owner/agent verification and a clear audit trail before using a “verified owner/property” badge.
 4. **Verify the ImageKit integration.** The current engineering branch uses ImageKit for ZameenHub-hosted images and keeps only metadata in D1. Live upload, restricted-key permissions, replacement/deletion, provider-failure cleanup and legacy image migration still require non-production integration tests. Seller-hosted PDF/image evidence links are not fetched or rehosted.
@@ -123,7 +123,7 @@ Public reference pages:
 
 ## Production acceptance checklist
 
-- [ ] Back up production D1 and apply pending migrations through `migrations/0004_media_verification.sql` before deploying the changed Worker.
+- [ ] Back up production D1 and apply pending migrations through `migrations/0008_imagekit_cleanup_queue.sql` before deploying the changed Worker.
 - [ ] Add the `MFA_ENCRYPTION_KEY` Cloudflare secret without exposing it in Git or client code.
 - [ ] Confirm the `AI` binding is active for `zameenhub-marketplace`.
 - [ ] Register, verify email, sign in, sign out, reset password, and test invalid/expired tokens.
