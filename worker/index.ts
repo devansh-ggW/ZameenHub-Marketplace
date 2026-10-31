@@ -284,25 +284,26 @@ function propertyDocumentInsertStatements(db:D1Database,propertyId:string,ownerI
   const timestamp=nowIso()
   return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp))
 }
-async function propertyDocumentReplacementStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[]):Promise<D1PreparedStatement[]> {
+async function propertyDocumentReplacementStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[],guardUpdatedAt:string):Promise<D1PreparedStatement[]> {
   const current=await db.prepare('SELECT id FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId).all<{id:string}>()
   const existingIds=new Set(current.results.map(row=>row.id)),retainedIds:string[]=[],statements:D1PreparedStatement[]=[],timestamp=nowIso()
+  const propertyGuard=' AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)'
   for(let index=0;index<documents.length;index++) {
     const document=documents[index]
     const existingId=document.id&&existingIds.has(document.id)?document.id:null
     if(existingId) {
       retainedIds.push(existingId)
-      statements.push(db.prepare('UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?').bind(document.type,document.description,document.url,document.sourceDomain,index,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId))
+      statements.push(db.prepare('UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?'+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
     } else {
       const newId=uuid()
       retainedIds.push(newId)
-      statements.push(db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(newId,propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp))
+      statements.push(db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)').bind(newId,propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,propertyId,ownerId,guardUpdatedAt))
     }
   }
   if(retainedIds.length) {
     const placeholders=retainedIds.map(()=>'?').join(',')
-    statements.push(db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=? AND id NOT IN ('+placeholders+')').bind(propertyId,ownerId,...retainedIds))
-  } else statements.push(db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId))
+    statements.push(db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=? AND id NOT IN ('+placeholders+')'+propertyGuard).bind(propertyId,ownerId,...retainedIds,propertyId,ownerId,guardUpdatedAt))
+  } else statements.push(db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?'+propertyGuard).bind(propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
   return statements
 }
 type ListingHistoryEventType = 'tracking_started'|'listing_created'|'price_increased'|'price_decreased'|'description_changed'|'property_details_changed'|'images_added'|'images_removed'|'document_added'|'document_removed'|'document_replaced'|'document_updated'|'listing_published'|'listing_unpublished'
@@ -1012,7 +1013,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         else if(old.document_type!==document.type||old.description!==document.description)historyStatements.push(listingHistoryStatement(db,id,user.id,'document_updated',null,null,{description:document.description,sourceDomain:document.sourceDomain},updateTime,updateTime))
       }
       for(const old of currentDocumentsResult.results)if(!submittedExistingIds.has(old.id))historyStatements.push(listingHistoryStatement(db,id,user.id,'document_removed',null,null,{description:old.description,sourceDomain:old.source_domain},updateTime,updateTime))
-      const documentStatements=await propertyDocumentReplacementStatements(db,id,user.id,documents)
+      const documentStatements=await propertyDocumentReplacementStatements(db,id,user.id,documents,updateTime)
       const results=await db.batch([update,...documentStatements,...historyStatements])
       if(!results[0]?.meta?.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       const nextStatus=current.status==='draft'?'draft':'published'
