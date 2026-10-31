@@ -2,6 +2,9 @@ export type ListingPurpose = 'sale' | 'rent'
 export type PropertyType = 'Apartment' | 'Villa' | 'House' | 'Plot' | 'Studio'
 export type ListingStatus = 'published' | 'pending' | 'rejected' | 'draft' | 'archived'
 
+export type PropertyDocument = { id: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain: string; sortOrder: number }
+export type PropertyImage = { id: string; url: string; fileId: string | null; sortOrder: number }
+
 export type Property = {
   id: string
   slug: string
@@ -29,7 +32,8 @@ export type Property = {
   verificationSubmittedAt?: string
   verificationReviewedAt?: string
   verificationNote?: string
-  videoUrl?: string
+  documents?: PropertyDocument[]
+  imageMedia?: PropertyImage[]
   status: ListingStatus
   ownerName: string
   ownerProfileImageUrl?: string
