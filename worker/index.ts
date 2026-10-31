@@ -109,7 +109,7 @@ const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURICompone
 const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
 async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
-  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
+  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.profile_image_file_id,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
   return row??null
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
@@ -276,7 +276,7 @@ function imageKitUrlAllowed(value:unknown,env:Env):value is string {
   try {
     const actual=new URL(value),endpoint=new URL(env.IMAGEKIT_URL_ENDPOINT)
     const prefix=endpoint.pathname.replace(/\\/$/,'')
-    return actual.protocol==='https:'&&actual.hostname===endpoint.hostname&&(!prefix||prefix==='/ '||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
+    return actual.protocol==='https:'&&actual.hostname===endpoint.hostname&&(!prefix||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
   } catch { return false }
 }
 async function sniffImageFile(file:File):Promise<{mime:string;extension:string}|null> {
@@ -610,17 +610,46 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ])
       return ok({message:'Password updated. All existing sessions have been signed out; sign in with your new password.'})
     }
+    if(path==='/api/account/profile-image'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to upload a profile image.',401)
+      if(!await authLimit(request,db,'profile-image-upload',8)||!await limited(db,'profile-image-upload-user:'+user.id,8,60))return fail('Too many profile image uploads. Please wait before trying again.',429)
+      if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for this environment.',503)
+      const declared=Number(request.headers.get('content-length')||0)
+      if(Number.isFinite(declared)&&declared>10*1024*1024+65536)return fail('Profile image must be 10 MB or smaller.',413)
+      const form=await request.formData().catch(()=>null)
+      const file=form?.get('file')
+      if(!(typeof File!=='undefined'&&file instanceof File))return fail('Choose a JPEG, PNG or WebP image.')
+      const sniffed=await sniffImageFile(file)
+      if(!sniffed||file.type.toLowerCase()!==sniffed.mime)return fail('The selected file is not a valid JPEG, PNG or WebP image.')
+      const previousFileId=user.profile_image_file_id||''
+      const folder='/zameenhub/profiles/'+user.id
+      const fileName='profile-'+uuid()+'.'+sniffed.extension
+      let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
+      try { uploaded=await imageKitUpload(file,fileName,folder,env) } catch { uploaded=null }
+      if(!uploaded)return fail('ImageKit could not accept this image. Check the ImageKit restricted key permissions and retry.',502)
+      try {
+        await db.prepare('UPDATE users SET profile_image_url=?,profile_image_file_id=?,updated_at=? WHERE id=?').bind(uploaded.url,uploaded.fileId,nowIso(),user.id).run()
+      } catch {
+        await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        return fail('The image was uploaded but could not be attached to your profile. Please retry.',500)
+      }
+      const previousDeleted=!previousFileId||previousFileId===uploaded.fileId||await imageKitDelete(previousFileId,env).catch(()=>false)
+      return ok({profileImageUrl:uploaded.url,cleanupPending:!previousDeleted})
+    }
+    if(path==='/api/account/profile-image'&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to remove your profile image.',401)
+      if(!await authLimit(request,db,'profile-image-delete',8))return fail('Too many profile changes. Please wait before trying again.',429)
+      const current=await db.prepare('SELECT profile_image_file_id FROM users WHERE id=?').bind(user.id).first<{profile_image_file_id:string|null}>()
+      if(current?.profile_image_file_id&&!await imageKitDelete(current.profile_image_file_id,env))return fail('The profile image could not be removed from ImageKit. Your profile has not been changed.',502)
+      await db.prepare('UPDATE users SET profile_image_url=\'\',profile_image_file_id=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id).run()
+      return ok({profileImageUrl:''})
+    }
     if(path==='/api/account/profile'&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to update your profile.',401)
-      if(!await authLimit(request,db,'profile-image',8)||!await limited(db,'profile-image-user:'+user.id,12,60))return fail('Too many profile changes. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid profile update.')
-      if(input.profileImageUrl!==undefined&&input.profileImageUrl!==null&&typeof input.profileImageUrl!=='string')return fail('Profile image must be a public HTTPS image URL.')
-      if(typeof input.profileImageUrl==='string'&&input.profileImageUrl.length>1500)return fail('Profile image URL is too long (maximum 1500 characters).')
       const raw=clean(input.profileImageUrl,1500)
-      const profileImageUrl=raw?normalizeHttpsUrl(raw,1500):''
-      if(raw&&!profileImageUrl)return fail('Use a complete public HTTPS image URL. Local, data, and non-HTTPS URLs are not accepted.')
-      await db.prepare('UPDATE users SET profile_image_url=?,updated_at=? WHERE id=?').bind(profileImageUrl,nowIso(),user.id).run()
-      return ok({profileImageUrl:profileImageUrl||''})
+      if(raw)return fail('Profile images must be uploaded through the ImageKit profile uploader.')
+      return fail('Use the profile image remove action to clear your avatar.')
     }
     if(path==='/api/account/delete'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before deleting your account.',401)
@@ -683,6 +712,36 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
     }
+    if(path==='/api/media/property-image'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before uploading property images.',401)
+      if(!await authLimit(request,db,'property-image-upload',10)||!await limited(db,'property-image-upload-user:'+user.id,15,60))return fail('Too many property image uploads. Please wait before trying again.',429)
+      if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for this environment.',503)
+      const declared=Number(request.headers.get('content-length')||0)
+      if(Number.isFinite(declared)&&declared>10*1024*1024+65536)return fail('Property images must be 10 MB or smaller.',413)
+      const form=await request.formData().catch(()=>null)
+      const file=form?.get('file'),propertyId=clean(form?.get('propertyId'),80)
+      if(!(typeof File!=='undefined'&&file instanceof File)||!propertyId)return fail('Choose a property image and listing.')
+      const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
+      if(!owned)return fail('This property is not available in your account.',404)
+      const sniffed=await sniffImageFile(file)
+      if(!sniffed||file.type.toLowerCase()!==sniffed.mime)return fail('The selected file is not a valid JPEG, PNG or WebP image.')
+      const next=await db.prepare("SELECT COALESCE(MAX(sort_order),-1)+1 AS next FROM property_media WHERE property_id=? AND media_type='image'").bind(propertyId).first<{next:number}>()
+      const sortOrder=Number(next?.next??0)
+      if(sortOrder>=5)return fail('A property can have at most five images.',409)
+      const folder='/zameenhub/properties/'+propertyId
+      const fileName='property-'+uuid()+'.'+sniffed.extension
+      let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
+      try { uploaded=await imageKitUpload(file,fileName,folder,env) } catch { uploaded=null }
+      if(!uploaded)return fail('ImageKit could not accept this image. Check the restricted key permissions and retry.',502)
+      const mediaId=uuid()
+      try {
+        await db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,file_path,uploader_id,status) VALUES(?,?,'image',?,?,?,?,?,?, 'active')").bind(mediaId,propertyId,uploaded.url,'Property image '+(sortOrder+1),sortOrder,uploaded.fileId,uploaded.filePath,user.id).run()
+      } catch {
+        await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        return fail('The image upload could not be saved to this listing. Please retry.',500)
+      }
+      return ok({id:mediaId,url:uploaded.url,fileId:uploaded.fileId,sortOrder},201)
+    }
     if(path==='/api/properties'&&method==='POST') {
       const user=await requireUser(request,env)
       if(!user)return fail('Sign in with a verified email before listing a property.',401)
@@ -712,6 +771,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const result=await db.prepare("UPDATE properties SET status='archived',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),id,user.id).run()
       if(!result.meta.changes)return fail('Listing could not be found in your account.',404)
       return ok({id,status:'archived',message:'Your listing is archived and no longer appears in public search.'})
+    }
+    const propertyImageDeleteMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/images\/([^/]+)$/)
+    if(propertyImageDeleteMatch&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage property images.',401)
+      const propertyId=decodeURIComponent(propertyImageDeleteMatch[1]),mediaId=decodeURIComponent(propertyImageDeleteMatch[2])
+      const media=await db.prepare("SELECT m.id,m.imagekit_file_id FROM property_media m JOIN properties p ON p.id=m.property_id WHERE m.id=? AND m.property_id=? AND p.owner_id=? AND m.media_type='image'").bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
+      if(!media)return fail('Property image not found in your account.',404)
+      if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env))return fail('The image could not be removed from ImageKit. The listing was not changed.',502)
+      const deleted=await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
+      if(!deleted.meta.changes)return fail('The image could not be removed. Refresh and retry.',409)
+      return ok({id:mediaId,deleted:true})
     }
     const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
     if(ownedPropertyMatch&&method==='DELETE') {
