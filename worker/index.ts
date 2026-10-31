@@ -701,7 +701,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE imagekit_file_id IS NOT NULL AND property_id IN (SELECT id FROM properties WHERE owner_id=?)").bind(user.id).run()
       const ownedMedia=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE imagekit_file_id IS NOT NULL AND status='deletion_pending' AND property_id IN (SELECT id FROM properties WHERE owner_id=?)").bind(user.id).all<{imagekit_file_id:string}>()
       for(const media of ownedMedia.results) {
-        if(!await imageKitDelete(media.imagekit_file_id,env))return fail('Your account was not deleted. Property images are hidden while ImageKit cleanup is retried; please retry the deletion later.',502)
+        if(!await imageKitDelete(media.imagekit_file_id,env)) {
+          await queueImageKitCleanup(db,media.imagekit_file_id,'','account-delete').catch(()=>{})
+          return fail('Your account was not deleted. Property images are hidden while ImageKit cleanup is retried; an administrator can retry the cleanup.',502)
+        }
       }
       if(user.profile_image_file_id) {
         if(!await imageKitDelete(user.profile_image_file_id,env))return fail('Your account was not deleted because its profile image could not be removed from ImageKit. Retry later.',502)
@@ -823,7 +826,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!media)return fail('Property image not found in your account.',404)
       const hidden=await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
       if(!hidden.meta.changes)return fail('The image could not be removed. Refresh and retry.',409)
-      if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env))return fail('The image is hidden from the listing but ImageKit could not delete it yet. Retry the removal later.',502)
+      if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env)) {
+        await queueImageKitCleanup(db,media.imagekit_file_id,'','property-image-delete').catch(()=>{})
+        return fail('The image is hidden from the listing but ImageKit could not delete it yet. An administrator can retry the cleanup.',502)
+      }
       const deleted=await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
       if(!deleted.meta.changes)return fail('The image was removed from ImageKit and is hidden from the listing; metadata cleanup still needs retry.',409)
       return ok({id:mediaId,deleted:true})
@@ -840,7 +846,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE property_id=? AND imagekit_file_id IS NOT NULL").bind(id).run()
       const mediaFiles=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE property_id=? AND imagekit_file_id IS NOT NULL AND status='deletion_pending'").bind(id).all<{imagekit_file_id:string}>()
       for(const media of mediaFiles.results) {
-        if(!await imageKitDelete(media.imagekit_file_id,env))return fail('Property photos are hidden, but ImageKit could not delete every file yet. Retry the listing deletion later.',502)
+        if(!await imageKitDelete(media.imagekit_file_id,env)) {
+          await queueImageKitCleanup(db,media.imagekit_file_id,'','property-delete').catch(()=>{})
+          return fail('Property photos are hidden, but ImageKit could not delete every file yet. An administrator can retry cleanup before you retry listing deletion.',502)
+        }
       }
       // Remove D1 ownership and dependent rows only after provider cleanup succeeds.
       const deletion=await db.batch([
@@ -977,7 +986,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       for(const item of pending.results) {
         const success=await imageKitDelete(item.file_id,env).catch(()=>false)
         if(success) {
-          await db.prepare('DELETE FROM imagekit_cleanup_queue WHERE file_id=?').bind(item.file_id).run()
+          await db.batch([
+            db.prepare("DELETE FROM property_media WHERE imagekit_file_id=? AND status='deletion_pending'").bind(item.file_id),
+            db.prepare('DELETE FROM imagekit_cleanup_queue WHERE file_id=?').bind(item.file_id)
+          ])
           deleted++
         } else {
           await db.prepare('UPDATE imagekit_cleanup_queue SET attempts=attempts+1,last_attempt_at=? WHERE file_id=?').bind(nowIso(),item.file_id).run()
