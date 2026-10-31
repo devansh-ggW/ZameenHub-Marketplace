@@ -8,7 +8,7 @@
 - [ ] Confirm IMAGEKIT_PRIVATE_KEY is configured as a Worker Secret and IMAGEKIT_URL_ENDPOINT as a Worker variable. Use the restricted ImageKit private key with only the Media Management read/write permissions needed for upload and deletion.
 - [ ] Confirm APP_URL, RESEND_FROM_EMAIL and SUPPORT_EMAIL use the intended production values and the sender domain is Verified in Resend.
 - [ ] Back up the intended D1 database and verify the restore procedure before applying schema changes.
-- [ ] Apply pending D1 migrations through migrations/0008_imagekit_cleanup_queue.sql to the intended database before deploying Worker code that references the new schema. Do not apply to production without a reviewed backup and deployment authorization.
+- [ ] Apply pending D1 migrations through migrations/0009_listing_history_persistent_sessions.sql to the intended database before deploying Worker code that references the new schema. Do not apply to production without a reviewed backup and deployment authorization.
 - [ ] Run python3 scripts/check-migrations.py, pnpm build, pnpm test:smoke and Wrangler dry-run; review the source diff.
 - [ ] Review Privacy Policy and Terms with the actual operator identity, address, governing law, grievance process and real data-retention practices.
 - [ ] Test registration/login password hashing on the actual Cloudflare plan and inspect CPU-limit errors.
@@ -41,6 +41,9 @@
 - [ ] Empty state appears when no seller documents have been supplied.
 - [ ] Public APIs expose only the seller-hosted evidence links intended for buyers; private review notes/reference fields remain restricted to the owner and authorized reviewers.
 - [ ] UI copy makes clear that supplied links are not legal authentication or proof of title.
+- [ ] Buyers see an Evidence Room with seller attribution, source domain, original link, added/updated timestamps and safe image previews.
+- [ ] Confirm PDFs are opened at the seller's original HTTPS source rather than embedded from an untrusted origin.
+- [ ] Confirm every document add, edit, replacement and removal is reflected in the buyer-visible property history.
 
 ## Video and obsolete storage
 
@@ -54,7 +57,11 @@
 - [ ] Verification mail is delivered by the correct sender; expired and used tokens are rejected.
 - [ ] A pre-existing user row with no password hash can use email-confirmed legacy activation.
 - [ ] Unverified users cannot log in or submit listings; logout invalidates the server session.
-- [ ] Session cookie is Secure, HttpOnly, SameSite=Lax and scoped to /.
+- [ ] Session cookie is Secure, HttpOnly, SameSite=Lax and host-scoped; no long-lived token is stored in browser storage.
+- [ ] Verify a 30-day rolling inactivity expiry and 90-day absolute session cap in the Worker and D1.
+- [ ] Verify successful renewal after access/session checks, browser reload, browser restart, visibility restore and simultaneous requests from multiple tabs.
+- [ ] Verify transient API/network failures do not redirect users or erase a still-valid authenticated UI state.
+- [ ] Verify logout-current-device and logout-all-devices immediately revoke the expected D1 sessions; confirm MFA remains enforced.
 - [ ] Password-reset email is delivered; token expires and is one-use; reset revokes existing sessions.
 - [ ] Listing create/edit/delete/archive is owner-scoped and input validation is enforced by the Worker.
 - [ ] A published listing with verification_status=unverified displays Unverified, not Verified.
@@ -92,6 +99,9 @@
 - [ ] Confirm PRAGMA foreign_key_check returns no violations.
 - [ ] Verify document, image metadata and message hidden rows cascade correctly when their owning property/message/user is deleted.
 - [ ] Verify no destructive migration drops old property, account, moderation or audit information.
+- [ ] Verify existing listings receive a tracking-start marker only; no historic prices or changes are fabricated.
+- [ ] Verify price, details, image, document, publish, unpublish and archive events are appended by Worker routes and cannot be edited through public APIs.
+- [ ] Verify listing updates and associated history/document writes remain consistent during concurrent edits.
 - [ ] Run frozen-lockfile dependency install, dependency audit, migration tests, TOTP/EMI tests, production build, smoke tests and Wrangler dry-run.
 - [ ] Test all primary user journeys in a browser at desktop, tablet and narrow mobile widths.
 - [ ] Test restoring a D1 backup before accepting production traffic.
