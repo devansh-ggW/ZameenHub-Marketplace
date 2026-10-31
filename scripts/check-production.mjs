@@ -86,10 +86,10 @@ if(!registrationBlock.includes('const registrationMessage=')||(registrationBlock
 const faviconLine=indexHtml.split(String.fromCharCode(10)).find(line=>line.includes('rel="icon"'))||''
 const faviconHref=faviconLine.match(/href="([^"]+)"/)?.[1]||''
 if(!faviconHref)errors.push('HTML must declare a favicon href')
-else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.slice(1))))errors.push('HTML favicon target does not exist: '+faviconHref)
+else if(faviconHref.startsWith('/')&&!fs.existsSync(path.join(root,'public',faviconHref.slice(1).split('?')[0])))errors.push('HTML favicon target does not exist: '+faviconHref)
 if(!fs.existsSync(path.join(root,'public','zameenhub-icon.png')))errors.push('Supplied ZameenHub icon asset is missing')
 const siteChrome=read('src/site-chrome.tsx')
-if(siteChrome.split('src="/zameenhub-icon.png"').length-1!==2||siteChrome.includes('/assets/zameenhub-icon.jpg'))errors.push('Visible header and footer logos must use the supplied ZameenHub PNG icon')
+if(siteChrome.split('src="/zameenhub-icon.png?v=20261031"').length-1!==2||siteChrome.includes('/assets/zameenhub-icon.jpg'))errors.push('Visible header and footer logos must use the versioned supplied ZameenHub PNG icon')
 if(!worker.includes("verified:verificationStatus==='verified'"))errors.push('Public verified status must reflect a separate evidence review, not publication alone')
 if(worker.includes('aiScreened:')||read('src/components.tsx').includes('property-ai-badge')||pages.includes('ai-screened-note')||!read('src/components.tsx').includes("property.verified ? 'Verified' : 'Unverified'"))errors.push('Public listing cards must show manual verification state without an AI-screened badge')
 for(const marker of ['property_conversations','property_messages','buyer_id','owner_id'])if(!chatMigration.includes(marker))errors.push('Private chat migration missing '+marker)
