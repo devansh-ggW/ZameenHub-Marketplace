@@ -28,7 +28,7 @@ def main() -> int:
         "users", "sessions", "properties", "favorites", "inquiries",
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
-        "property_moderation_events", "property_media", "property_documents", "property_conversations", "property_messages", "property_message_hidden",
+        "property_moderation_events", "property_media", "property_documents", "property_conversations", "property_messages", "property_message_hidden", "imagekit_cleanup_queue",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
@@ -58,6 +58,15 @@ def main() -> int:
     hidden_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_message_hidden)")}
     expect({"message_id", "user_id", "hidden_at"} <= hidden_columns,
            "Per-user message hiding columns are incomplete")
+    cleanup_columns = {row["name"] for row in db.execute("PRAGMA table_info(imagekit_cleanup_queue)")}
+    expect({"file_id", "file_path", "reason", "attempts", "created_at", "last_attempt_at"} <= cleanup_columns,
+           "ImageKit cleanup queue columns are incomplete")
+    db.execute("INSERT INTO imagekit_cleanup_queue(file_id,file_path,reason,attempts,created_at) VALUES(?,?,?,?,?)",
+               ("orphan-file-1", "/zameenhub/profiles/test/avatar.png", "test-cleanup", 0, now))
+    db.execute("UPDATE imagekit_cleanup_queue SET attempts=attempts+1,last_attempt_at=? WHERE file_id='orphan-file-1'", (now,))
+    expect(db.execute("SELECT attempts,last_attempt_at FROM imagekit_cleanup_queue WHERE file_id='orphan-file-1'").fetchone()[:] == (1, now),
+           "ImageKit cleanup retry metadata did not persist")
+    db.execute("DELETE FROM imagekit_cleanup_queue WHERE file_id='orphan-file-1'")
 
     now = "2026-10-28T00:00:00.000Z"
 
