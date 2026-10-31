@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUpRight, Check, ChevronLeft, ChevronRight, Share2 } from 'lucide-react'
-import { CinematicScrollExperience, EmptyState, ErrorState, FavoriteButton, ImageWithFallback, Lightbox, LoadingState, PropertyCard, PropertySearch, PropertyVideo, SectionKicker, ScrollScene } from './components'
+import { CinematicScrollExperience, EmptyState, ErrorState, FavoriteButton, ImageWithFallback, Lightbox, LoadingState, PropertyCard, PropertySearch, SectionKicker, ScrollScene } from './components'
 import { categories, formatPrice, images, type Property } from './lib/data'
 import { getProperties, getProperty, submitInquiry } from './lib/api'
 import { apiRequest, getSession } from './lib/auth'
@@ -193,7 +193,15 @@ export function PropertyDetailPage() {
     <div className="detail-grid" style={{ marginTop: 28 }}>
       <div>
         {property.gallery.length ? <div className="gallery">{property.gallery.map((image, index) => <ImageWithFallback key={image} src={image} alt={`${property.title} view ${index + 1}`} className="gallery-image" onClick={() => setLightbox(image)} />)}</div> : <div className="gallery-empty">No property photos supplied by the owner.</div>}
-        {property.videoUrl && <div className="detail-section"><SectionKicker>Property video</SectionKicker><PropertyVideo src={property.videoUrl} title={property.title} /></div>}
+        <section className="detail-section property-documents" aria-labelledby="property-documents-title">
+          <SectionKicker>Seller-provided evidence</SectionKicker>
+          <h2 id="property-documents-title">Property documents</h2>
+          <p className="muted">These links are supplied by the seller and open on the original hosting website. ZameenHub has not legally authenticated the documents. Inspect the source and seek independent advice before making a decision.</p>
+          {property.documents?.length ? <div className="document-link-list">{property.documents.map(document => <article className="document-link-card" key={document.id}>
+            <div><strong>{document.description}</strong><p className="muted">Seller-declared format: {document.documentType.toUpperCase()} · Hosted by {document.sourceDomain}</p></div>
+            <a href={document.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${document.description} on ${document.sourceDomain} in a new tab`}>Open original document ↗</a>
+          </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the seller yet.</p>}
+        </section>
         <div className="detail-section"><SectionKicker>About this place</SectionKicker><h2>{property.title}</h2><p>{property.description}</p></div>
         <div className="detail-section"><SectionKicker>Features</SectionKicker><div className="amenities">{property.amenities.map(amenity => <span className="amenity" key={amenity}><Check size={13} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--blue)' }} />{amenity}</span>)}</div></div>
       </div>

@@ -15,7 +15,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   try {
     const headers = new Headers(init.headers)
     headers.set('Accept', 'application/json')
-    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+    if (typeof init.body === 'string' && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
     const response = await fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' })
     let body: { ok?: boolean; data?: T; error?: string }
     try { body = await response.json() as typeof body }

@@ -54,23 +54,5 @@ export function EmptyState({ title = 'Nothing here yet.', copy = 'When verified 
 export function ErrorState({ message }: { message: string }) { return <div className="status-message error">{message}</div> }
 export function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) { return <div className="lightbox" role="dialog" aria-modal="true" aria-label="Property image"><button className="icon-btn close" onClick={onClose} aria-label="Close image"><X size={20} /></button><img src={src} alt={alt} /></div> }
 
-export function PropertyVideo({ src, title }: { src: string; title: string }) {
-  if (!src) return null
-  let embed = ''
-  try {
-    const url = new URL(src)
-    const host = url.hostname.toLowerCase()
-    if (host === 'youtu.be') {
-      const id = url.pathname.split('/').filter(Boolean)[0]
-      if (id && /^[a-zA-Z0-9_-]{6,20}$/.test(id)) embed = 'https://www.youtube-nocookie.com/embed/' + id
-    } else if (host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtube-nocookie.com' || host.endsWith('.youtube-nocookie.com')) {
-      const id = url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts|live)\/([a-zA-Z0-9_-]{6,20})/)?.[1]
-      if (id && /^[a-zA-Z0-9_-]{6,20}$/.test(id)) embed = 'https://www.youtube-nocookie.com/embed/' + id
-    } else if (host === 'vimeo.com' || host.endsWith('.vimeo.com')) {
-      const id = url.pathname.match(/\/(\d{5,15})(?:\/|$)/)?.[1]
-      if (id) embed = 'https://player.vimeo.com/video/' + id
-    }
-  } catch { return null }
-  return <div className="property-video">{embed ? <iframe src={embed} title={title + ' video'} loading="lazy" referrerPolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /> : <video controls preload="metadata" src={src} aria-label={title + ' video'} />}</div>
-}
+
 

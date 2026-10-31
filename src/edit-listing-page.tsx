@@ -4,6 +4,7 @@ import { SectionKicker } from './components'
 import type { Property, PropertyType } from './lib/data'
 import { apiRequest, getSession } from './lib/auth'
 import { PROPERTY_AMENITIES } from './lib/property-options'
+import { uploadPropertyImage } from './lib/imagekit'
 
 export function EditListingPage() {
   const { id = '' } = useParams()
@@ -24,8 +25,10 @@ export function EditListingPage() {
   const [area, setArea] = useState('0')
   const [description, setDescription] = useState('')
   const [amenities, setAmenities] = useState<string[]>([])
-  const [imageUrls, setImageUrls] = useState<string[]>([''])
-  const [videoUrl, setVideoUrl] = useState('')
+  const [imageFiles, setImageFiles] = useState<File[]>([])
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState('')
+  const [documents, setDocuments] = useState<Array<{ id?: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain?: string; sortOrder?: number }>>([])
   const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
   const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
 
@@ -58,8 +61,7 @@ export function EditListingPage() {
       setArea(String(item.area))
       setDescription(item.description)
       setAmenities(item.amenities.filter(amenity => (PROPERTY_AMENITIES as readonly string[]).includes(amenity)))
-      setImageUrls(item.gallery.length ? item.gallery : [''])
-      setVideoUrl(item.videoUrl || '')
+      setDocuments(item.documents || [])
       setVerificationEvidenceType(item.verificationEvidenceType || 'none')
       setVerificationEvidenceUrl(item.verificationEvidenceUrl || '')
       setLoading(false)
@@ -86,12 +88,28 @@ export function EditListingPage() {
       body: JSON.stringify({
         title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType,
         price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea,
-        description: description.trim(), amenities, images: imageUrls.map(url => url.trim()).filter(Boolean), videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(),
+        description: description.trim(), amenities,
+        documents: documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ documentType: item.documentType, description: item.description.trim(), url: item.url.trim() })),
+        verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(),
       }),
     })
+    if (!result.ok) { setSaving(false); setError(result.error); return }
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
+
+    for (let index = 0; index < imageFiles.length; index++) {
+      setUploadStatus('Uploading image ' + (index + 1) + ' of ' + imageFiles.length)
+      const uploaded = await uploadPropertyImage(id, imageFiles[index], setUploadProgress)
+      if (!uploaded.ok) {
+        setSaving(false)
+        setError('Your listing changes were saved, but image ' + (index + 1) + ' failed: ' + uploaded.error)
+        setNotice('Listing changes saved. Some photos still need uploading.')
+        return
+      }
+      setProperty(current => current ? { ...current, gallery: [...current.gallery, uploaded.data.url], image: current.image || uploaded.data.url, imageMedia: [...(current.imageMedia || []), { id: uploaded.data.id, url: uploaded.data.url, fileId: uploaded.data.fileId, sortOrder: uploaded.data.sortOrder }] } : current)
+      setUploadProgress(0)
+    }
     setSaving(false)
-    if (!result.ok) { setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, gallery: imageUrls.map(url => url.trim()).filter(Boolean), image: imageUrls.map(url => url.trim()).filter(Boolean)[0] || '', videoUrl: videoUrl.trim(), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
+    setUploadStatus(imageFiles.length ? 'All selected photos uploaded to ImageKit.' : '')
     setNotice(result.data.message)
   }
 
@@ -114,7 +132,49 @@ export function EditListingPage() {
         <div className="form-field"><label htmlFor="edit-area">Area (sq ft)</label><input className="form-control" id="edit-area" type="number" min="0" max="100000000" step="1" value={area} onChange={e => setArea(e.target.value)} /></div>
         <div className="form-field full"><label htmlFor="edit-description">Description</label><textarea className="form-control" id="edit-description" required minLength={20} maxLength={8000} value={description} onChange={e => setDescription(e.target.value)} /><small>Keep the description accurate and do not include passwords, identity documents, or another person's private data.</small></div>
         <div className="form-field full"><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset></div>
-        <section className="media-editor full" aria-labelledby="edit-property-media-heading"><h3 id="edit-property-media-heading">Property photos and video</h3><p className="muted">Public HTTPS URLs are saved in D1; files stay with your chosen host. No uploads or R2 storage. Up to five photos and one video.</p><div className="media-url-list">{imageUrls.map((imageUrl, index) => <div className="media-url-row" key={index}><div className="form-field"><label htmlFor={`edit-property-image-${index}`}>Photo URL {index + 1}</label><input className="form-control" id={`edit-property-image-${index}`} type="url" maxLength={1500} value={imageUrl} onChange={event => setImageUrls(current => current.map((value, itemIndex) => itemIndex === index ? event.target.value : value))} placeholder="https://example.com/property-photo.jpg" /></div><button className="btn btn-outline media-remove" type="button" onClick={() => setImageUrls(current => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={`Remove photo URL ${index + 1}`}>Remove</button></div>)}</div>{imageUrls.length < 5 && <button className="btn btn-outline" type="button" onClick={() => setImageUrls(current => current.length < 5 ? [...current, ''] : current)}>Add another photo URL</button>}<div className="form-field"><label htmlFor="edit-property-video">Video URL (optional)</label><input className="form-control" id="edit-property-video" type="url" maxLength={1500} value={videoUrl} onChange={event => setVideoUrl(event.target.value)} placeholder="YouTube, Vimeo, or direct .mp4/.webm URL" /></div></section>
+        <section className="media-editor full" aria-labelledby="edit-property-media-heading">
+          <h3 id="edit-property-media-heading">Property photos</h3>
+          <p className="muted">Photos are stored in ImageKit. Keep up to five JPEG, PNG or WebP images, maximum 10 MB each.</p>
+          <div className="media-url-list">
+            {property?.gallery.map((url, index) => {
+              const media = property.imageMedia?.[index]
+              return <div className="media-url-row" key={media?.id || url}>
+                <img src={url} alt={'Property photo ' + (index + 1)} loading="lazy" width={112} height={80} />
+                <span className="muted">Photo {index + 1}</span>
+                {media?.id && <button className="btn btn-outline media-remove" type="button" onClick={async () => {
+                  setError(''); setNotice('')
+                  const result = await apiRequest<{ id: string; deleted: boolean; cleanupPending?: boolean }>('/api/my/properties/' + encodeURIComponent(id) + '/images/' + encodeURIComponent(media.id), { method: 'DELETE' })
+                  if (!result.ok) { setError(result.error); return }
+                  setProperty(current => current ? { ...current, gallery: current.gallery.filter((_, i) => i !== index), image: current.gallery.filter((_, i) => i !== index)[0] || '', imageMedia: (current.imageMedia || []).filter(item => item.id !== media.id), verificationStatus: 'unverified', verified: false } : current)
+                  setNotice(result.data.cleanupPending ? 'Photo removed from the listing. ImageKit cleanup is queued for an administrator.' : 'Photo removed.')
+                }}>Remove</button>}
+              </div>
+            })}
+          </div>
+          <div className="form-field">
+            <label htmlFor="edit-property-images">Add photos</label>
+            <input className="form-control" id="edit-property-images" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => {
+              const remaining = Math.max(0, 5 - (property?.gallery.length || 0))
+              const files = Array.from(event.target.files || []).slice(0, remaining)
+              if (files.some(file => file.size > 10 * 1024 * 1024)) { setError('Each photo must be 10 MB or smaller.'); event.target.value = ''; return }
+              setImageFiles(files); setError('')
+            }} />
+            <small>{property?.gallery.length || 0} existing · {imageFiles.length} new selected · maximum five total.</small>
+          </div>
+          {uploadStatus && <p className="status-message" role="status">{uploadStatus}{saving && imageFiles.length > 0 ? ' · ' + uploadProgress + '%' : ''}</p>}
+        </section>
+        <section className="verification-editor full" aria-labelledby="edit-property-documents-heading">
+          <h3 id="edit-property-documents-heading">Property documents</h3>
+          <p className="muted">Add original PDF or image links hosted on your own website. Buyers inspect the source directly; ZameenHub does not download, rehost or legally authenticate them.</p>
+          {documents.map((document, index) => <div className="media-url-row" key={document.id || index}>
+            <div className="form-field"><label htmlFor={'edit-document-type-' + index}>Seller-declared format</label><select className="form-control" id={'edit-document-type-' + index} value={document.documentType} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, documentType: event.target.value as 'pdf' | 'image' } : item))}><option value="pdf">PDF</option><option value="image">Image</option></select></div>
+            <div className="form-field"><label htmlFor={'edit-document-description-' + index}>Description</label><input className="form-control" id={'edit-document-description-' + index} maxLength={180} value={document.description} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} placeholder="e.g. Property tax receipt" /></div>
+            <div className="form-field"><label htmlFor={'edit-document-url-' + index}>Original HTTPS link</label><input className="form-control" id={'edit-document-url-' + index} type="url" maxLength={2000} value={document.url} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))} placeholder="https://yourwebsite.example/record.pdf" /></div>
+            <button className="btn btn-outline media-remove" type="button" onClick={() => setDocuments(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+          </div>)}
+          {documents.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add document link</button>}
+          <small>HTTPS only · up to 10 links · seller-hosted files remain on the seller’s site.</small>
+        </section>
         <section className="verification-editor full" aria-labelledby="edit-evidence-heading"><h3 id="edit-evidence-heading">Property verification evidence</h3><p className="muted">Optional public official-record reference. An administrator can use it as one part of a manual verification check. Do not share private identity documents, Aadhaar/PAN numbers, or private file links.</p><div className="form-field"><label htmlFor="edit-evidence-type">Evidence type</label><select className="form-control" id="edit-evidence-type" value={verificationEvidenceType} onChange={event => setVerificationEvidenceType(event.target.value)}><option value="none">No evidence reference yet</option><option value="official_record">Official public land/property record</option><option value="property_tax_record">Public property-tax record</option><option value="registry_reference">Registration/registry reference</option><option value="other_public_record">Other public record</option></select></div><div className="form-field"><label htmlFor="edit-evidence-url">Public evidence URL</label><input className="form-control" id="edit-evidence-url" type="url" maxLength={1500} value={verificationEvidenceUrl} onChange={event => setVerificationEvidenceUrl(event.target.value)} placeholder="https://official-record-portal.example/record" /><small>Saving changes resets manual verification to Unverified until an administrator rechecks the updated details.</small></div></section>
       </div>
       {error && <p className="status-message error" role="alert">{error}</p>}

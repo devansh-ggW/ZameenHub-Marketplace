@@ -1,14 +1,15 @@
 import { base32Encode, matchedTotpCounter } from './totp'
 export type Env = {
   DB?: D1Database
-  R2?: R2Bucket
+  IMAGEKIT_PRIVATE_KEY?: string
+  IMAGEKIT_URL_ENDPOINT?: string
   MFA_ENCRYPTION_KEY?: string
   RESEND_API_KEY?: string
   RESEND_FROM_EMAIL?: string
   SUPPORT_EMAIL?: string
   APP_URL?: string
 }
-type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
+type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; profile_image_file_id?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
 type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
@@ -108,7 +109,7 @@ const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURICompone
 const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
 async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
-  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
+  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.profile_image_file_id,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
   return row??null
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
@@ -195,19 +196,23 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-function propertyView(p:PropertyRow,images:string[]=[],videoUrl='',includePrivateVerification=false) {
+type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; sortOrder:number }
+type PropertyImageView = { id:string; url:string; fileId:string|null; sortOrder:number }
+function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:PropertyImageView[]=[],documents:PropertyDocumentView[]=[]) {
   const verificationStatus=p.verification_status||'unverified'
   return {
     id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
     propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
     bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
-    image:images[0]||'',gallery:images,videoUrl:videoUrl||'',description:p.description,
+    image:images[0]||'',gallery:images,description:p.description,
     amenities:parseArray(p.amenities_json),status:p.status,
     verified:verificationStatus==='verified',
     verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
     ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',
     favorite:!!p.favorite,
+    documents,
     ...(includePrivateVerification ? {
+      imageMedia,
       verificationEvidenceType:p.verification_evidence_type||'none',
       verificationEvidenceUrl:p.verification_evidence_url||'',
       verificationSubmittedAt:p.verification_submitted_at||undefined,
@@ -233,33 +238,131 @@ function normalizeHttpsUrl(value:unknown,max=1500):string|null {
     return parsed.toString()
   } catch { return null }
 }
-function sanitizeImageUrls(value:unknown):string[]|null {
+const allowedDocumentTypes=new Set(['pdf','image'])
+function sanitizePropertyDocuments(value:unknown):Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>|null {
   if(value===undefined||value===null)return []
-  if(!Array.isArray(value)||value.length>5)return null
-  const urls:string[]=[]
+  if(!Array.isArray(value)||value.length>10)return null
+  const seen=new Set<string>()
+  const documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>=[]
   for(const item of value) {
-    if(typeof item!=='string'||item.length>1500)return null
-    const raw=clean(item,1500)
-    if(!raw)continue
-    const normalized=normalizeHttpsUrl(raw,1500)
-    if(!normalized)return null
-    if(!urls.includes(normalized))urls.push(normalized)
+    if(!item||typeof item!=='object'||Array.isArray(item))return null
+    const record=item as Record<string,unknown>
+    const type=clean(record.documentType,12)
+    const description=clean(record.description,180)
+    const url=normalizeHttpsUrl(record.url,2000)
+    if(!allowedDocumentTypes.has(type)||description.length<3||!url)return null
+    if(seen.has(url))return null
+    seen.add(url)
+    const sourceDomain=new URL(url).hostname.toLowerCase()
+    documents.push({type:type as 'pdf'|'image',description,url,sourceDomain})
   }
-  return urls.length<=5?urls:null
+  return documents
 }
-function sanitizeVideoUrl(value:unknown):string|null {
-  if(value===undefined||value===null||value==='')return ''
-  if(typeof value!=='string'||value.length>1500)return null
-  const raw=clean(value,1500)
-  if(!raw)return ''
-  const normalized=normalizeHttpsUrl(raw,1500)
-  if(!normalized)return null
+function propertyDocumentInsertStatements(db:D1Database,propertyId:string,ownerId:string,documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>):D1PreparedStatement[] {
+  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order) VALUES(?,?,?,?,?,?,?,?)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index))
+}
+async function replacePropertyDocuments(db:D1Database,propertyId:string,ownerId:string,documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>) {
+  await db.batch([
+    db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId),
+    ...propertyDocumentInsertStatements(db,propertyId,ownerId,documents)
+  ])
+}
+function imageKitAuthorization(env:Env):string|null {
+  if(!env.IMAGEKIT_PRIVATE_KEY)return null
+  return 'Basic '+btoa(env.IMAGEKIT_PRIVATE_KEY+':')
+}
+function imageKitUrlAllowed(value:unknown,env:Env):value is string {
+  if(typeof value!=='string'||!env.IMAGEKIT_URL_ENDPOINT)return false
   try {
-    const parsed=new URL(normalized),host=parsed.hostname.toLowerCase(),path=parsed.pathname.toLowerCase()
-    const hostedVideo=host==='youtu.be'||host==='youtube.com'||host.endsWith('.youtube.com')||host==='youtube-nocookie.com'||host.endsWith('.youtube-nocookie.com')||host==='vimeo.com'||host.endsWith('.vimeo.com')
-    const directVideo=/\.(mp4|webm|ogg|m3u8)$/.test(path)
-    return hostedVideo||directVideo?normalized:null
-  } catch { return null }
+    const actual=new URL(value),endpoint=new URL(env.IMAGEKIT_URL_ENDPOINT)
+    const prefix=endpoint.pathname.replace(/\/$/,'')
+    return endpoint.protocol==='https:'&&actual.protocol==='https:'&&actual.host===endpoint.host&&!actual.username&&!actual.password&&(!prefix||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
+  } catch { return false }
+}
+async function queueImageKitCleanup(db:D1Database,fileId:string,filePath:string,reason:string):Promise<void> {
+  await db.prepare("INSERT INTO imagekit_cleanup_queue(file_id,file_path,reason,attempts,created_at,last_attempt_at) VALUES(?,?,?,0,?,NULL) ON CONFLICT(file_id) DO UPDATE SET file_path=CASE WHEN excluded.file_path<>'' THEN excluded.file_path ELSE imagekit_cleanup_queue.file_path END,reason=excluded.reason")
+    .bind(fileId,clean(filePath,1000),clean(reason,100)||'cleanup',nowIso()).run()
+}
+const MAX_IMAGE_FILE_BYTES=10*1024*1024
+const MAX_IMAGE_MULTIPART_BYTES=MAX_IMAGE_FILE_BYTES+128*1024
+async function readLimitedMultipart(request:Request,maxBytes=MAX_IMAGE_MULTIPART_BYTES):Promise<{formData:FormData|null;tooLarge:boolean}> {
+  const contentType=request.headers.get('content-type')||''
+  if(!contentType.toLowerCase().startsWith('multipart/form-data;')||!contentType.toLowerCase().includes('boundary='))return {formData:null,tooLarge:false}
+  const declared=Number(request.headers.get('content-length')||0)
+  if(Number.isFinite(declared)&&declared>maxBytes)return {formData:null,tooLarge:true}
+  const reader=request.body?.getReader()
+  if(!reader)return {formData:null,tooLarge:false}
+  const chunks:Uint8Array[]=[]
+  let total=0
+  try {
+    while(true) {
+      const part=await reader.read()
+      if(part.done)break
+      total+=part.value.byteLength
+      if(total>maxBytes) {
+        await reader.cancel().catch(()=>{})
+        return {formData:null,tooLarge:true}
+      }
+      chunks.push(part.value)
+    }
+  } catch {
+    return {formData:null,tooLarge:false}
+  }
+  const headers=new Headers(request.headers)
+  headers.delete('content-length')
+  const rebuilt=new Request(request.url,{method:'POST',headers,body:new Blob(chunks)})
+  const formData=await rebuilt.formData().catch(()=>null)
+  return {formData,tooLarge:false}
+}
+async function sniffImageFile(file:File):Promise<{mime:string;extension:string}|null> {
+  if(file.size<12||file.size>MAX_IMAGE_FILE_BYTES)return null
+  const header=new Uint8Array(await file.slice(0,12).arrayBuffer())
+  const mime=file.type.toLowerCase()
+  if(mime==='image/jpeg'&&header[0]===0xff&&header[1]===0xd8&&header[2]===0xff)return {mime,extension:'jpg'}
+  if(mime==='image/png'&&header[0]===0x89&&header[1]===0x50&&header[2]===0x4e&&header[3]===0x47&&header[4]===0x0d&&header[5]===0x0a&&header[6]===0x1a&&header[7]===0x0a)return {mime,extension:'png'}
+  if(mime==='image/webp'&&String.fromCharCode(...header.slice(0,4))==='RIFF'&&String.fromCharCode(...header.slice(8,12))==='WEBP')return {mime,extension:'webp'}
+  return null
+}
+async function imageKitUpload(file:File,fileName:string,folder:string,env:Env,db:D1Database):Promise<{fileId:string;url:string;filePath:string;size:number}|null> {
+  const authorization=imageKitAuthorization(env)
+  if(!authorization||!env.IMAGEKIT_URL_ENDPOINT)return null
+  const form=new FormData()
+  form.append('file',file,fileName)
+  form.append('fileName',fileName)
+  form.append('folder',folder)
+  form.append('useUniqueFileName','true')
+  form.append('tags',folder.startsWith('/zameenhub/profiles/')?'zameenhub,profile-image':'zameenhub,property-image')
+  const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
+  const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string}|null
+  if(!result?.fileId)return null
+  if(!response.ok||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size) {
+    const deleted=await imageKitDelete(result.fileId,env).catch(()=>false)
+    if(!deleted)await queueImageKitCleanup(db,result.fileId,result.filePath||'', 'invalid-upload-response').catch(()=>{})
+    return null
+  }
+  return {fileId:result.fileId,url:result.url,filePath:result.filePath,size:Number(result.size)}
+}
+async function imageKitDelete(fileId:string,env:Env):Promise<boolean> {
+  const authorization=imageKitAuthorization(env)
+  if(!authorization)return false
+  const response=await fetch('https://api.imagekit.io/v1/files/'+encodeURIComponent(fileId),{method:'DELETE',headers:{authorization,accept:'application/json'}})
+  return response.ok||response.status===404
+}
+async function propertyMedia(db:D1Database,id:string,includeMetadata=false) {
+  const result=await db.prepare("SELECT id,media_url,imagekit_file_id,sort_order FROM property_media WHERE property_id=? AND media_type='image' AND status='active' ORDER BY sort_order ASC").bind(id).all<{id:string;media_url:string;imagekit_file_id:string|null;sort_order:number}>()
+  const rows=result.results.slice(0,5)
+  return {
+    images:rows.map(row=>row.media_url),
+    imageMedia:includeMetadata?rows.map(row=>({id:row.id,url:row.media_url,fileId:row.imagekit_file_id,sortOrder:row.sort_order})):[],
+  }
+}
+async function propertyDocuments(db:D1Database,id:string):Promise<PropertyDocumentView[]> {
+  const result=await db.prepare('SELECT id,document_type,description,url,source_domain,sort_order FROM property_documents WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;sort_order:number}>()
+  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,sortOrder:row.sort_order}))
+}
+async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
+  const [media,documents]=await Promise.all([propertyMedia(db,p.id,includePrivateVerification),propertyDocuments(db,p.id)])
+  return propertyView(p,media.images,includePrivateVerification,media.imageMedia,documents)
 }
 const verificationEvidenceTypes=new Set(['none','official_record','property_tax_record','registry_reference','other_public_record'])
 function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string;url:string;status:'unverified'|'submitted';submittedAt:string|null}|null {
@@ -272,24 +375,6 @@ function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string
   const normalized=normalizeHttpsUrl(rawUrl,1500)
   if(rawType==='none'||!normalized)return null
   return {type:rawType,url:normalized,status:'submitted',submittedAt:nowIso()}
-}
-function mediaInsertStatements(db:D1Database,id:string,images:string[],videoUrl:string):D1PreparedStatement[] {
-  const statements:D1PreparedStatement[]=[]
-  images.forEach((mediaUrl,index)=>statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'image',?,?,?)").bind(uuid(),id,mediaUrl,'Property image '+(index+1),index)))
-  if(videoUrl)statements.push(db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,'video',?,'Property video',0)").bind(uuid(),id,videoUrl))
-  return statements
-}
-async function savePropertyMedia(db:D1Database,id:string,images:string[],videoUrl:string) {
-  await db.batch([db.prepare('DELETE FROM property_media WHERE property_id=?').bind(id),...mediaInsertStatements(db,id,images,videoUrl)])
-}
-async function propertyMedia(db:D1Database,id:string) {
-  const result=await db.prepare('SELECT media_type,media_url FROM property_media WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{media_type:string;media_url:string}>()
-  const rows=result.results
-  return {images:rows.filter(row=>row.media_type==='image').slice(0,5).map(row=>row.media_url),videoUrl:rows.find(row=>row.media_type==='video')?.media_url||''}
-}
-async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
-  const media=await propertyMedia(db,p.id)
-  return propertyView(p,media.images,media.videoUrl,includePrivateVerification)
 }
 function sameOrigin(request:Request,url:URL) {
   return request.headers.get('Origin')===url.origin
@@ -546,17 +631,55 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ])
       return ok({message:'Password updated. All existing sessions have been signed out; sign in with your new password.'})
     }
+    if(path==='/api/account/profile-image'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to upload a profile image.',401)
+      if(!await authLimit(request,db,'profile-image-upload',8)||!await limited(db,'profile-image-upload-user:'+user.id,8,60))return fail('Too many profile image uploads. Please wait before trying again.',429)
+      if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for this environment.',503)
+      const parsed=await readLimitedMultipart(request)
+      if(parsed.tooLarge)return fail('Profile image upload request is too large. Use a file of 10 MB or smaller.',413)
+      const file=parsed.formData?.get('file')
+      if(!(typeof File!=='undefined'&&file instanceof File))return fail('Choose a JPEG, PNG or WebP image.')
+      const sniffed=await sniffImageFile(file)
+      if(!sniffed||file.type.toLowerCase()!==sniffed.mime)return fail('The selected file is not a valid JPEG, PNG or WebP image.')
+      const previousFileId=user.profile_image_file_id||''
+      const folder='/zameenhub/profiles/'+user.id
+      const fileName='profile-'+uuid()+'.'+sniffed.extension
+      let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
+      try { uploaded=await imageKitUpload(file,fileName,folder,env,db) } catch { uploaded=null }
+      if(!uploaded)return fail('ImageKit could not accept this image. Check the ImageKit restricted key permissions and retry.',502)
+      try {
+        await db.prepare('UPDATE users SET profile_image_url=?,profile_image_file_id=?,updated_at=? WHERE id=?').bind(uploaded.url,uploaded.fileId,nowIso(),user.id).run()
+      } catch {
+        const cleaned=await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'profile-d1-attach-failed').catch(()=>{})
+        return fail('The image was uploaded but could not be attached to your profile. Please retry.',500)
+      }
+      const previousDeleted=!previousFileId||previousFileId===uploaded.fileId||await imageKitDelete(previousFileId,env).catch(()=>false)
+      if(!previousDeleted)await queueImageKitCleanup(db,previousFileId,'','profile-replaced').catch(()=>{})
+      return ok({profileImageUrl:uploaded.url,cleanupPending:!previousDeleted})
+    }
+    if(path==='/api/account/profile-image'&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to remove your profile image.',401)
+      if(!await authLimit(request,db,'profile-image-delete',8)||!await limited(db,'profile-image-delete-user:'+user.id,8,60))return fail('Too many profile changes. Please wait before trying again.',429)
+      const current=await db.prepare('SELECT profile_image_file_id FROM users WHERE id=?').bind(user.id).first<{profile_image_file_id:string|null}>()
+      await db.prepare("UPDATE users SET profile_image_url='',updated_at=? WHERE id=?").bind(nowIso(),user.id).run()
+      if(current?.profile_image_file_id) {
+        const deleted=await imageKitDelete(current.profile_image_file_id,env).catch(()=>false)
+        if(!deleted) {
+          await queueImageKitCleanup(db,current.profile_image_file_id,'','profile-removed').catch(()=>{})
+          await db.prepare('UPDATE users SET profile_image_file_id=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id).run()
+          return ok({profileImageUrl:'',cleanupPending:true})
+        }
+      }
+      await db.prepare('UPDATE users SET profile_image_file_id=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id).run()
+      return ok({profileImageUrl:'',cleanupPending:false})
+    }
     if(path==='/api/account/profile'&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to update your profile.',401)
-      if(!await authLimit(request,db,'profile-image',8)||!await limited(db,'profile-image-user:'+user.id,12,60))return fail('Too many profile changes. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid profile update.')
-      if(input.profileImageUrl!==undefined&&input.profileImageUrl!==null&&typeof input.profileImageUrl!=='string')return fail('Profile image must be a public HTTPS image URL.')
-      if(typeof input.profileImageUrl==='string'&&input.profileImageUrl.length>1500)return fail('Profile image URL is too long (maximum 1500 characters).')
       const raw=clean(input.profileImageUrl,1500)
-      const profileImageUrl=raw?normalizeHttpsUrl(raw,1500):''
-      if(raw&&!profileImageUrl)return fail('Use a complete public HTTPS image URL. Local, data, and non-HTTPS URLs are not accepted.')
-      await db.prepare('UPDATE users SET profile_image_url=?,updated_at=? WHERE id=?').bind(profileImageUrl,nowIso(),user.id).run()
-      return ok({profileImageUrl:profileImageUrl||''})
+      if(raw)return fail('Profile images must be uploaded through the ImageKit profile uploader.')
+      return fail('Use the profile image remove action to clear your avatar.')
     }
     if(path==='/api/account/delete'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before deleting your account.',401)
@@ -574,12 +697,30 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }
         if(!valid)return fail('Enter a valid authenticator or unused recovery code to confirm account deletion.',401)
       }
+      // Hide ImageKit property media before provider cleanup. A failed delete keeps the
+      // account and listing records so the owner can retry; already-deleted files
+      // are treated as successful on retry by ImageKit's 404 handling.
+      await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE imagekit_file_id IS NOT NULL AND property_id IN (SELECT id FROM properties WHERE owner_id=?)").bind(user.id).run()
+      const ownedMedia=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE imagekit_file_id IS NOT NULL AND status='deletion_pending' AND property_id IN (SELECT id FROM properties WHERE owner_id=?)").bind(user.id).all<{imagekit_file_id:string}>()
+      for(const media of ownedMedia.results) {
+        if(!await imageKitDelete(media.imagekit_file_id,env)) {
+          await queueImageKitCleanup(db,media.imagekit_file_id,'','account-delete').catch(()=>{})
+          return fail('Your account was not deleted. Property images are hidden while ImageKit cleanup is retried; an administrator can retry the cleanup.',502)
+        }
+      }
+      if(user.profile_image_file_id) {
+        if(!await imageKitDelete(user.profile_image_file_id,env))return fail('Your account was not deleted because its profile image could not be removed from ImageKit. Retry later.',502)
+        await db.prepare("UPDATE users SET profile_image_url='',profile_image_file_id=NULL,updated_at=? WHERE id=?").bind(nowIso(),user.id).run()
+      }
+
       // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
       const accountRateKeys=await Promise.all([
         'login-email:'+user.email,'register-email:'+user.email,'resend-email:'+user.email,'forgot-email:'+user.email,
         'listing-user:'+user.id,'listing-edit-user:'+user.id,'listing-manage-user:'+user.id,'listing-delete-user:'+user.id,
+        'property-image-upload-user:'+user.id,'property-image-delete-user:'+user.id,
+        'profile-image-upload-user:'+user.id,'profile-image-delete-user:'+user.id,
         'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id,
-        'property-report-user:'+user.id,'inquiry-inbox-user:'+user.id,'inquiry-update-user:'+user.id,
+        'imagekit-cleanup-user:'+user.id,'property-report-user:'+user.id,'inquiry-inbox-user:'+user.id,'inquiry-update-user:'+user.id,
         'moderation-user:'+user.id,'report-review-user:'+user.id
       ].map(key=>digest(key)))
       // Keep the last-admin guard inside the atomic batch as well: two admins
@@ -619,6 +760,41 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
     }
+    if(path==='/api/media/property-image'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before uploading property images.',401)
+      if(!await authLimit(request,db,'property-image-upload',10)||!await limited(db,'property-image-upload-user:'+user.id,15,60))return fail('Too many property image uploads. Please wait before trying again.',429)
+      if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for this environment.',503)
+      const parsed=await readLimitedMultipart(request)
+      if(parsed.tooLarge)return fail('Property image upload request is too large. Use a file of 10 MB or smaller.',413)
+      const file=parsed.formData?.get('file'),propertyId=clean(parsed.formData?.get('propertyId'),80)
+      if(!(typeof File!=='undefined'&&file instanceof File)||!propertyId)return fail('Choose a property image and listing.')
+      const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
+      if(!owned)return fail('This property is not available in your account.',404)
+      const sniffed=await sniffImageFile(file)
+      if(!sniffed||file.type.toLowerCase()!==sniffed.mime)return fail('The selected file is not a valid JPEG, PNG or WebP image.')
+      const existingOrders=await db.prepare("SELECT sort_order FROM property_media WHERE property_id=? AND media_type='image'").bind(propertyId).all<{sort_order:number}>()
+      const occupiedOrders=new Set(existingOrders.results.map(row=>Number(row.sort_order)))
+      let sortOrder=-1
+      for(let candidate=0;candidate<5;candidate++)if(!occupiedOrders.has(candidate)){sortOrder=candidate;break}
+      if(sortOrder<0)return fail('A property can have at most five images.',409)
+      const folder='/zameenhub/properties/'+propertyId
+      const fileName='property-'+uuid()+'.'+sniffed.extension
+      let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
+      try { uploaded=await imageKitUpload(file,fileName,folder,env,db) } catch { uploaded=null }
+      if(!uploaded)return fail('ImageKit could not accept this image. Check the restricted key permissions and retry.',502)
+      const mediaId=uuid()
+      try {
+        await db.batch([
+          db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,file_path,uploader_id,status) VALUES(?,?,'image',?,?,?,?,?,?, 'active')").bind(mediaId,propertyId,uploaded.url,'Property image '+(sortOrder+1),sortOrder,uploaded.fileId,uploaded.filePath,user.id),
+          db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),propertyId,user.id)
+        ])
+      } catch {
+        const cleaned=await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'property-media-d1-insert-failed').catch(()=>{})
+        return fail('The image upload could not be saved to this listing. Please retry.',500)
+      }
+      return ok({id:mediaId,url:uploaded.url,fileId:uploaded.fileId,sortOrder},201)
+    }
     if(path==='/api/properties'&&method==='POST') {
       const user=await requireUser(request,env)
       if(!user)return fail('Sign in with a verified email before listing a property.',401)
@@ -626,15 +802,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing request.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
-      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
+      if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const createdAt=nowIso()
       const statements=[
         db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','published','unverified',evidence.type,evidence.url,evidence.submittedAt),
-        ...mediaInsertStatements(db,id,mediaImages,videoUrl)
+        ...propertyDocumentInsertStatements(db,id,user.id,documents)
       ]
       await db.batch(statements)
       const message='Your listing is now live and marked Unverified. It will remain unverified until an administrator manually verifies it.'
@@ -649,6 +825,26 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!result.meta.changes)return fail('Listing could not be found in your account.',404)
       return ok({id,status:'archived',message:'Your listing is archived and no longer appears in public search.'})
     }
+    const propertyImageDeleteMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/images\/([^/]+)$/)
+    if(propertyImageDeleteMatch&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage property images.',401)
+      if(!await authLimit(request,db,'property-image-delete',12)||!await limited(db,'property-image-delete-user:'+user.id,24,60))return fail('Too many photo removal requests. Please wait before trying again.',429)
+      const propertyId=decodeURIComponent(propertyImageDeleteMatch[1]),mediaId=decodeURIComponent(propertyImageDeleteMatch[2])
+      const media=await db.prepare("SELECT m.id,m.imagekit_file_id FROM property_media m JOIN properties p ON p.id=m.property_id WHERE m.id=? AND m.property_id=? AND p.owner_id=? AND m.media_type='image'").bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
+      if(!media)return fail('Property image not found in your account.',404)
+      const hidden=await db.batch([
+        db.prepare("UPDATE property_media SET status='deletion_pending' WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id),
+        db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),propertyId,user.id)
+      ])
+      if(!hidden[0]?.meta?.changes||!hidden[1]?.meta?.changes)return fail('The image could not be removed or the listing changed. Refresh and retry.',409)
+      if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env)) {
+        await queueImageKitCleanup(db,media.imagekit_file_id,'','property-image-delete').catch(()=>{})
+        return ok({id:mediaId,deleted:true,cleanupPending:true})
+      }
+      const deleted=await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
+      if(!deleted.meta.changes)return ok({id:mediaId,deleted:true,cleanupPending:true})
+      return ok({id:mediaId,deleted:true,cleanupPending:false})
+    }
     const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
     if(ownedPropertyMatch&&method==='DELETE') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to delete your listings.',401)
@@ -656,7 +852,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=decodeURIComponent(ownedPropertyMatch[1])
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string}>()
       if(!owned)return fail('Listing not found in your account.',404)
-      // Delete dependent rows first. Each statement is scoped to a property that still belongs to this user.
+      // Hide every media row first. If ImageKit is temporarily unavailable,
+      // the listing remains usable without broken image URLs and deletion can be retried.
+      await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE property_id=? AND imagekit_file_id IS NOT NULL").bind(id).run()
+      const mediaFiles=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE property_id=? AND imagekit_file_id IS NOT NULL AND status='deletion_pending'").bind(id).all<{imagekit_file_id:string}>()
+      for(const media of mediaFiles.results) {
+        if(!await imageKitDelete(media.imagekit_file_id,env)) {
+          await queueImageKitCleanup(db,media.imagekit_file_id,'','property-delete').catch(()=>{})
+          return fail('Property photos are hidden, but ImageKit could not delete every file yet. An administrator can retry cleanup before you retry listing deletion.',502)
+        }
+      }
+      // Remove D1 ownership and dependent rows only after provider cleanup succeeds.
       const deletion=await db.batch([
         db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
         db.prepare('DELETE FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)').bind(id,id,user.id),
@@ -686,14 +892,18 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
-      const mediaImages=sanitizeImageUrls(input.images),videoUrl=sanitizeVideoUrl(input.videoUrl),evidence=sanitizeVerificationEvidence(input)
-      if(!mediaImages||videoUrl===null)return fail('Media must use public HTTPS image URLs (maximum 5) and a supported HTTPS video URL (YouTube, Vimeo, MP4, WebM, Ogg, or HLS).')
+      const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
+       if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
-      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
-      if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      await savePropertyMedia(db,id,mediaImages,videoUrl)
+      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id)
+      const results=await db.batch([
+        update,
+        db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(id,user.id),
+        ...propertyDocumentInsertStatements(db,id,user.id,documents),
+      ])
+      if(!results[0]?.meta?.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       return ok({id,status:'published',verified:false,message:'Changes saved and are live. Verification has reset to Unverified until an administrator checks the updated details.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
@@ -777,6 +987,36 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!result.meta.changes)return fail('Report was already handled or could not be found.',409)
       return ok({id:reportId,status})
     }
+    if(path==='/api/admin/imagekit-cleanup'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(user.role!=='admin')return fail('Only an administrator can retry media cleanup.',403)
+      if(!imageKitAuthorization(env))return fail('ImageKit restricted private key is not configured.',503)
+      if(!await authLimit(request,db,'imagekit-cleanup',4)||!await limited(db,'imagekit-cleanup-user:'+user.id,8,60))return fail('Too many cleanup attempts. Please wait before trying again.',429)
+      const pending=await db.prepare(`SELECT file_id FROM imagekit_cleanup_queue
+        UNION
+        SELECT imagekit_file_id AS file_id FROM property_media WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
+        LIMIT 25`).all<{file_id:string}>()
+      let deleted=0
+      for(const item of pending.results) {
+        const success=await imageKitDelete(item.file_id,env).catch(()=>false)
+        if(success) {
+          await db.batch([
+            db.prepare("DELETE FROM property_media WHERE imagekit_file_id=? AND status='deletion_pending'").bind(item.file_id),
+            db.prepare('DELETE FROM imagekit_cleanup_queue WHERE file_id=?').bind(item.file_id)
+          ])
+          deleted++
+        } else {
+          await queueImageKitCleanup(db,item.file_id,'','admin-retry-failed').catch(()=>{})
+          await db.prepare('UPDATE imagekit_cleanup_queue SET attempts=attempts+1,last_attempt_at=? WHERE file_id=?').bind(nowIso(),item.file_id).run()
+        }
+      }
+      const remaining=await db.prepare(`SELECT COUNT(*) AS total FROM (
+        SELECT file_id FROM imagekit_cleanup_queue
+        UNION
+        SELECT imagekit_file_id AS file_id FROM property_media WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
+      )`).first<{total:number}>()
+      return ok({processed:pending.results.length,deleted,remaining:Number(remaining?.total||0)})
+    }
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
@@ -842,13 +1082,18 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/conversations'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your messages.',401)
       if(!await authLimit(request,db,'conversation-list',30)||!await limited(db,'conversation-list-user:'+user.id,90,60))return fail('Too many inbox requests. Please try again shortly.',429)
-      const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,c.last_message_at AS lastMessageAt,
+      const result=await db.prepare(`SELECT c.id,c.property_id AS propertyId,p.slug AS propertySlug,p.title AS propertyTitle,p.city AS propertyCity,c.buyer_id AS buyerId,c.owner_id AS ownerId,COALESCE((SELECT m.created_at FROM property_messages m WHERE m.conversation_id=c.id
+          AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)
+          ORDER BY m.created_at DESC LIMIT 1),c.created_at) AS lastMessageAt,
         CASE WHEN c.buyer_id=? THEN 'buyer' ELSE 'owner' END AS role,
         CASE WHEN c.buyer_id=? THEN uo.name ELSE ub.name END AS otherUserName,
-        COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
-        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unreadCount
+        COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id
+          AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)
+          ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
+        (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)) AS unreadCount
         FROM property_conversations c JOIN properties p ON p.id=c.property_id JOIN users ub ON ub.id=c.buyer_id JOIN users uo ON uo.id=c.owner_id
-        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY c.last_message_at DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
+        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY lastMessageAt DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
       return ok(result.results)
     }
     if(path==='/api/conversations'&&method==='POST') {
@@ -882,22 +1127,102 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const conversation=await db.prepare('SELECT id,buyer_id,owner_id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(id,user.id,user.id).first<{id:string;buyer_id:string;owner_id:string;status:string}>()
       if(!conversation)return fail('Conversation not found.',404)
       if(method==='GET') {
-        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt
-          FROM property_messages m JOIN users u ON u.id=m.sender_id WHERE m.conversation_id=?
-          ORDER BY m.created_at DESC LIMIT 100`).bind(id).all<{id:string;senderId:string;senderName:string;body:string;createdAt:string;readAt:string|null}>()
+        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt,
+            m.edited_at AS editedAt,m.deleted_at AS deletedAt,m.reply_to_message_id AS replyToMessageId,
+            rm.body AS replyToBody,ru.name AS replyToSenderName,
+            m.forwarded_from_message_id AS forwardedFromMessageId,fu.name AS forwardedFromSenderName
+          FROM property_messages m
+          JOIN users u ON u.id=m.sender_id
+          LEFT JOIN property_messages rm ON rm.id=m.reply_to_message_id
+            AND NOT EXISTS (SELECT 1 FROM property_message_hidden rh WHERE rh.message_id=rm.id AND rh.user_id=?)
+          LEFT JOIN users ru ON ru.id=rm.sender_id
+          LEFT JOIN property_messages fm ON fm.id=m.forwarded_from_message_id
+          LEFT JOIN users fu ON fu.id=fm.sender_id
+          WHERE m.conversation_id=?
+            AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)
+          ORDER BY m.created_at DESC LIMIT 100`).bind(user.id,id,user.id).all<Record<string,unknown>>()
         return ok(result.results.reverse())
       }
       if(conversation.status!=='open')return fail('This conversation is closed.',409)
       if(!await authLimit(request,db,'conversation-message',20)||!await limited(db,'conversation-message-user:'+user.id,80,60))return fail('You are sending messages too quickly. Wait a moment and retry.',429)
       const input=await body(request);if(!input)return fail('Invalid message.')
       const message=clean(input.message,2000).trim()
+      const replyToMessageId=clean(input.replyToMessageId,80)
       if(!message||message.length>2000)return fail('Write a message of 1–2,000 characters.')
+      if(replyToMessageId) {
+        const original=await db.prepare('SELECT id FROM property_messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=property_messages.id AND h.user_id=?)').bind(replyToMessageId,id,user.id).first<{id:string}>()
+        if(!original)return fail('The message you are replying to is no longer available.',409)
+      }
       const timestamp=nowIso(),messageId=uuid()
       await db.batch([
-        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at) VALUES(?,?,?,?,?)').bind(messageId,id,user.id,message,timestamp),
-        db.prepare('UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status=\'open\'').bind(timestamp,timestamp,id)
+        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at,reply_to_message_id) VALUES(?,?,?,?,?,?)').bind(messageId,id,user.id,message,timestamp,replyToMessageId||null),
+        db.prepare("UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status='open'").bind(timestamp,timestamp,id)
       ])
-      return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null},201)
+      return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null,replyToMessageId:replyToMessageId||null},201)
+    }
+    const conversationMessageActionMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)$/)
+    if(conversationMessageActionMatch&&(method==='PATCH'||method==='DELETE')) {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage private messages.',401)
+      const conversationId=decodeURIComponent(conversationMessageActionMatch[1]),messageId=decodeURIComponent(conversationMessageActionMatch[2])
+      const conversation=await db.prepare('SELECT id FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(conversationId,user.id,user.id).first<{id:string}>()
+      if(!conversation)return fail('Conversation not found.',404)
+      const messageRow=await db.prepare('SELECT id,sender_id,deleted_at FROM property_messages WHERE id=? AND conversation_id=?').bind(messageId,conversationId).first<{id:string;sender_id:string;deleted_at:string|null}>()
+      if(!messageRow)return fail('Message not found.',404)
+      if(method==='PATCH') {
+        if(messageRow.sender_id!==user.id)return fail('Only the original sender can edit this message.',403)
+        if(messageRow.deleted_at)return fail('A deleted message cannot be edited.',409)
+        if(!await authLimit(request,db,'message-edit',12)||!await limited(db,'message-edit-user:'+user.id,30,60))return fail('Too many message edits. Please wait before trying again.',429)
+        const input=await body(request);if(!input)return fail('Invalid message edit.')
+        const nextBody=clean(input.message,2000).trim()
+        if(!nextBody||nextBody.length>2000)return fail('Edited messages must contain 1–2,000 characters.')
+        const editedAt=nowIso()
+        const updated=await db.prepare('UPDATE property_messages SET body=?,edited_at=? WHERE id=? AND conversation_id=? AND sender_id=? AND deleted_at IS NULL').bind(nextBody,editedAt,messageId,conversationId,user.id).run()
+        if(!updated.meta.changes)return fail('The message changed before the edit could be saved. Refresh and retry.',409)
+        await db.prepare('UPDATE property_conversations SET updated_at=? WHERE id=?').bind(editedAt,conversationId).run()
+        return ok({id:messageId,body:nextBody,editedAt})
+      }
+      if(messageRow.sender_id!==user.id)return fail('Only the original sender can delete a message for everyone.',403)
+      if(messageRow.deleted_at)return ok({id:messageId,deleted:true})
+      if(!await authLimit(request,db,'message-delete-all',10)||!await limited(db,'message-delete-all-user:'+user.id,20,60))return fail('Too many message deletions. Please wait before trying again.',429)
+      const deletedAt=nowIso()
+      const deleted=await db.prepare("UPDATE property_messages SET body='This message was deleted.',deleted_at=?,edited_at=NULL WHERE id=? AND conversation_id=? AND sender_id=? AND deleted_at IS NULL").bind(deletedAt,messageId,conversationId,user.id).run()
+      if(!deleted.meta.changes)return fail('The message could not be deleted. Refresh and retry.',409)
+      await db.prepare('UPDATE property_conversations SET updated_at=? WHERE id=?').bind(deletedAt,conversationId).run()
+      return ok({id:messageId,deleted:true,deletedAt})
+    }
+    const messageDeleteForMeMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)\/me$/)
+    if(messageDeleteForMeMatch&&method==='DELETE') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage private messages.',401)
+      const conversationId=decodeURIComponent(messageDeleteForMeMatch[1]),messageId=decodeURIComponent(messageDeleteForMeMatch[2])
+      const participant=await db.prepare('SELECT id FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(conversationId,user.id,user.id).first<{id:string}>()
+      if(!participant)return fail('Conversation not found.',404)
+      const message=await db.prepare('SELECT id FROM property_messages WHERE id=? AND conversation_id=?').bind(messageId,conversationId).first<{id:string}>()
+      if(!message)return fail('Message not found.',404)
+      await db.prepare('INSERT OR IGNORE INTO property_message_hidden(message_id,user_id,hidden_at) VALUES(?,?,?)').bind(messageId,user.id,nowIso()).run()
+      return ok({id:messageId,hidden:true})
+    }
+    const messageForwardMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)\/forward$/)
+    if(messageForwardMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to forward private messages.',401)
+      if(!await authLimit(request,db,'message-forward',8)||!await limited(db,'message-forward-user:'+user.id,20,60))return fail('Too many forwarded messages. Please wait before trying again.',429)
+      const sourceConversationId=decodeURIComponent(messageForwardMatch[1]),messageId=decodeURIComponent(messageForwardMatch[2])
+      const input=await body(request);if(!input)return fail('Invalid forward request.')
+      const targetConversationId=clean(input.targetConversationId,80)
+      if(!targetConversationId)return fail('Choose a conversation to forward this message to.')
+      const source=await db.prepare('SELECT id FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(sourceConversationId,user.id,user.id).first<{id:string}>()
+      if(!source)return fail('Source conversation not found.',404)
+      const target=await db.prepare('SELECT id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(targetConversationId,user.id,user.id).first<{id:string;status:string}>()
+      if(!target)return fail('You cannot forward messages to a conversation you do not participate in.',403)
+      if(targetConversationId===sourceConversationId)return fail('Choose a different conversation to forward this message to.',400)
+      if(target.status!=='open')return fail('The destination conversation is closed.',409)
+      const original=await db.prepare("SELECT id,body FROM property_messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=property_messages.id AND h.user_id=?)").bind(messageId,sourceConversationId,user.id).first<{id:string;body:string}>()
+      if(!original)return fail('The source message is no longer available to forward.',404)
+      const timestamp=nowIso(),newId=uuid()
+      await db.batch([
+        db.prepare('INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at,forwarded_from_message_id) VALUES(?,?,?,?,?,?)').bind(newId,targetConversationId,user.id,original.body,timestamp,original.id),
+        db.prepare("UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=? AND status='open'").bind(timestamp,timestamp,targetConversationId)
+      ])
+      return ok({id:newId,forwarded:true,conversationId:targetConversationId},201)
     }
     const conversationReadMatch=path.match(/^\/api\/conversations\/([^/]+)\/read$/)
     if(conversationReadMatch&&method==='PATCH') {

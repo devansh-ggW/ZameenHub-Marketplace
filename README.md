@@ -1,71 +1,76 @@
 # ZameenHub
 
-ZameenHub is a React + TypeScript property marketplace for India, with a Cloudflare Worker API and D1 persistence.
+ZameenHub is an Indian property marketplace built with React, TypeScript, a Cloudflare Worker API, and Cloudflare D1.
 
-## Authentication and marketplace security
+The product's trust principle is: **Don't trust us. Check the damn thing yourself.** A public listing is not proof of title or seller identity. Buyers should inspect seller-provided evidence on its original host and obtain independent professional advice before transacting.
 
-The application uses native email/password authentication, email verification, existing-account activation, password recovery, server-side sessions, protected listing submission, saved properties, owner inquiries, support email delivery, moderator review routes, Privacy Policy, Terms, and Cookie Policy. Property and profile media use public HTTPS URL references stored in D1; ZameenHub does not upload or store file bytes.
+## Architecture
 
-This security-hardening release adds optional authenticator-app TOTP two-factor authentication, single-use recovery codes, password-confirmed account deletion, listing-risk triage, evidence-reference review, D1-backed property/profile media URLs, property reporting, owner listing management, an inquiry inbox, additional search filters, and an EMI calculator.
+- **Frontend:** Vite + React + TypeScript.
+- **API:** Cloudflare Workers (worker/index.ts).
+- **Structured data:** Cloudflare D1 (DB binding).
+- **ZameenHub-hosted photography:** ImageKit. D1 stores file IDs, URLs, paths, uploader ownership and display order; it never stores image bytes.
+- **Property evidence:** seller-hosted HTTPS links to PDF or image documents. The originals remain on the seller's website; ZameenHub stores only descriptions, types, source domains and URLs.
+- **Phase 1 media scope:** property images and seller-hosted PDF/image evidence. Video upload and playback are postponed. Legacy video schema/data is retained for backward compatibility and is not exposed by the current Worker/UI.
+- **Not used:** Cloudflare R2.
 
-### Configure Cloudflare
+## ImageKit configuration
 
-1. Confirm the existing D1 binding in `wrangler.toml` points to the correct `zameenhub` database.
-2. Add the Resend API key in **Workers & Pages → zameenhub-marketplace → Settings → Variables and Secrets** as a **Secret** named `RESEND_API_KEY`. Never put it in the repository, `wrangler.toml`, frontend code or a `VITE_` variable.
-3. Configure plain-text Worker variables `APP_URL=https://zameenhub.dewify.shop`, `RESEND_FROM_EMAIL=ZameenHub <verify@zameenhub.dewify.shop>`, and `SUPPORT_EMAIL=dewifystores@gmail.com`. Confirm the exact sender address/domain is Verified in Resend.
-4. Apply the additive migration to the intended remote D1 database **before** deploying this Worker:
+The Worker expects:
+
+- IMAGEKIT_PRIVATE_KEY — Cloudflare Worker **Secret** containing the restricted ImageKit private key. Grant only the Media Management read/write permissions required by upload and file deletion.
+- IMAGEKIT_URL_ENDPOINT — Worker variable containing the account's ImageKit URL endpoint.
+
+The private key is server-only. Never place it in frontend code, a VITE_* variable, committed configuration, logs, or responses. The ImageKit public key is not a substitute for the server-side private key.
+
+Property/profile photos accept JPEG, PNG and WebP with a 10 MB per-file limit. A property may have up to five images. Uploads are authenticated, property ownership is checked in the Worker, and D1 records the ImageKit file ID and URL. On failed D1 attachment, the Worker attempts to delete the newly uploaded ImageKit file. Deletion failures are kept hidden from public galleries and can be retried.
+
+Before treating uploads as production-verified, test with a non-production account and the configured restricted key, including successful upload, wrong ownership, invalid signatures, size/type rejection, replacement, deletion and provider outage.
+
+## Seller-hosted property evidence
+
+Owners can add up to ten described HTTPS links, each identified as PDF or image. ZameenHub does not download, proxy, scan, or rehost those original documents. The property page displays the seller's description, declared format, source domain and a link that opens the original source safely in a new tab.
+
+A document link, accessible PDF/image, AI result, content review or ordinary publication does **not** establish legal ownership. The UI must not imply that ZameenHub has authenticated the seller's title.
+
+## Account and marketplace capabilities
+
+The existing application includes email/password accounts, email verification and recovery, server-issued sessions, optional authenticator-app TOTP MFA with recovery codes, profile settings, property creation/editing/archiving, search and filters, saved properties, owner inquiries, private buyer/owner conversations, reporting, moderation routes, legal pages and an EMI calculator.
+
+Message actions include reply, sender-only edit, forwarding to another conversation the user participates in, delete-for-everyone (soft deletion), and delete-for-me (per-user hiding). The Worker performs the authorization checks; the frontend is not trusted for access control.
+
+Property verification status is separate from listing publication and content-risk screening. A listing may be publicly visible while still Unverified. Only the separate authorized evidence-review action may mark it Verified; that is a recorded human review, not a government title API or a legal guarantee.
+
+## Cloudflare setup and migrations
+
+1. Confirm wrangler.toml references the intended D1 database.
+2. Configure RESEND_API_KEY as a Worker Secret and verify the configured Resend sender domain.
+3. Configure MFA_ENCRYPTION_KEY as a Worker Secret (at least 32 random characters). Never commit it.
+4. Configure IMAGEKIT_PRIVATE_KEY as a Worker Secret and IMAGEKIT_URL_ENDPOINT as a Worker variable, as described above.
+5. Back up the intended D1 database and apply pending migrations **before** deploying Worker code that relies on them:
+
    ```bash
-   npx wrangler d1 migrations apply zameenhub --remote
+   pnpm exec wrangler d1 migrations apply zameenhub --remote
    ```
-5. Verify `/api/health` and complete signup → received email → verification → login → listing submission → moderation → password reset on the deployed domain.
 
-The migration preserves existing users and property data. Existing accounts without a password need the activation flow to set a password and verify their email. Keep the database backup/restore path available before applying schema changes.
+6. Test the complete flows on a non-production environment before production rollout.
+
+Migrations 0006–0008 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, per-user message hiding, and a retryable ImageKit cleanup queue. The admin review queue includes a protected cleanup-retry control. These migrations are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
 
 ## Local checks
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
+python3 scripts/check-migrations.py
 pnpm build
 pnpm test:smoke
-``
+pnpm dlx wrangler@4.154.0 deploy --dry-run
+```
 
-GitHub Actions runs the dependency audit, migration checks, TOTP and EMI tests, production build, smoke checks, and Wrangler dry-run on `main`, the authentication-upgrade branch, the security-hardening branch, and pull requests targeting `main`. Static checks are not a substitute for testing live Resend delivery, D1 queries, cookie behavior over HTTPS, role permissions, abuse/rate limits, and the full browser journey.
+The static smoke checks and SQLite migration tests are wiring/schema checks, not proof of live email delivery, ImageKit uploads, remote D1 behavior, browser journeys, production deployment or penetration-test coverage.
 
-## Marketplace behavior
+## Production and legal readiness
 
-- Public discovery returns only rows whose status is `published`; an empty database is shown as an empty state rather than fake listings.
-- New property submissions require a verified account and remain `pending` until a moderator/admin approves them.
-- Session cookies are HTTP-only, Secure and SameSite=Lax; session tokens are stored in D1 only as hashes.
-- Passwords are hashed with PBKDF2-HMAC-SHA-256 using per-password random salts; password-reset and email-verification tokens are random, hashed at rest, single-use and expiring.
-- Support form submissions are sent to `dewifystores@gmail.com` through Resend. If delivery is unavailable, the UI tells the visitor to email support directly.
+Before launch, complete [PRODUCTION-CHECKLIST.md](./PRODUCTION-CHECKLIST.md) and review [SECURITY-AUDIT.md](./SECURITY-AUDIT.md). The responsible operator must complete and review the actual legal identity, jurisdiction, grievance contact and retention disclosures. Do not invent those details or claim the service is bug-free or legally verifies ownership.
 
-## Production checklist
-
-Before launch, complete `PRODUCTION-CHECKLIST.md`, review the privacy/terms text for the operator's legal identity and jurisdiction, and verify that account roles are assigned only through trusted administrative processes. Do not promote anyone to moderator/admin through a public endpoint. Owners can reference up to five public HTTPS photo URLs, one supported HTTPS video URL, and a profile image URL; files are hosted elsewhere and are not uploaded to ZameenHub.
-
-## Support
-
-Customer support: [dewifystores@gmail.com](mailto:dewifystores@gmail.com)
-
-
-## Account security and listing-risk screening
-
-The security branch adds optional authenticator-app MFA, single-use recovery codes, password-confirmed account deletion, cookie notice/policy, and server-side listing-risk triage. See [SECURITY-AUDIT.md](./SECURITY-AUDIT.md) for the competitor gap analysis and the deployment acceptance checklist.
-
-### Deploying the security branch safely
-
-1. Back up the production D1 database before making schema changes.
-2. Back up the target D1 database and apply all pending migrations, including `migrations/0003_security_mfa_ai.sql` and `migrations/0004_media_verification.sql`, **before** deploying the matching Worker source.
-3. In Cloudflare Worker settings, add `MFA_ENCRYPTION_KEY` as a secret, using a cryptographically random value of at least 32 characters. Do not put it in `wrangler.toml`, the source tree, client-side code, or GitHub issues.
-4. Confirm the Workers AI binding named `AI` is enabled for `zameenhub-marketplace`. The model uses the Cloudflare Workers AI allowance and may fall back to rule-based flags when inference is unavailable; all new listings remain pending until a reviewer approves them.
-5. Run a complete test with non-production accounts and a restorable database backup. Static checks alone do not establish deployment safety.
-
-For example, from an environment already set up with the repository and Wrangler, the migration can be applied with `pnpm exec wrangler d1 migrations apply zameenhub --remote`. Do not deploy the new Worker first: it references the new columns and tables. Migration 0004 adds profile image URL, property media URL, and evidence-review columns. It does not create an R2 binding or store uploaded files.
-
-
-### Media and evidence review
-
-- Property forms accept up to five public HTTPS image URLs and one public HTTPS video URL (YouTube, Vimeo, or direct MP4/WebM/Ogg/HLS). URLs are stored in D1; media payload bytes stay on the chosen host. This is URL-reference storage, not upload hosting.
-- Profile avatars use a public HTTPS image URL stored in D1. Invalid/local URLs and embedded `data:` URLs are rejected.
-- A property submission remains private until moderator approval. The optional public-record reference is private to the owner/review queue. A moderator can mark a supplied reference as reviewed with an audit note; this is not a legal guarantee of property title or an automated government-record lookup.
-- Public inquiries are only accepted for published listings and are delivered to the owner’s registered email when Resend is configured.
+Support: [dewifystores@gmail.com](mailto:dewifystores@gmail.com).

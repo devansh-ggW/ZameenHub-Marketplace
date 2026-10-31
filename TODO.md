@@ -1,23 +1,34 @@
-# ZameenHub delivery checklist
+# ZameenHub — current engineering follow-up
 
-## Brand and experience
-- [ ] Use the supplied blue architectural icon as the ZameenHub mark and app identity.
-- [ ] Implement the warm-white, blue-accent editorial design system without purple gradients, neon, fake trust claims, or decorative nonfunctional controls.
-- [ ] Implement a reusable CinematicScrollExperience with actual scroll-linked layered transforms, normal scrolling, reduced-motion support, and a lighter mobile treatment.
+## Implemented on the engineering branch
 
-## Core pages and navigation
-- [ ] Implement `/` with navigation, cinematic hero, search, browse/list CTAs, featured data section, categories, supported location discovery, how-it-works, seller CTA, and footer.
-- [ ] Implement `/properties` with URL-synchronized search/filter/sort controls, actual result counts, loading/error/empty/no-results states, responsive cards, and mobile filter behavior.
-- [ ] Implement `/properties/:slug` with gallery/lightbox, property attributes, description, amenities, seller block, save/share/contact/report actions, similar properties, and missing-listing handling.
-- [ ] Implement `/login`, `/signup`, `/profile`, `/saved`, `/list-property`, `/my-listings`, `/about`, `/contact`, `/help`, `/privacy`, and `/terms` as real routed pages.
+- [x] Add the supplied blue Z mark as the repository website icon and app logo reference.
+- [x] Replace the inbox's five-second conversation-summary refresh with a slower refresh and overlapping-request guard.
+- [x] Add ImageKit upload helpers and authenticated Worker endpoints for property and profile photos.
+- [x] Store ImageKit file IDs, URLs, paths, uploader IDs and status in D1 metadata; do not store media bytes in D1.
+- [x] Replace property photo URL fields with JPEG/PNG/WebP file selection and upload progress.
+- [x] Add seller-hosted PDF/image evidence links with descriptions, source-domain display and buyer-facing original-source links.
+- [x] Remove Phase 1 video UI, player and Worker media creation/read logic while retaining legacy schema/data compatibility.
+- [x] Add message reply, sender-only edit, forward, delete-for-everyone and per-user delete-for-me metadata/routes/UI.
+- [x] Add migration 0008 and an admin-only control to retry ImageKit cleanup queue records.
+- [ ] Back up a non-production D1 database, apply migrations through 0008, run the full schema checks, and test restore.
 
-## Data and backend boundary
-- [x] Keep production data truthful: the local property array and all development listing records are removed; production empty and error states are supported.
-- [ ] Provide typed API contracts and Cloudflare-compatible Worker endpoints for auth, properties, profile, favorites, inquiries, and image uploads.
-- [ ] Include versioned SQL schema with ownership, statuses, timestamps, constraints, and indexes.
-- [ ] Document required Cloudflare/D1/R2/auth configuration and do not claim unavailable services are connected.
+## Still needs verification or follow-up
 
-## Quality
-- [ ] Use accessible labels, focus states, semantic landmarks, keyboard-friendly dialogs, meaningful image alt text, and responsive mobile layouts.
-- [ ] Run dependency installation, type checks, production build, route manifest validation, and a live server smoke test.
-- [ ] Fix actionable errors found by diagnostics and leave an honest completion report in README.md.
+- [ ] Run GitHub CI for this branch and fix any build, typecheck, migration, smoke-test, audit or Wrangler dry-run failures.
+- [ ] Test the configured ImageKit restricted private key against a non-production account; verify upload, URL endpoint, file deletion and permissions.
+- [ ] Verify the exact production Worker secret names/values in Cloudflare without exposing them in Git, code output or logs.
+- [ ] Back up a non-production D1 database, apply migrations through 0007, run the full schema checks, and test restore.
+- [ ] Inspect existing property/profile media records and prepare a safe legacy image migration only where ImageKit credentials and source access are available.
+- [ ] Add operator-visible retry/reconciliation for ImageKit deletion-pending rows and any provider orphan created by a failed D1 operation.
+- [ ] Browser-test listing create/edit, photo upload and deletion, profile upload, buyer documents, mobile galleries and message actions.
+- [ ] Continue the full authorization audit for property/document/image ownership, message IDs, forwarding targets, roles and rate limits.
+- [ ] Inspect every remaining route, dashboard action, responsive breakpoint and loading/error/empty state.
+- [ ] Complete real legal operator details and arrange independent security review before production launch.
+
+## Release controls
+
+- Production main has not been changed by this engineering branch.
+- Do not apply migrations to production or deploy automatically from a passing build.
+- Keep video postponed and do not add R2 or another object store.
+- A seller-provided link or listing publication is not legal ownership verification.
