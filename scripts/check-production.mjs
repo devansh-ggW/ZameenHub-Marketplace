@@ -26,7 +26,7 @@ if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoun
 if(!read('src/App.tsx').includes('import { MessagesPage }')||!read('src/App.tsx').includes('path="/messages"'))errors.push('Private property chat route is missing')
 if(!read('src/components.tsx').includes('const isPublished = property.status === \'published\'')||!read('src/components.tsx').includes('{isPublished && <FavoriteButton'))errors.push('Private listing cards must not show unusable public links or favorites')
 const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
-const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
+const listingSubmitEnd=worker.indexOf("const publishMatch=",listingSubmitStart)
 const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
 if(!listingSubmitBlock||listingSubmitBlock.includes('riskLevel:risk.level')||listingSubmitBlock.includes('riskScore:risk.score')||listingSubmitBlock.includes('riskReasons:risk.reasons'))errors.push('Property submission must not expose internal AI risk scores or detailed risk reasons to the listing owner')
 if(!listingSubmitBlock.includes('documents.length===0')||!listingSubmitBlock.includes("'draft'"))errors.push('New listings must require at least one seller-provided document and remain private drafts until image upload completes')
@@ -40,7 +40,7 @@ const listingEditEnd=worker.indexOf("if(path==='/api/my/properties'&&method==='G
 const listingEditBlock=listingEditStart>=0&&listingEditEnd>listingEditStart?worker.slice(listingEditStart,listingEditEnd):''
 if(!listingEditBlock||listingEditBlock.includes('riskLevel:risk.level')||listingEditBlock.includes('riskScore:risk.score')||listingEditBlock.includes('riskReasons:risk.reasons'))errors.push('Listing edit responses must not expose internal AI risk scores or reasons to listing owners')
 if(!listingEditBlock.includes("ai_model='not-run'")||/ai_model\s*=\s*NULL/i.test(listingEditBlock))errors.push('Listing edits must reset ai_model to not-run; NULL violates the properties.ai_model NOT NULL constraint')
-if(!worker.includes("'published','unverified'")||!worker.includes("verified:false"))errors.push('New listings must publish immediately and begin Unverified')
+if(!worker.includes("'draft','unverified'")||!worker.includes("verified:false")||!publishBlock.includes("status:'published'"))errors.push('New listings must save privately as Unverified drafts and publish only after required media is attached')
 if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
 if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
 if(!worker.includes('snapshotGuard')||!worker.includes('AND updated_at=?'))errors.push('Moderation must reject stale listing versions that changed after review-queue load')
