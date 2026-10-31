@@ -620,19 +620,29 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       try {
         await db.prepare('UPDATE users SET profile_image_url=?,profile_image_file_id=?,updated_at=? WHERE id=?').bind(uploaded.url,uploaded.fileId,nowIso(),user.id).run()
       } catch {
-        await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        const cleaned=await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'profile-d1-attach-failed').catch(()=>{})
         return fail('The image was uploaded but could not be attached to your profile. Please retry.',500)
       }
       const previousDeleted=!previousFileId||previousFileId===uploaded.fileId||await imageKitDelete(previousFileId,env).catch(()=>false)
+      if(!previousDeleted)await queueImageKitCleanup(db,previousFileId,'','profile-replaced').catch(()=>{})
       return ok({profileImageUrl:uploaded.url,cleanupPending:!previousDeleted})
     }
     if(path==='/api/account/profile-image'&&method==='DELETE') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to remove your profile image.',401)
       if(!await authLimit(request,db,'profile-image-delete',8))return fail('Too many profile changes. Please wait before trying again.',429)
       const current=await db.prepare('SELECT profile_image_file_id FROM users WHERE id=?').bind(user.id).first<{profile_image_file_id:string|null}>()
-      if(current?.profile_image_file_id&&!await imageKitDelete(current.profile_image_file_id,env))return fail('The profile image could not be removed from ImageKit. Your profile has not been changed.',502)
-      await db.prepare('UPDATE users SET profile_image_url=\'\',profile_image_file_id=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id).run()
-      return ok({profileImageUrl:''})
+      await db.prepare("UPDATE users SET profile_image_url='',updated_at=? WHERE id=?").bind(nowIso(),user.id).run()
+      if(current?.profile_image_file_id) {
+        const deleted=await imageKitDelete(current.profile_image_file_id,env).catch(()=>false)
+        if(!deleted) {
+          await queueImageKitCleanup(db,current.profile_image_file_id,'','profile-removed').catch(()=>{})
+          await db.prepare('UPDATE users SET profile_image_file_id=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id).run()
+          return ok({profileImageUrl:'',cleanupPending:true})
+        }
+      }
+      await db.prepare('UPDATE users SET profile_image_file_id=NULL,updated_at=? WHERE id=?').bind(nowIso(),user.id).run()
+      return ok({profileImageUrl:'',cleanupPending:false})
     }
     if(path==='/api/account/profile'&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to update your profile.',401)
@@ -736,13 +746,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const folder='/zameenhub/properties/'+propertyId
       const fileName='property-'+uuid()+'.'+sniffed.extension
       let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
-      try { uploaded=await imageKitUpload(file,fileName,folder,env) } catch { uploaded=null }
+      try { uploaded=await imageKitUpload(file,fileName,folder,env,db) } catch { uploaded=null }
       if(!uploaded)return fail('ImageKit could not accept this image. Check the restricted key permissions and retry.',502)
       const mediaId=uuid()
       try {
         await db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,file_path,uploader_id,status) VALUES(?,?,'image',?,?,?,?,?,?, 'active')").bind(mediaId,propertyId,uploaded.url,'Property image '+(sortOrder+1),sortOrder,uploaded.fileId,uploaded.filePath,user.id).run()
       } catch {
-        await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        const cleaned=await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'property-media-d1-insert-failed').catch(()=>{})
         return fail('The image upload could not be saved to this listing. Please retry.',500)
       }
       return ok({id:mediaId,url:uploaded.url,fileId:uploaded.fileId,sortOrder},201)
