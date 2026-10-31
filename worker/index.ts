@@ -984,7 +984,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to edit your listings.',401)
       if(!await authLimit(request,db,'listing-edit',8)||!await limited(db,'listing-edit-user:'+user.id,10,60))return fail('Too many listing edits. Please wait before trying again.',429)
       const id=decodeURIComponent(ownedPropertyMatch[1])
-      const current=await db.prepare('SELECT id,owner_id,status FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string;owner_id:string;status:string}>()
+      const current=await db.prepare('SELECT * FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<PropertyRow>()
       if(!current)return fail('Listing not found in your account.',404)
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
