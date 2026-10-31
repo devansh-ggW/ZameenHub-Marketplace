@@ -836,7 +836,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!hidden[0]?.meta?.changes||!hidden[1]?.meta?.changes)return fail('The image could not be removed or the listing changed. Refresh and retry.',409)
       if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env)) {
         await queueImageKitCleanup(db,media.imagekit_file_id,'','property-image-delete').catch(()=>{})
-        return fail('The image is hidden from the listing but ImageKit could not delete it yet. An administrator can retry the cleanup.',502)
+        return ok({id:mediaId,deleted:true,cleanupPending:true})
       }
       const deleted=await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
       if(!deleted.meta.changes)return fail('The image was removed from ImageKit and is hidden from the listing; metadata cleanup still needs retry.',409)
@@ -989,7 +989,10 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(user.role!=='admin')return fail('Only an administrator can retry media cleanup.',403)
       if(!imageKitAuthorization(env))return fail('ImageKit restricted private key is not configured.',503)
       if(!await authLimit(request,db,'imagekit-cleanup',4)||!await limited(db,'imagekit-cleanup-user:'+user.id,8,60))return fail('Too many cleanup attempts. Please wait before trying again.',429)
-      const pending=await db.prepare('SELECT file_id FROM imagekit_cleanup_queue ORDER BY created_at ASC LIMIT 25').all<{file_id:string}>()
+      const pending=await db.prepare(`SELECT file_id FROM imagekit_cleanup_queue
+        UNION
+        SELECT imagekit_file_id AS file_id FROM property_media WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
+        LIMIT 25`).all<{file_id:string}>()
       let deleted=0
       for(const item of pending.results) {
         const success=await imageKitDelete(item.file_id,env).catch(()=>false)
@@ -1000,6 +1003,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           ])
           deleted++
         } else {
+          await queueImageKitCleanup(db,item.file_id,'','admin-retry-failed').catch(()=>{})
           await db.prepare('UPDATE imagekit_cleanup_queue SET attempts=attempts+1,last_attempt_at=? WHERE file_id=?').bind(nowIso(),item.file_id).run()
         }
       }
