@@ -34,6 +34,8 @@ const publishStart=worker.indexOf('const publishMatch=path.match')
 const publishEnd=worker.indexOf('const archiveMatch=',publishStart)
 const publishBlock=publishStart>=0&&publishEnd>publishStart?worker.slice(publishStart,publishEnd):''
 if(!publishBlock.includes('property_media')||!publishBlock.includes('property_documents')||!publishBlock.includes("status==='draft'")||!publishBlock.includes("status='published'"))errors.push('Publishing must require an active property photo and at least one seller-provided document')
+if(!worker.includes("if(status==='published') {")||!worker.includes("until at least one seller-provided property document is attached")||!worker.includes("until at least one active property photo is attached"))errors.push('Admin moderation must not publish or verify an incomplete listing')
+if(!worker.includes("COALESCE(p.verification_status,'unverified')<>'verified' AND ${publicListingRequirements}"))errors.push('Admin verification queue must not surface published listings missing required photos or documents')
 if(!worker.includes('const publicListingRequirements =')||!worker.includes('AND ${publicListingRequirements}'))errors.push('Public search and detail APIs must exclude listings without both an active photo and a seller-provided document')
 const listingEditStart=worker.indexOf("if(ownedPropertyMatch&&method==='PATCH')")
 const listingEditEnd=worker.indexOf("if(path==='/api/my/properties'&&method==='GET')",listingEditStart)
