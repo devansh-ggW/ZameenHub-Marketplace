@@ -842,8 +842,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         return ok({id:mediaId,deleted:true,cleanupPending:true})
       }
       const deleted=await db.prepare("DELETE FROM property_media WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id).run()
-      if(!deleted.meta.changes)return fail('The image was removed from ImageKit and is hidden from the listing; metadata cleanup still needs retry.',409)
-      return ok({id:mediaId,deleted:true})
+      if(!deleted.meta.changes)return ok({id:mediaId,deleted:true,cleanupPending:true})
+      return ok({id:mediaId,deleted:true,cleanupPending:false})
     }
     const ownedPropertyMatch=path.match(/^\/api\/my\/properties\/([^/]+)$/)
     if(ownedPropertyMatch&&method==='DELETE') {
