@@ -29,7 +29,7 @@ Before treating uploads as production-verified, test with a non-production accou
 
 ## Seller-hosted property evidence
 
-Owners can add up to ten described HTTPS links, each identified as PDF or image. ZameenHub does not download, proxy, scan, or rehost those original documents. The property page displays the seller's description, declared format, source domain and a link that opens the original source safely in a new tab.
+Owners can add up to ten described HTTPS links, each identified as PDF or image. At least one seller-provided document link and at least one active property photo are required before a listing appears publicly. New listings are saved as private drafts while photos upload, then published only after the Worker confirms both requirements. Existing published listings missing either requirement are excluded from public search and property-detail APIs until the owner restores them; their records remain available in the owner's account for editing. ZameenHub does not download, proxy, scan, or rehost the original documents. The property page displays the seller's description, declared format, source domain and a link that opens the original source safely in a new tab.
 
 A document link, accessible PDF/image, AI result, content review or ordinary publication does **not** establish legal ownership. The UI must not imply that ZameenHub has authenticated the seller's title.
 
