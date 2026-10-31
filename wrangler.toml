@@ -15,10 +15,6 @@ database_name = "zameenhub"
 database_id = "771caa73-f1ec-4f51-b2f2-06b94fd3f5c1"
 migrations_dir = "migrations"
 
-# Configure the already-planned object storage binding only when the owner has provisioned it.
-# [[r2_buckets]]
-# binding = "R2"
-# bucket_name = "REPLACE_WITH_CONFIGURED_R2_BUCKET"
 
 [vars]
 APP_URL = "https://zameenhub.dewify.shop"
