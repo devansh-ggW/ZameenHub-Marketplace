@@ -37,6 +37,10 @@ A document link, accessible PDF/image, AI result, content review or ordinary pub
 
 The existing application includes email/password accounts, email verification and recovery, server-issued sessions, optional authenticator-app TOTP MFA with recovery codes, profile settings, property creation/editing/archiving, search and filters, saved properties, owner inquiries, private buyer/owner conversations, reporting, moderation routes, legal pages and an EMI calculator.
 
+Authenticated sessions use Secure, HttpOnly, host-scoped cookies and hashed server-side session records. Active sessions renew with a 30-day inactivity window, capped by a 90-day absolute lifetime. The account security page can end the current session or revoke all devices. Temporary session-check/network failures do not automatically clear the authenticated UI state.
+
+Public property detail pages include a **Property Evidence Room** for seller-hosted PDF/image links and a **Listing History** timeline. The timeline begins at rollout for pre-existing listings; it does not claim to know events that occurred before tracking was enabled.
+
 Message actions include reply, sender-only edit, forwarding to another conversation the user participates in, delete-for-everyone (soft deletion), and delete-for-me (per-user hiding). The Worker performs the authorization checks; the frontend is not trusted for access control.
 
 Property verification status is separate from listing publication and content-risk screening. A listing may be publicly visible while still Unverified. Only the separate authorized evidence-review action may mark it Verified; that is a recorded human review, not a government title API or a legal guarantee.
@@ -55,7 +59,7 @@ Property verification status is separate from listing publication and content-ri
 
 6. Test the complete flows on a non-production environment before production rollout.
 
-Migrations 0006–0008 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, per-user message hiding, and a retryable ImageKit cleanup queue. The admin review queue includes a protected cleanup-retry control. These migrations are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
+Migrations 0006–0008 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, per-user message hiding, and a retryable ImageKit cleanup queue. Migration 0009 adds rolling/absolute session-expiry metadata, seller-document update timestamps and the append-only property listing-history table. The admin review queue includes a protected cleanup-retry control. These migrations are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
 
 ## Local checks
 
