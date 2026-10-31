@@ -17,6 +17,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   const [notice, setNotice] = useState('')
   const [profileImageUrl, setProfileImageUrl] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
+  const [cleanupRunning, setCleanupRunning] = useState(false)
 
   async function load() {
     setLoading(true); setError('')
@@ -73,6 +74,14 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
     setItems(current => current.filter(currentItem => currentItem.id !== id))
   }
 
+  async function retryImageKitCleanup() {
+    setCleanupRunning(true); setError(''); setNotice('')
+    const result = await apiRequest<{ processed: number; deleted: number; remaining: number }>('/api/admin/imagekit-cleanup', { method: 'POST', body: '{}' })
+    setCleanupRunning(false)
+    if (!result.ok) { setError(result.error); return }
+    setNotice('ImageKit cleanup: ' + result.data.deleted + ' file(s) removed; ' + result.data.remaining + ' still pending.')
+  }
+
   async function archiveListing(id: string) {
     if (!window.confirm('Archive this listing? It will no longer appear in public search. You can edit and resubmit it later.')) return
     setWorkingId(id); setError(''); setNotice('')
@@ -96,6 +105,11 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
   return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Review unverified public listings and handle older pending submissions. Only administrators can mark a listing Verified.' : kind === 'my-listings' ? 'New submissions publish immediately and carry an Unverified badge until an administrator checks the details.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
     {loading ? <p className="status-message">Loading your account…</p> : <>
+      {kind === 'review-queue' && user?.role === 'admin' && <section className="form-card imagekit-cleanup-panel" aria-labelledby="imagekit-cleanup-title">
+        <h2 id="imagekit-cleanup-title">ImageKit cleanup</h2>
+        <p className="muted">Retry deletion of ImageKit files that could not be cleaned up during an earlier upload replacement or D1 failure. This only processes queued file IDs; it does not change listing verification.</p>
+        <button className="btn btn-outline" type="button" disabled={cleanupRunning} onClick={() => void retryImageKitCleanup()}>{cleanupRunning ? 'Retrying cleanup…' : 'Retry pending ImageKit cleanup'}</button>
+      </section>}
       {kind === 'profile' && user && <><div className="form-card account-profile"><div className="profile-heading"><div className="profile-avatar">{profileImageUrl ? <img src={profileImageUrl} alt={user.name + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>}</div><div><h2>Account details</h2><p className="muted">Your profile image appears beside your public listing contact details.</p></div></div><p><strong>Name</strong><br />{user.name}</p><p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role}</p><form className="profile-image-form" onSubmit={async event => {
         event.preventDefault()
         const fileInput = event.currentTarget.elements.namedItem('profile-image-file') as HTMLInputElement | null
@@ -124,7 +138,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
             if (!result.ok) { setError(result.error); return }
             setProfileImageUrl('')
             setUser(current => current ? { ...current, profileImageUrl: '' } : current)
-            setNotice('Profile image removed from ImageKit.')
+            setNotice(result.data.cleanupPending ? 'Profile image removed. ImageKit cleanup is queued for retry.' : 'Profile image removed from ImageKit.')
           }}>Remove image</button>
           <button className="btn btn-primary" disabled={savingProfile}>{savingProfile ? 'Uploading…' : 'Upload profile image'}</button>
         </div>
