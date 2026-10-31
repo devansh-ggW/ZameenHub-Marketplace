@@ -109,6 +109,11 @@ if(mediaUploadStart<0||mediaUploadEnd<=mediaUploadStart||!worker.slice(mediaUplo
 if(!imagekitMigration.includes('imagekit_file_id')||!imagekitMigration.includes('file_path')||!imagekitMigration.includes('uploader_id')||!imagekitMigration.includes('property_documents'))errors.push('ImageKit metadata and seller document migration is incomplete')
 if(!imagekitCleanupMigration.includes('imagekit_cleanup_queue'))errors.push('Retryable ImageKit cleanup queue migration is missing')
 if(!worker.includes("path==='/api/admin/imagekit-cleanup'&&method==='POST'")||!read('src/account-pages.tsx').includes('/api/admin/imagekit-cleanup'))errors.push('Admin ImageKit cleanup retry endpoint/control is missing')
+const cleanupRouteStart=worker.indexOf("if(path==='/api/admin/imagekit-cleanup'&&method==='POST')")
+const cleanupRouteEnd=worker.indexOf("if(path==='/api/admin/review-queue'&&method==='GET')",cleanupRouteStart)
+const cleanupRoute=cleanupRouteStart>=0&&cleanupRouteEnd>cleanupRouteStart?worker.slice(cleanupRouteStart,cleanupRouteEnd):''
+if(!cleanupRoute.includes("status='deletion_pending'")||!cleanupRoute.includes('imagekit_cleanup_queue')||!cleanupRoute.includes('queueImageKitCleanup'))errors.push('Admin ImageKit retry must recover both queued orphans and hidden pending media rows')
+if(!worker.includes('ok({id:mediaId,deleted:true,cleanupPending:true})'))errors.push('Photo removal must report the actual hidden/removal result when provider cleanup is pending')
 if(!imagekitMigration.includes("document_type IN ('pdf', 'image')")||!imagekitMigration.includes('source_domain'))errors.push('Property document metadata must support described PDF/image links and source domains')
 if(!read('src/lib/imagekit.ts').includes('/api/media/property-image')||!read('src/lib/imagekit.ts').includes('onprogress'))errors.push('Frontend ImageKit helper must upload multipart files and report progress')
 if(!read('src/lib/auth.ts').includes("typeof init.body === 'string'"))errors.push('API helper must not override browser multipart Content-Type boundaries')
