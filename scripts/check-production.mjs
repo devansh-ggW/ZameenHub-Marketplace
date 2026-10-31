@@ -5,7 +5,7 @@ const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
   'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/imagekit.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','migrations/0009_listing_history_persistent_sessions.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
@@ -164,5 +164,28 @@ if(!worker.includes('function emailText('))errors.push('Worker email messages mu
 if(!worker.includes('href=\"${safeUrl}\"'))errors.push('Email HTML must include a link with the generated action URL')
 if(!worker.includes('copy and open this link in your browser'))errors.push('Email HTML must expose the action URL as a visible clickable fallback')
 if(!worker.includes('html,text})'))errors.push('Resend payload must include both HTML and plain-text email bodies')
+// Persistent-session behavior and false-logout regression guards.
+const authScreens=['src/account-pages.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/listing-page.tsx']
+if(!app.includes('SessionKeepAlive')||!app.includes('getSession'))errors.push('The application must periodically renew persistent sessions')
+if(!worker.includes('SESSION_INACTIVITY_MS=30*24*60*60_000')||!worker.includes('SESSION_ABSOLUTE_MS=90*24*60*60_000'))errors.push('Session inactivity and absolute lifetime defaults must be 30 and 90 days')
+if(!worker.includes('refreshUserSession')||!worker.includes('absolute_expires_at>?')||!worker.includes('last_seen_at=?'))errors.push('Session checks must renew active DB sessions without exceeding absolute expiry')
+if(!worker.includes('/api/auth/logout-all')||!read('src/account-security.tsx').includes('/api/auth/logout-all'))errors.push('Users must be able to revoke all device sessions')
+if(!worker.includes("HttpOnly; Secure; SameSite=Lax")||worker.includes('localStorage.setItem')||read('src/lib/auth.ts').includes('localStorage.setItem'))errors.push('Persistent authentication must remain in secure HttpOnly cookies, not browser local storage')
+for(const file of authScreens) {
+  const source=read(file)
+  if(source.includes('!session.ok || !session.data.authenticated')||source.includes('!result.ok || !result.data.authenticated'))errors.push(file+' must not redirect users on temporary session API errors')
+}
+if(!read('src/site-chrome.tsx').includes('Keep the last known navigation state on transient network failures'))errors.push('A temporary session check failure must not clear the existing authenticated navigation')
+if(!read('scripts/check-migrations.py').includes('logout-all must revoke every active user session')||!read('scripts/check-migrations.py').includes('Rolling activity must never extend a session beyond its 90-day absolute expiry'))errors.push('Migration tests must cover session renewal caps and revocation')
+
+// Evidence Room and Listing History.
+if(!pages.includes('Property Evidence Room')||!pages.includes('Seller-provided · Not independently authenticated')||!pages.includes('document.createdAt')||!pages.includes('document.updatedAt'))errors.push('Buyer Evidence Room must show seller attribution and document added/updated dates')
+if(!pages.includes('evidence-image-preview')||!pages.includes('referrerPolicy="no-referrer"')||pages.includes('<iframe'))errors.push('Evidence previews must be limited to safe image rendering without untrusted document iframes')
+if(!pages.includes('Listing History')||!pages.includes('/api/properties/')||!pages.includes('/history'))errors.push('Property detail pages must load the chronological Listing History API')
+if(!worker.includes('property_listing_history')||!worker.includes('listingHistoryStatement')||!worker.includes('tracking_started'))errors.push('Listing change history must be recorded by the Worker and backfilled with an honest tracking-start marker')
+if(!worker.includes("event_type")||!worker.includes("'price_increased'")||!worker.includes("'price_decreased'")||!worker.includes("'document_replaced'")||!worker.includes("'listing_unpublished'"))errors.push('Listing history must cover price, documents and publication state changes')
+if(!worker.includes("WHERE id=? AND owner_id=? AND updated_at=?"))errors.push('Listing edits must guard against overwriting a newer concurrent edit')
+if(!read('src/edit-listing-page.tsx').includes('{ ...(item.id ? { id: item.id } : {}) }'))errors.push('Seller edits must preserve existing property document IDs and added dates')
+if(!read('src/styles.css').includes('.listing-history-list')||!read('src/styles.css').includes('.evidence-image-preview'))errors.push('Evidence Room and timeline responsive styles are missing')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
 console.log('Static production smoke checks passed. These checks verify wiring, not cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')
