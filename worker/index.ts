@@ -279,6 +279,10 @@ function imageKitUrlAllowed(value:unknown,env:Env):value is string {
     return actual.protocol==='https:'&&actual.hostname===endpoint.hostname&&(!prefix||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
   } catch { return false }
 }
+async function queueImageKitCleanup(db:D1Database,fileId:string,filePath:string,reason:string):Promise<void> {
+  await db.prepare("INSERT INTO imagekit_cleanup_queue(file_id,file_path,reason,attempts,created_at,last_attempt_at) VALUES(?,?,?,0,?,NULL) ON CONFLICT(file_id) DO UPDATE SET file_path=CASE WHEN excluded.file_path<>'' THEN excluded.file_path ELSE imagekit_cleanup_queue.file_path END,reason=excluded.reason")
+    .bind(fileId,clean(filePath,1000),clean(reason,100)||'cleanup',nowIso()).run()
+}
 async function sniffImageFile(file:File):Promise<{mime:string;extension:string}|null> {
   if(file.size<12||file.size>10*1024*1024)return null
   const header=new Uint8Array(await file.slice(0,12).arrayBuffer())
@@ -288,7 +292,7 @@ async function sniffImageFile(file:File):Promise<{mime:string;extension:string}|
   if(mime==='image/webp'&&String.fromCharCode(...header.slice(0,4))==='RIFF'&&String.fromCharCode(...header.slice(8,12))==='WEBP')return {mime,extension:'webp'}
   return null
 }
-async function imageKitUpload(file:File,fileName:string,folder:string,env:Env):Promise<{fileId:string;url:string;filePath:string;size:number}|null> {
+async function imageKitUpload(file:File,fileName:string,folder:string,env:Env,db:D1Database):Promise<{fileId:string;url:string;filePath:string;size:number}|null> {
   const authorization=imageKitAuthorization(env)
   if(!authorization||!env.IMAGEKIT_URL_ENDPOINT)return null
   const form=new FormData()
@@ -299,9 +303,10 @@ async function imageKitUpload(file:File,fileName:string,folder:string,env:Env):P
   form.append('tags','zameenhub,property-image')
   const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
   const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string}|null
-  if(!response.ok||!result?.fileId||!result.url||!result.filePath)return null
-  if(!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size) {
-    await imageKitDelete(result.fileId,env).catch(()=>false)
+  if(!result?.fileId)return null
+  if(!response.ok||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size) {
+    const deleted=await imageKitDelete(result.fileId,env).catch(()=>false)
+    if(!deleted)await queueImageKitCleanup(db,result.fileId,result.filePath||'', 'invalid-upload-response').catch(()=>{})
     return null
   }
   return {fileId:result.fileId,url:result.url,filePath:result.filePath,size:Number(result.size)}
@@ -610,7 +615,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const folder='/zameenhub/profiles/'+user.id
       const fileName='profile-'+uuid()+'.'+sniffed.extension
       let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
-      try { uploaded=await imageKitUpload(file,fileName,folder,env) } catch { uploaded=null }
+      try { uploaded=await imageKitUpload(file,fileName,folder,env,db) } catch { uploaded=null }
       if(!uploaded)return fail('ImageKit could not accept this image. Check the ImageKit restricted key permissions and retry.',502)
       try {
         await db.prepare('UPDATE users SET profile_image_url=?,profile_image_file_id=?,updated_at=? WHERE id=?').bind(uploaded.url,uploaded.fileId,nowIso(),user.id).run()
