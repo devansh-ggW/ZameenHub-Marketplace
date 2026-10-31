@@ -660,7 +660,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/account/profile-image'&&method==='DELETE') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to remove your profile image.',401)
-      if(!await authLimit(request,db,'profile-image-delete',8))return fail('Too many profile changes. Please wait before trying again.',429)
+      if(!await authLimit(request,db,'profile-image-delete',8)||!await limited(db,'profile-image-delete-user:'+user.id,8,60))return fail('Too many profile changes. Please wait before trying again.',429)
       const current=await db.prepare('SELECT profile_image_file_id FROM users WHERE id=?').bind(user.id).first<{profile_image_file_id:string|null}>()
       await db.prepare("UPDATE users SET profile_image_url='',updated_at=? WHERE id=?").bind(nowIso(),user.id).run()
       if(current?.profile_image_file_id) {
@@ -826,6 +826,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     const propertyImageDeleteMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/images\/([^/]+)$/)
     if(propertyImageDeleteMatch&&method==='DELETE') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to manage property images.',401)
+      if(!await authLimit(request,db,'property-image-delete',12)||!await limited(db,'property-image-delete-user:'+user.id,24,60))return fail('Too many photo removal requests. Please wait before trying again.',429)
       const propertyId=decodeURIComponent(propertyImageDeleteMatch[1]),mediaId=decodeURIComponent(propertyImageDeleteMatch[2])
       const media=await db.prepare("SELECT m.id,m.imagekit_file_id FROM property_media m JOIN properties p ON p.id=m.property_id WHERE m.id=? AND m.property_id=? AND p.owner_id=? AND m.media_type='image'").bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
       if(!media)return fail('Property image not found in your account.',404)
