@@ -10,7 +10,8 @@
 - [x] Add seller-hosted PDF/image evidence links with descriptions, source-domain display and buyer-facing original-source links.
 - [x] Remove Phase 1 video UI, player and Worker media creation/read logic while retaining legacy schema/data compatibility.
 - [x] Add message reply, sender-only edit, forward, delete-for-everyone and per-user delete-for-me metadata/routes/UI.
-- [x] Add additive migrations 0006 and 0007 for ImageKit, seller document links and message actions.
+- [x] Add migration 0008 and an admin-only control to retry ImageKit cleanup queue records.
+- [ ] Back up a non-production D1 database, apply migrations through 0008, run the full schema checks, and test restore.
 
 ## Still needs verification or follow-up
 
