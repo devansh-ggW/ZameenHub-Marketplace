@@ -55,7 +55,7 @@ Property verification status is separate from listing publication and content-ri
 
 6. Test the complete flows on a non-production environment before production rollout.
 
-Migrations 0006 and 0007 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, and per-user message hiding. They are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
+Migrations 0006–0008 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, per-user message hiding, and a retryable ImageKit cleanup queue. The admin review queue includes a protected cleanup-retry control. These migrations are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
 
 ## Local checks
 
