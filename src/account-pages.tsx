@@ -133,7 +133,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
         <div className="listing-actions">
           <button className="btn btn-outline" type="button" disabled={savingProfile || !profileImageUrl} onClick={async () => {
             setError(''); setNotice(''); setSavingProfile(true)
-            const result = await apiRequest<{ profileImageUrl: string }>('/api/account/profile-image', { method: 'DELETE' })
+            const result = await apiRequest<{ profileImageUrl: string; cleanupPending?: boolean }>('/api/account/profile-image', { method: 'DELETE' })
             setSavingProfile(false)
             if (!result.ok) { setError(result.error); return }
             setProfileImageUrl('')
