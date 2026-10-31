@@ -198,7 +198,7 @@ export function PropertyDetailPage() {
           <h2 id="property-documents-title">Property documents</h2>
           <p className="muted">These links are supplied by the seller and open on the original hosting website. ZameenHub has not legally authenticated the documents. Inspect the source and seek independent advice before making a decision.</p>
           {property.documents?.length ? <div className="document-link-list">{property.documents.map(document => <article className="document-link-card" key={document.id}>
-            <div><strong>{document.description}</strong><p className="muted">{document.documentType.toUpperCase()} · Hosted by {document.sourceDomain}</p></div>
+            <div><strong>{document.description}</strong><p className="muted">Seller-declared format: {document.documentType.toUpperCase()} · Hosted by {document.sourceDomain}</p></div>
             <a href={document.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${document.description} on ${document.sourceDomain} in a new tab`}>Open original document ↗</a>
           </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the seller yet.</p>}
         </section>
