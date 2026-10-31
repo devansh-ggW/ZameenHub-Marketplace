@@ -652,6 +652,19 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         try { valid=await verifyMfaCode(db,user,input?.code,env) } catch { valid=false }
         if(!valid)return fail('Enter a valid authenticator or unused recovery code to confirm account deletion.',401)
       }
+      // Hide ImageKit property media before provider cleanup. A failed delete keeps the
+      // account and listing records so the owner can retry; already-deleted files
+      // are treated as successful on retry by ImageKit's 404 handling.
+      await db.prepare("UPDATE property_media SET status='deletion_pending' WHERE imagekit_file_id IS NOT NULL AND property_id IN (SELECT id FROM properties WHERE owner_id=?)").bind(user.id).run()
+      const ownedMedia=await db.prepare("SELECT imagekit_file_id FROM property_media WHERE imagekit_file_id IS NOT NULL AND status='deletion_pending' AND property_id IN (SELECT id FROM properties WHERE owner_id=?)").bind(user.id).all<{imagekit_file_id:string}>()
+      for(const media of ownedMedia.results) {
+        if(!await imageKitDelete(media.imagekit_file_id,env))return fail('Your account was not deleted. Property images are hidden while ImageKit cleanup is retried; please retry the deletion later.',502)
+      }
+      if(user.profile_image_file_id) {
+        if(!await imageKitDelete(user.profile_image_file_id,env))return fail('Your account was not deleted because its profile image could not be removed from ImageKit. Retry later.',502)
+        await db.prepare("UPDATE users SET profile_image_url='',profile_image_file_id=NULL,updated_at=? WHERE id=?").bind(nowIso(),user.id).run()
+      }
+
       // Explicitly remove owned listings first because properties.owner_id uses ON DELETE RESTRICT.
       const accountRateKeys=await Promise.all([
         'login-email:'+user.email,'register-email:'+user.email,'resend-email:'+user.email,'forgot-email:'+user.email,
@@ -710,9 +723,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!owned)return fail('This property is not available in your account.',404)
       const sniffed=await sniffImageFile(file)
       if(!sniffed||file.type.toLowerCase()!==sniffed.mime)return fail('The selected file is not a valid JPEG, PNG or WebP image.')
-      const next=await db.prepare("SELECT COALESCE(MAX(sort_order),-1)+1 AS next FROM property_media WHERE property_id=? AND media_type='image'").bind(propertyId).first<{next:number}>()
-      const sortOrder=Number(next?.next??0)
-      if(sortOrder>=5)return fail('A property can have at most five images.',409)
+      const existingOrders=await db.prepare("SELECT sort_order FROM property_media WHERE property_id=? AND media_type='image'").bind(propertyId).all<{sort_order:number}>()
+      const occupiedOrders=new Set(existingOrders.results.map(row=>Number(row.sort_order)))
+      let sortOrder=-1
+      for(let candidate=0;candidate<5;candidate++)if(!occupiedOrders.has(candidate)){sortOrder=candidate;break}
+      if(sortOrder<0)return fail('A property can have at most five images.',409)
       const folder='/zameenhub/properties/'+propertyId
       const fileName='property-'+uuid()+'.'+sniffed.extension
       let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
