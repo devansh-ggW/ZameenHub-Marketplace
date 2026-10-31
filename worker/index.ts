@@ -1010,7 +1010,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           await db.prepare('UPDATE imagekit_cleanup_queue SET attempts=attempts+1,last_attempt_at=? WHERE file_id=?').bind(nowIso(),item.file_id).run()
         }
       }
-      const remaining=await db.prepare('SELECT COUNT(*) AS total FROM imagekit_cleanup_queue').first<{total:number}>()
+      const remaining=await db.prepare(`SELECT COUNT(*) AS total FROM (
+        SELECT file_id FROM imagekit_cleanup_queue
+        UNION
+        SELECT imagekit_file_id AS file_id FROM property_media WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
+      )`).first<{total:number}>()
       return ok({processed:pending.results.length,deleted,remaining:Number(remaining?.total||0)})
     }
     if(path==='/api/admin/review-queue'&&method==='GET') {
