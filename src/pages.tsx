@@ -187,7 +187,7 @@ export function PropertyDetailPage() {
   const [notice, setNotice] = useState('')
   const [email, setEmail] = useState('')
   const [sending, setSending] = useState(false)
-  const [viewerAuthenticated, setViewerAuthenticated] = useState(false)
+  const [viewerAuthenticated, setViewerAuthenticated] = useState<boolean | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatDraft, setChatDraft] = useState('')
   const [chatStarting, setChatStarting] = useState(false)
@@ -233,9 +233,18 @@ export function PropertyDetailPage() {
   }
   const startChat = async (event: FormEvent) => {
     event.preventDefault()
-    if (!viewerAuthenticated) {
+    if (viewerAuthenticated === false) {
       navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
       return
+    }
+    if (viewerAuthenticated === null) {
+      const session = await getSession()
+      if (!session.ok) { setChatError('We could not check your sign-in right now. Please retry in a moment.'); return }
+      setViewerAuthenticated(session.data.authenticated)
+      if (!session.data.authenticated) {
+        navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
+        return
+      }
     }
     const firstMessage = chatDraft.trim()
     if (!firstMessage) { setChatError('Write a message first.'); return }
@@ -301,7 +310,7 @@ export function PropertyDetailPage() {
           <h2>Chat with the owner</h2>
           <p className="muted" style={{ fontSize: 13 }}>Ask questions and continue the conversation in your private ZameenHub inbox. Sign-in is required to reduce spam.</p>
           {!chatOpen ? <button className="btn btn-primary" type="button" style={{ width: '100%' }} onClick={() => {
-            if (!viewerAuthenticated) {
+            if (viewerAuthenticated === false) {
               navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
               return
             }
