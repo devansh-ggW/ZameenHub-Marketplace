@@ -2,11 +2,70 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUpRight, Check, ChevronLeft, ChevronRight, Share2 } from 'lucide-react'
 import { CinematicScrollExperience, EmptyState, ErrorState, FavoriteButton, ImageWithFallback, Lightbox, LoadingState, PropertyCard, PropertySearch, SectionKicker, ScrollScene } from './components'
-import { categories, formatPrice, images, type Property } from './lib/data'
+import { categories, formatPrice, images, type ListingHistoryEvent, type Property } from './lib/data'
 import { getProperties, getProperty, submitInquiry } from './lib/api'
 import { apiRequest, getSession } from './lib/auth'
 import { ReportProperty } from './report-property'
 import { PROPERTY_AMENITIES } from './lib/property-options'
+
+function formatHistoryDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function historyEventTitle(event: ListingHistoryEvent) {
+  switch (event.eventType) {
+    case 'tracking_started': return 'History tracking started'
+    case 'listing_created': return 'Listing created'
+    case 'price_increased': return 'Asking price increased'
+    case 'price_decreased': return 'Asking price reduced'
+    case 'description_changed': return 'Property description updated'
+    case 'property_details_changed': return 'Property details updated'
+    case 'images_added': return 'Property photos added'
+    case 'images_removed': return 'Property photos removed'
+    case 'document_added': return 'Seller document added'
+    case 'document_removed': return 'Seller document removed'
+    case 'document_replaced': return 'Document source link replaced'
+    case 'document_updated': return 'Document details updated'
+    case 'listing_published': return 'Listing published'
+    case 'listing_unpublished': return 'Listing unpublished'
+    default: return 'Listing updated'
+  }
+}
+
+function historyEventDetail(event: ListingHistoryEvent) {
+  if (event.eventType === 'tracking_started') return 'Listing history begins from the date tracking became available. Earlier changes are not available.'
+  if (event.eventType === 'price_increased' || event.eventType === 'price_decreased') {
+    const format = (value: string | null) => value === null ? 'Not recorded' : '₹' + Number(value).toLocaleString('en-IN')
+    return 'Previous price: ' + format(event.previousValue) + ' · New price: ' + format(event.newValue)
+  }
+  if (event.eventType === 'images_added' || event.eventType === 'images_removed') {
+    const count = Number(event.metadata.count || 1)
+    return (Number.isFinite(count) ? count : 1) + ' photo' + (count === 1 ? '' : 's') + (event.eventType === 'images_added' ? ' added' : ' removed')
+  }
+  if (event.eventType.startsWith('document_')) {
+    const description = typeof event.metadata.description === 'string' ? event.metadata.description : 'A seller-provided document'
+    const domain = typeof event.metadata.sourceDomain === 'string' ? event.metadata.sourceDomain : ''
+    return description + (domain ? ' · Source: ' + domain : '')
+  }
+  if (event.eventType === 'listing_unpublished') return event.metadata.reason === 'owner_archived' ? 'The owner archived this listing.' : 'The listing was removed from public discovery.'
+  if (event.eventType === 'description_changed') return 'The seller changed the property description. Earlier description text is not republished in the public timeline.'
+  if (event.eventType === 'property_details_changed') {
+    const labels: Record<string, string> = { location: 'Location', city: 'City', propertyType: 'Property type', purpose: 'Purpose', bedrooms: 'Bedrooms', bathrooms: 'Bathrooms', area: 'Area', amenities: 'Amenities' }
+    try {
+      const previous = JSON.parse(event.previousValue || '{}') as Record<string, unknown>
+      const current = JSON.parse(event.newValue || '{}') as Record<string, unknown>
+      const changes = Object.keys(labels).filter(key => JSON.stringify(previous[key]) !== JSON.stringify(current[key]))
+      return changes.map(key => {
+        const display = (value: unknown) => key === 'area' ? String(value) + ' sq ft' : key === 'amenities' ? (Array.isArray(value) ? value.join(', ') : 'Updated') : String(value ?? 'Not set')
+        return labels[key] + ': ' + display(previous[key]) + ' → ' + display(current[key])
+      }).join(' · ') || 'Important property information changed.'
+    } catch { return 'Important property information such as area, location or room details changed.' }
+  }
+  if (event.eventType === 'listing_created') return event.newValue ? 'The seller created this listing. Initial asking price: ₹' + Number(event.newValue).toLocaleString('en-IN') : 'The seller created this listing.'
+  if (event.eventType === 'listing_published') return 'The listing became publicly available.'
+  return ''
+}
 
 export function HomePage() {
   const [recent, setRecent] = useState<Property[]>([])
@@ -28,7 +87,7 @@ export function HomePage() {
     <section className="hero"><div className="hero-media"><ImageWithFallback src={images.hero} alt="Contemporary residential architecture" className="hero-image" /></div><div className="hero-overlay" aria-hidden="true" /><div className="hero-grid"><div className="hero-copy"><SectionKicker>Property discovery · made clearer</SectionKicker><h1 className="display">Find your next<br /><span className="serif">chapter.</span></h1><p>Explore published properties with details you can compare. No invented availability, no made-up seller claims.</p><PropertySearch /></div><div className="hero-rail">Search · Compare · Connect</div></div></section>
     <CinematicScrollExperience />
     <ScrollScene variant="reveal" className="discovery-section"><section className="section"><div className="container">
-      <div className="section-head"><div><SectionKicker>Property discovery</SectionKicker><h2>Search what is<br /><span className="serif">actually available.</span></h2></div><p>Recently published properties come directly from ZameenHub’s property service. Only published listings appear here. If there are none, we say so instead of inventing inventory.</p></div>
+      <div className="section-head"><div><SectionKicker>Property discovery</SectionKicker><h2>Search what is<br /><span className="serif">actually available.</span></h2></div><p>Recently published properties come directly from ZameenHub’s property service. Only published listings with at least one property photo and one seller-provided document appear here. If there are none, we say so instead of inventing inventory.</p></div>
       {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : recent.length > 0 ? <div className="property-grid">{recent.map(property => <PropertyCard property={property} key={property.id} />)}</div> : <EmptyState title="No published properties yet." copy="There are no public listings right now. Owners can submit property details, which are checked before publication." />}
       <div className="home-discovery-actions" style={{ marginTop: 30 }}><Link to="/properties" className="btn btn-primary">Open property search <ArrowUpRight size={16} /></Link><Link to="/tools/emi-calculator" className="btn btn-outline">Calculate a home-loan EMI <ArrowUpRight size={16} /></Link></div>
     </div></section></ScrollScene>
@@ -124,7 +183,7 @@ export function PropertiesPage() {
     <div className="results-head"><span className="mono">{loading ? 'Searching...' : `${items.length} properties`}</span><span className="muted" style={{ fontSize: 12 }}>Published listings only</span></div>
     {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : items.length ? <div className="property-grid">{items.map(property => <PropertyCard property={property} key={property.id} />)}</div> : <>
       <EmptyState title="No properties match those filters." copy="Try a broader location, adjust your budget, or clear a filter. New submissions remain private while pending review." />
-      <div className="listing-visibility-help"><p><strong>Recently submitted a property?</strong> It may already be saved to your account but will not appear here until a reviewer approves it.</p><Link to="/my-listings" className="btn btn-outline">Check my listings <ArrowUpRight size={15} /></Link></div>
+      <div className="listing-visibility-help"><p><strong>Recently submitted a property?</strong> It may be saved privately in your account. Listings appear here only after a property photo and a seller-provided document have been saved.</p><Link to="/my-listings" className="btn btn-outline">Check my listings <ArrowUpRight size={15} /></Link></div>
     </>}
   </div></main>
 }
@@ -139,11 +198,14 @@ export function PropertyDetailPage() {
   const [notice, setNotice] = useState('')
   const [email, setEmail] = useState('')
   const [sending, setSending] = useState(false)
-  const [viewerAuthenticated, setViewerAuthenticated] = useState(false)
+  const [viewerAuthenticated, setViewerAuthenticated] = useState<boolean | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
   const [chatDraft, setChatDraft] = useState('')
   const [chatStarting, setChatStarting] = useState(false)
   const [chatError, setChatError] = useState('')
+  const [history, setHistory] = useState<ListingHistoryEvent[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -152,9 +214,19 @@ export function PropertyDetailPage() {
       if (result.ok) setProperty(result.data)
       else setError(result.error)
     })
-    void getSession().then(result => {
-      if (active) setViewerAuthenticated(result.ok && result.data.authenticated)
+    void apiRequest<ListingHistoryEvent[]>('/api/properties/' + encodeURIComponent(slug) + '/history').then(result => {
+      if (!active) return
+      if (result.ok) setHistory(result.data)
+      else setHistoryError(result.error)
+      setHistoryLoading(false)
+    }).catch(() => {
+      if (!active) return
+      setHistoryError('Listing history could not be loaded right now.')
+      setHistoryLoading(false)
     })
+    void getSession().then(result => {
+      if (active && result.ok) setViewerAuthenticated(result.data.authenticated)
+    }).catch(() => { /* Public property details remain available during an auth-service interruption. */ })
     return () => { active = false }
   }, [slug])
 
@@ -172,9 +244,18 @@ export function PropertyDetailPage() {
   }
   const startChat = async (event: FormEvent) => {
     event.preventDefault()
-    if (!viewerAuthenticated) {
+    if (viewerAuthenticated === false) {
       navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
       return
+    }
+    if (viewerAuthenticated === null) {
+      const session = await getSession()
+      if (!session.ok) { setChatError('We could not check your sign-in right now. Please retry in a moment.'); return }
+      setViewerAuthenticated(session.data.authenticated)
+      if (!session.data.authenticated) {
+        navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
+        return
+      }
     }
     const firstMessage = chatDraft.trim()
     if (!firstMessage) { setChatError('Write a message first.'); return }
@@ -193,14 +274,36 @@ export function PropertyDetailPage() {
     <div className="detail-grid" style={{ marginTop: 28 }}>
       <div>
         {property.gallery.length ? <div className="gallery">{property.gallery.map((image, index) => <ImageWithFallback key={image} src={image} alt={`${property.title} view ${index + 1}`} className="gallery-image" onClick={() => setLightbox(image)} />)}</div> : <div className="gallery-empty">No property photos supplied by the owner.</div>}
-        <section className="detail-section property-documents" aria-labelledby="property-documents-title">
+        <section className="detail-section property-documents evidence-room" aria-labelledby="property-documents-title">
           <SectionKicker>Seller-provided evidence</SectionKicker>
-          <h2 id="property-documents-title">Property documents</h2>
-          <p className="muted">These links are supplied by the seller and open on the original hosting website. ZameenHub has not legally authenticated the documents. Inspect the source and seek independent advice before making a decision.</p>
+          <h2 id="property-documents-title">Property Evidence Room</h2>
+          <p className="muted">Don't rely on a badge or a description alone. Inspect the original seller-provided source yourself. ZameenHub stores the reference, not the file, and does not legally authenticate these documents or confirm ownership.</p>
           {property.documents?.length ? <div className="document-link-list">{property.documents.map(document => <article className="document-link-card" key={document.id}>
-            <div><strong>{document.description}</strong><p className="muted">Seller-declared format: {document.documentType.toUpperCase()} · Hosted by {document.sourceDomain}</p></div>
-            <a href={document.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${document.description} on ${document.sourceDomain} in a new tab`}>Open original document ↗</a>
-          </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the seller yet.</p>}
+            <div className="evidence-preview">
+              {document.documentType === 'image'
+                ? <img className="evidence-image-preview" src={document.url} loading="lazy" referrerPolicy="no-referrer" alt={'Seller-provided image: ' + document.description} />
+                : <div className="evidence-file-mark" aria-label="PDF document">PDF</div>}
+            </div>
+            <div className="evidence-document-copy">
+              <strong>{document.description}</strong>
+              <span className="evidence-seller-label">Seller-provided · Not independently authenticated</span>
+              <p className="muted">Format: {document.documentType.toUpperCase()} · Original source: {document.sourceDomain}</p>
+              <p className="muted">Added on {formatHistoryDate(document.createdAt)}{document.updatedAt && document.updatedAt !== document.createdAt ? ' · Updated on ' + formatHistoryDate(document.updatedAt) : ''}</p>
+            </div>
+            <a href={document.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label={`Open original source for ${document.description} on ${document.sourceDomain} in a new tab`}>Open original source ↗</a>
+          </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the seller.</p>}
+        </section>
+        <section className="detail-section listing-history" aria-labelledby="listing-history-title">
+          <SectionKicker>Transparent property record</SectionKicker>
+          <h2 id="listing-history-title">Listing History</h2>
+          <p className="muted">A chronological record of meaningful changes recorded by ZameenHub. This timeline does not invent changes from before tracking began.</p>
+          {historyLoading ? <p className="status-message">Loading listing history…</p>
+            : historyError ? <p className="status-message error" role="status">{historyError}</p>
+            : history.length ? <ol className="listing-history-list">{history.map(event => <li className="listing-history-item" key={event.id}>
+              <div className="listing-history-head"><strong>{historyEventTitle(event)}</strong><time dateTime={event.createdAt}>{formatHistoryDate(event.createdAt)}</time></div>
+              {historyEventDetail(event) && <p>{historyEventDetail(event)}</p>}
+            </li>)}</ol>
+            : <p className="gallery-empty">No listing changes have been recorded yet.</p>}
         </section>
         <div className="detail-section"><SectionKicker>About this place</SectionKicker><h2>{property.title}</h2><p>{property.description}</p></div>
         <div className="detail-section"><SectionKicker>Features</SectionKicker><div className="amenities">{property.amenities.map(amenity => <span className="amenity" key={amenity}><Check size={13} style={{ verticalAlign: 'middle', marginRight: 6, color: 'var(--blue)' }} />{amenity}</span>)}</div></div>
@@ -218,7 +321,7 @@ export function PropertyDetailPage() {
           <h2>Chat with the owner</h2>
           <p className="muted" style={{ fontSize: 13 }}>Ask questions and continue the conversation in your private ZameenHub inbox. Sign-in is required to reduce spam.</p>
           {!chatOpen ? <button className="btn btn-primary" type="button" style={{ width: '100%' }} onClick={() => {
-            if (!viewerAuthenticated) {
+            if (viewerAuthenticated === false) {
               navigate('/login?next=' + encodeURIComponent('/properties/' + property.slug))
               return
             }

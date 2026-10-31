@@ -12,7 +12,7 @@ export function SiteHeader() {
   useEffect(() => {
     setOpen(false)
     let active = true
-    void getSession().then(result => { if (active) setUser(result.ok && result.data.authenticated ? result.data.user ?? null : null) })
+    void getSession().then(result => { if (active && result.ok) setUser(result.data.authenticated ? result.data.user ?? null : null) }).catch(() => { /* Keep the last known navigation state on transient network failures. */ })
     return () => { active = false }
   }, [location.pathname, location.search])
 

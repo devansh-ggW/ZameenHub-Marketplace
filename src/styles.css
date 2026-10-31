@@ -654,3 +654,31 @@ img { max-width: 100%; display: block; }
   .document-link-card { align-items: flex-start; flex-direction: column; gap: 10px; padding: 14px; }
   .document-link-card a { max-width: 100%; overflow-wrap: anywhere; }
 }
+
+
+/* Property Evidence Room and Listing History */
+.evidence-room > .muted,
+.listing-history > .muted { max-width: 760px; line-height: 1.7; }
+.document-link-card { align-items: center; }
+.evidence-preview { flex: 0 0 112px; width: 112px; min-height: 80px; display: grid; place-items: center; background: #f4f6f9; border: 1px solid var(--line); overflow: hidden; }
+.evidence-image-preview { display: block; width: 100%; height: 92px; object-fit: cover; }
+.evidence-file-mark { display: grid; place-items: center; width: 100%; min-height: 80px; color: var(--ink); font-size: 14px; font-weight: 800; letter-spacing: .12em; }
+.evidence-document-copy { flex: 1 1 auto; min-width: 0; }
+.evidence-document-copy > strong { display: block; overflow-wrap: anywhere; }
+.evidence-seller-label { display: inline-block; margin-top: 5px; color: #53606e; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.evidence-document-copy p { overflow-wrap: anywhere; }
+.listing-history-list { list-style: none; margin: 20px 0 0; padding: 0 0 0 18px; border-left: 1px solid var(--line); display: grid; gap: 0; }
+.listing-history-item { position: relative; padding: 0 0 24px 18px; }
+.listing-history-item:last-child { padding-bottom: 0; }
+.listing-history-item::before { content: ''; position: absolute; left: -23px; top: 5px; width: 9px; height: 9px; border-radius: 50%; background: var(--blue); border: 3px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+.listing-history-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; }
+.listing-history-head strong { font-size: 14px; }
+.listing-history-head time { color: var(--muted); font-size: 11px; }
+.listing-history-item > p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .document-link-card { align-items: flex-start; }
+  .evidence-preview { flex-basis: 76px; width: 76px; min-height: 64px; }
+  .evidence-image-preview { height: 64px; }
+  .evidence-file-mark { min-height: 64px; font-size: 11px; }
+  .listing-history-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+}

@@ -38,6 +38,9 @@ const digest=async(s:string)=>b64(await crypto.subtle.digest('SHA-256',new TextE
 const randomToken=()=>b64(bytes(32))
 const nowIso=()=>new Date().toISOString()
 const future=(minutes:number)=>new Date(Date.now()+minutes*60_000).toISOString()
+const SESSION_INACTIVITY_MS=30*24*60*60_000
+const SESSION_ABSOLUTE_MS=90*24*60*60_000
+const publicListingRequirements = "EXISTS (SELECT 1 FROM property_media pm WHERE pm.property_id=p.id AND pm.media_type='image' AND pm.status='active') AND EXISTS (SELECT 1 FROM property_documents pd WHERE pd.property_id=p.id)"
 const normalizeEmail=(s:string)=>s.trim().toLowerCase()
 function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('/')||s.startsWith('//')||s.includes('\\'))return '';try{const u=new URL(s,'https://zameenhub.invalid');return u.origin==='https://zameenhub.invalid'?u.pathname+u.search+u.hash:''}catch{return ''}}
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
@@ -109,8 +112,22 @@ const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURICompone
 const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
 async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
-  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.profile_image_file_id,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.email_verified=1').bind(await digest(token),nowIso()).first<UserRow>()
+  const timestamp=nowIso()
+  const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.profile_image_file_id,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.absolute_expires_at>? AND u.email_verified=1').bind(await digest(token),timestamp,timestamp).first<UserRow>()
   return row??null
+}
+async function refreshUserSession(request:Request,db:D1Database):Promise<{user:UserRow;token:string;maxAge:number}|null>{
+  const token=cookieToken(request);if(!token)return null
+  const timestamp=nowIso()
+  const row=await db.prepare('SELECT s.id AS session_id,s.absolute_expires_at,u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.profile_image_file_id,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.absolute_expires_at>? AND u.email_verified=1').bind(await digest(token),timestamp,timestamp).first<UserRow & {session_id:string;absolute_expires_at:string}>()
+  if(!row)return null
+  const current=Date.now(),absolute=Date.parse(row.absolute_expires_at)
+  if(!Number.isFinite(absolute)||absolute<=current)return null
+  const expiresAt=Math.min(current+SESSION_INACTIVITY_MS,absolute)
+  const renewedAt=new Date(current).toISOString(),nextExpiry=new Date(expiresAt).toISOString()
+  const renewed=await db.prepare('UPDATE sessions SET last_seen_at=?,expires_at=? WHERE id=? AND expires_at>? AND absolute_expires_at>?').bind(renewedAt,nextExpiry,row.session_id,renewedAt,renewedAt).run()
+  if(!renewed.meta.changes)return null
+  return {user:row,token,maxAge:Math.max(1,Math.floor((expiresAt-current)/1000))}
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
 async function sendEmail(env:Env,to:string,subject:string,html:string,text:string) {
@@ -162,8 +179,10 @@ async function issueToken(db:D1Database,userId:string,purpose:'verify'|'activate
   return token
 }
 async function createSession(db:D1Database,userId:string) {
-  const token=randomToken()
-  await db.prepare('INSERT INTO sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)').bind(uuid(),userId,await digest(token),future(60*24*14)).run()
+  const token=randomToken(),createdAt=nowIso()
+  const expiresAt=new Date(Date.now()+SESSION_INACTIVITY_MS).toISOString()
+  const absoluteExpiresAt=new Date(Date.now()+SESSION_ABSOLUTE_MS).toISOString()
+  await db.prepare('INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at,last_seen_at,absolute_expires_at) VALUES(?,?,?,?,?,?,?)').bind(uuid(),userId,await digest(token),expiresAt,createdAt,createdAt,absoluteExpiresAt).run()
   return token
 }
 async function body(request:Request) {
@@ -196,7 +215,7 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; sortOrder:number }
+type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; sortOrder:number; createdAt:string; updatedAt:string }
 type PropertyImageView = { id:string; url:string; fileId:string|null; sortOrder:number }
 function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:PropertyImageView[]=[],documents:PropertyDocumentView[]=[]) {
   const verificationStatus=p.verification_status||'unverified'
@@ -213,6 +232,7 @@ function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerificatio
     documents,
     ...(includePrivateVerification ? {
       imageMedia,
+      publicEligible:images.length>0&&documents.length>0,
       verificationEvidenceType:p.verification_evidence_type||'none',
       verificationEvidenceUrl:p.verification_evidence_url||'',
       verificationSubmittedAt:p.verification_submitted_at||undefined,
@@ -239,34 +259,60 @@ function normalizeHttpsUrl(value:unknown,max=1500):string|null {
   } catch { return null }
 }
 const allowedDocumentTypes=new Set(['pdf','image'])
-function sanitizePropertyDocuments(value:unknown):Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>|null {
+type SanitizedPropertyDocument = { id:string|null; type:'pdf'|'image'; description:string; url:string; sourceDomain:string }
+function sanitizePropertyDocuments(value:unknown):SanitizedPropertyDocument[]|null {
   if(value===undefined||value===null)return []
   if(!Array.isArray(value)||value.length>10)return null
-  const seen=new Set<string>()
-  const documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>=[]
+  const seenUrls=new Set<string>(),seenIds=new Set<string>()
+  const documents:SanitizedPropertyDocument[]=[]
   for(const item of value) {
     if(!item||typeof item!=='object'||Array.isArray(item))return null
     const record=item as Record<string,unknown>
     const type=clean(record.documentType,12)
     const description=clean(record.description,180)
     const url=normalizeHttpsUrl(record.url,2000)
+    const id=clean(record.id,80)||null
     if(!allowedDocumentTypes.has(type)||description.length<3||!url)return null
-    if(seen.has(url))return null
-    seen.add(url)
+    if(seenUrls.has(url)||(id&&seenIds.has(id)))return null
+    seenUrls.add(url);if(id)seenIds.add(id)
     const sourceDomain=new URL(url).hostname.toLowerCase()
-    documents.push({type:type as 'pdf'|'image',description,url,sourceDomain})
+    documents.push({id,type:type as 'pdf'|'image',description,url,sourceDomain})
   }
   return documents
 }
-function propertyDocumentInsertStatements(db:D1Database,propertyId:string,ownerId:string,documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>):D1PreparedStatement[] {
-  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order) VALUES(?,?,?,?,?,?,?,?)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index))
+function propertyDocumentInsertStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[]):D1PreparedStatement[] {
+  const timestamp=nowIso()
+  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp))
 }
-async function replacePropertyDocuments(db:D1Database,propertyId:string,ownerId:string,documents:Array<{type:'pdf'|'image';description:string;url:string;sourceDomain:string}>) {
-  await db.batch([
-    db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId),
-    ...propertyDocumentInsertStatements(db,propertyId,ownerId,documents)
-  ])
+async function propertyDocumentReplacementStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[],guardUpdatedAt:string):Promise<D1PreparedStatement[]> {
+  const current=await db.prepare('SELECT id FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId).all<{id:string}>()
+  const existingIds=new Set(current.results.map(row=>row.id)),retainedIds:string[]=[],statements:D1PreparedStatement[]=[],timestamp=nowIso()
+  const propertyGuard=' AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)'
+  for(let index=0;index<documents.length;index++) {
+    const document=documents[index]
+    const existingId=document.id&&existingIds.has(document.id)?document.id:null
+    if(existingId) {
+      retainedIds.push(existingId)
+      statements.push(db.prepare('UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?'+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
+    } else {
+      const newId=uuid()
+      retainedIds.push(newId)
+      statements.push(db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)').bind(newId,propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,propertyId,ownerId,guardUpdatedAt))
+    }
+  }
+  if(retainedIds.length) {
+    const placeholders=retainedIds.map(()=>'?').join(',')
+    statements.push(db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=? AND id NOT IN ('+placeholders+')'+propertyGuard).bind(propertyId,ownerId,...retainedIds,propertyId,ownerId,guardUpdatedAt))
+  } else statements.push(db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?'+propertyGuard).bind(propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
+  return statements
 }
+type ListingHistoryEventType = 'tracking_started'|'listing_created'|'price_increased'|'price_decreased'|'description_changed'|'property_details_changed'|'images_added'|'images_removed'|'document_added'|'document_removed'|'document_replaced'|'document_updated'|'listing_published'|'listing_unpublished'
+function listingHistoryStatement(db:D1Database,propertyId:string,actorId:string|null,eventType:ListingHistoryEventType,previousValue:string|null,newValue:string|null,metadata:Record<string,unknown>={},timestamp=nowIso(),guardUpdatedAt?:string):D1PreparedStatement {
+  const values=[uuid(),propertyId,actorId,eventType,previousValue,newValue,JSON.stringify(metadata),timestamp]
+  if(guardUpdatedAt!==undefined)return db.prepare('INSERT INTO property_listing_history(id,property_id,actor_id,event_type,previous_value,new_value,metadata_json,created_at) SELECT ?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND updated_at=?)').bind(...values,propertyId,guardUpdatedAt)
+  return db.prepare('INSERT INTO property_listing_history(id,property_id,actor_id,event_type,previous_value,new_value,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(...values)
+}
+function parseObject(value:string):Record<string,unknown>{try{const parsed=JSON.parse(value);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed as Record<string,unknown>:{} }catch{return {}}}
 function imageKitAuthorization(env:Env):string|null {
   if(!env.IMAGEKIT_PRIVATE_KEY)return null
   return 'Basic '+btoa(env.IMAGEKIT_PRIVATE_KEY+':')
@@ -357,8 +403,8 @@ async function propertyMedia(db:D1Database,id:string,includeMetadata=false) {
   }
 }
 async function propertyDocuments(db:D1Database,id:string):Promise<PropertyDocumentView[]> {
-  const result=await db.prepare('SELECT id,document_type,description,url,source_domain,sort_order FROM property_documents WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;sort_order:number}>()
-  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,sortOrder:row.sort_order}))
+  const result=await db.prepare('SELECT id,document_type,description,url,source_domain,sort_order,created_at,updated_at FROM property_documents WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;sort_order:number;created_at:string;updated_at:string}>()
+  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,sortOrder:row.sort_order,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at}))
 }
 async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
   const [media,documents]=await Promise.all([propertyMedia(db,p.id,includePrivateVerification),propertyDocuments(db,p.id)])
@@ -399,8 +445,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
   const db=env.DB
   try {
     if(path==='/api/auth/session'&&method==='GET') {
-      const user=await getUser(request,env)
-      return ok(user?{authenticated:true,user:userView(user)}:{authenticated:false})
+      const token=cookieToken(request)
+      if(!token)return ok({authenticated:false})
+      const session=await refreshUserSession(request,db)
+      if(!session)return okWithCookies({authenticated:false},200,[sessionCookie('',0)])
+      return okWithCookies({authenticated:true,user:userView(session.user)},200,[sessionCookie(session.token,session.maxAge)])
     }
     if(path==='/api/auth/mfa/status'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before checking two-factor setup.',401)
@@ -412,6 +461,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const challenge=requestCookie(request,'zh_mfa')
       if(challenge)await db.prepare('DELETE FROM auth_mfa_challenges WHERE token_hash=?').bind(await digest(challenge)).run()
       return okWithCookies({loggedOut:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
+    }
+    if(path==='/api/auth/logout-all'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before ending every session.',401)
+      await db.batch([
+        db.prepare('DELETE FROM sessions WHERE user_id=?').bind(user.id),
+        db.prepare('DELETE FROM auth_mfa_challenges WHERE user_id=?').bind(user.id)
+      ])
+      return okWithCookies({loggedOut:true,allDevices:true},200,[sessionCookie('',0),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/register'&&method==='POST') {
       const registrationMessage='If this address can be registered, check your inbox for any next steps. If no email arrives, try signing in or password recovery, or contact dewifystores@gmail.com. Email delivery depends on service configuration.'
@@ -517,7 +574,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         return okWithCookies({mfaRequired:true},200,[sessionCookie('',0),mfaChallengeCookie(challenge,300)])
       }
       const token=await createSession(db,user.id)
-      return okWithCookies({user:userView(user),mfaRequired:false},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
+      return okWithCookies({user:userView(user),mfaRequired:false},200,[sessionCookie(token,Math.floor(SESSION_INACTIVITY_MS/1000)),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/verify'&&method==='POST') {
       if(!await authLimit(request,db,'mfa-verify',8))return fail('Too many verification attempts. Please wait before trying again.',429)
@@ -543,7 +600,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       const token=await createSession(db,record.user_id)
       await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
-      return okWithCookies({user:userView(user as UserRow)},200,[sessionCookie(token,60*24*14),mfaChallengeCookie('',0)])
+      return okWithCookies({user:userView(user as UserRow)},200,[sessionCookie(token,Math.floor(SESSION_INACTIVITY_MS/1000)),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/setup'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling two-factor authentication.',401)
@@ -737,7 +794,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/properties'&&method==='GET') {
       const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),bedsRaw=url.searchParams.get('beds'),bathsRaw=url.searchParams.get('baths'),minPriceRaw=url.searchParams.get('minPrice'),maxPriceRaw=url.searchParams.get('maxPrice'),minAreaRaw=url.searchParams.get('minArea'),maxAreaRaw=url.searchParams.get('maxArea'),amenityRaw=url.searchParams.get('amenities'),beds=bedsRaw?safeInt(bedsRaw,0,100):null,baths=bathsRaw?safeInt(bathsRaw,0,100):null,minPrice=minPriceRaw?safeInt(minPriceRaw,0,1_000_000_000):null,maxPrice=maxPriceRaw?safeInt(maxPriceRaw,0,1_000_000_000):null,minArea=minAreaRaw?safeInt(minAreaRaw,0,100_000_000):null,maxArea=maxAreaRaw?safeInt(maxAreaRaw,0,100_000_000):null,requestedAmenities=sanitizeAmenities(amenityRaw?amenityRaw.split(','):[]),sort=url.searchParams.get('sort')
-      const viewer=await getUser(request,env); let sql="SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
+      const viewer=await getUser(request,env); let sql=`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published' AND ${publicListingRequirements}`,args:unknown[]=[viewer?.id||'']
       if(q){sql+=' AND (p.location LIKE ? OR p.city LIKE ? OR p.title LIKE ?)';const term='%'+q.replace(/[%_]/g,'')+'%';args.push(term,term,term)}
       if(purpose==='sale'||purpose==='rent'){sql+=' AND p.purpose=?';args.push(purpose)}
       if(type){sql+=' AND p.property_type=?';args.push(type)}
@@ -756,9 +813,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     const detailMatch=path.match(/^\/api\/properties\/([^/]+)$/)
     if(detailMatch&&method==='GET') {
       const slug=decodeURIComponent(detailMatch[1])
-      const viewer=await getUser(request,env); const p=await db.prepare("SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published'").bind(viewer?.id||'',slug).first<PropertyRow>()
+      const viewer=await getUser(request,env); const p=await db.prepare(`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published' AND ${publicListingRequirements}`).bind(viewer?.id||'',slug).first<PropertyRow>()
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
+    }
+    const historyMatch=path.match(/^\/api\/properties\/([^/]+)\/history$/)
+    if(historyMatch&&method==='GET') {
+      const slug=decodeURIComponent(historyMatch[1])
+      const property=await db.prepare(`SELECT p.id FROM properties p WHERE p.slug=? AND p.status='published' AND ${publicListingRequirements}`).bind(slug).first<{id:string}>()
+      if(!property)return fail('Property not found or no longer available.',404)
+      const result=await db.prepare('SELECT id,event_type,previous_value,new_value,metadata_json,created_at FROM property_listing_history WHERE property_id=? ORDER BY created_at DESC,id DESC LIMIT 100').bind(property.id).all<{id:string;event_type:ListingHistoryEventType;previous_value:string|null;new_value:string|null;metadata_json:string;created_at:string}>()
+      return ok(result.results.map(event=>({id:event.id,eventType:event.event_type,previousValue:event.previous_value,newValue:event.new_value,metadata:parseObject(event.metadata_json),createdAt:event.created_at})))
     }
     if(path==='/api/media/property-image'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before uploading property images.',401)
@@ -784,9 +849,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!uploaded)return fail('ImageKit could not accept this image. Check the restricted key permissions and retry.',502)
       const mediaId=uuid()
       try {
+        const imageAddedAt=nowIso()
         await db.batch([
           db.prepare("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,file_path,uploader_id,status) VALUES(?,?,'image',?,?,?,?,?,?, 'active')").bind(mediaId,propertyId,uploaded.url,'Property image '+(sortOrder+1),sortOrder,uploaded.fileId,uploaded.filePath,user.id),
-          db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),propertyId,user.id)
+          db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(imageAddedAt,propertyId,user.id),
+          listingHistoryStatement(db,propertyId,user.id,'images_added',null,null,{count:1},imageAddedAt,imageAddedAt)
         ])
       } catch {
         const cleaned=await imageKitDelete(uploaded.fileId,env).catch(()=>false)
@@ -804,25 +871,55 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
       if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
+      if(documents.length===0)return fail('Add at least one seller-provided property document link before submitting this listing.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const createdAt=nowIso()
       const statements=[
-        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','published','unverified',evidence.type,evidence.url,evidence.submittedAt),
-        ...propertyDocumentInsertStatements(db,id,user.id,documents)
+        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','draft','unverified',evidence.type,evidence.url,evidence.submittedAt),
+        ...propertyDocumentInsertStatements(db,id,user.id,documents),
+        listingHistoryStatement(db,id,user.id,'listing_created',null,String(price),{title},createdAt),
+        ...documents.map(document=>listingHistoryStatement(db,id,user.id,'document_added',null,null,{description:document.description,sourceDomain:document.sourceDomain},createdAt))
       ]
       await db.batch(statements)
-      const message='Your listing is now live and marked Unverified. It will remain unverified until an administrator manually verifies it.'
-      return ok({id,status:'published',verified:false,message},201)
+      const message='Your draft is saved privately. It will publish after at least one property photo and one seller-provided document are attached.'
+      return ok({id,status:'draft',verified:false,message},201)
+    }
+    const publishMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/publish$/)
+    if(publishMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to publish your listing.',401)
+      if(!await authLimit(request,db,'listing-publish',6)||!await limited(db,'listing-publish-user:'+user.id,8,60))return fail('Too many publish attempts. Please wait before trying again.',429)
+      const id=decodeURIComponent(publishMatch[1])
+      const readiness=await db.prepare(`SELECT p.status,p.updated_at,
+        (SELECT COUNT(*) FROM property_media m WHERE m.property_id=p.id AND m.media_type='image' AND m.status='active') AS image_count,
+        (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id) AS document_count
+        FROM properties p WHERE p.id=? AND p.owner_id=?`).bind(id,user.id).first<{status:string;updated_at:string;image_count:number;document_count:number}>()
+      if(!readiness)return fail('Listing not found in your account.',404)
+      if(Number(readiness.document_count)<1)return fail('Add at least one seller-provided PDF/image property document before publishing.',409)
+      if(Number(readiness.image_count)<1)return fail('Upload at least one property photo before publishing.',409)
+      if(readiness.status!=='draft'&&readiness.status!=='published')return fail('This listing cannot be published from its current status.',409)
+      if(readiness.status==='draft') {
+        const publishedAt=nowIso()
+        const published=await db.batch([
+          db.prepare(`UPDATE properties SET status='published',updated_at=? WHERE id=? AND owner_id=? AND status='draft'`).bind(publishedAt,id,user.id),
+          listingHistoryStatement(db,id,user.id,'listing_published',null,null,{},publishedAt,publishedAt)
+        ])
+        if(!published[0]?.meta?.changes)return fail('The draft changed before it could be published. Refresh and try again.',409)
+      }
+      return ok({id,status:'published',message:'Your listing is now public with its required photo and seller-provided document. It remains Unverified until an administrator manually checks it.'})
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to manage your listings.',401)
       if(!await authLimit(request,db,'listing-manage',10)||!await limited(db,'listing-manage-user:'+user.id,12,60))return fail('Too many listing changes. Please wait before trying again.',429)
       const id=decodeURIComponent(archiveMatch[1])
-      const result=await db.prepare("UPDATE properties SET status='archived',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),id,user.id).run()
-      if(!result.meta.changes)return fail('Listing could not be found in your account.',404)
+      const archivedAt=nowIso()
+      const result=await db.batch([
+        db.prepare("UPDATE properties SET status='archived',updated_at=? WHERE id=? AND owner_id=? AND status<>'archived'").bind(archivedAt,id,user.id),
+        listingHistoryStatement(db,id,user.id,'listing_unpublished',null,null,{reason:'owner_archived'},archivedAt,archivedAt)
+      ])
+      if(!result[0]?.meta?.changes)return fail('Listing could not be found in your account.',404)
       return ok({id,status:'archived',message:'Your listing is archived and no longer appears in public search.'})
     }
     const propertyImageDeleteMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/images\/([^/]+)$/)
@@ -832,9 +929,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const propertyId=decodeURIComponent(propertyImageDeleteMatch[1]),mediaId=decodeURIComponent(propertyImageDeleteMatch[2])
       const media=await db.prepare("SELECT m.id,m.imagekit_file_id FROM property_media m JOIN properties p ON p.id=m.property_id WHERE m.id=? AND m.property_id=? AND p.owner_id=? AND m.media_type='image'").bind(mediaId,propertyId,user.id).first<{id:string;imagekit_file_id:string|null}>()
       if(!media)return fail('Property image not found in your account.',404)
+      const removedAt=nowIso()
       const hidden=await db.batch([
         db.prepare("UPDATE property_media SET status='deletion_pending' WHERE id=? AND property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(mediaId,propertyId,propertyId,user.id),
-        db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(nowIso(),propertyId,user.id)
+        db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(removedAt,propertyId,user.id),
+        listingHistoryStatement(db,propertyId,user.id,'images_removed',null,null,{count:1},removedAt,removedAt)
       ])
       if(!hidden[0]?.meta?.changes||!hidden[1]?.meta?.changes)return fail('The image could not be removed or the listing changed. Refresh and retry.',409)
       if(media.imagekit_file_id&&!await imageKitDelete(media.imagekit_file_id,env)) {
@@ -887,7 +986,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to edit your listings.',401)
       if(!await authLimit(request,db,'listing-edit',8)||!await limited(db,'listing-edit-user:'+user.id,10,60))return fail('Too many listing edits. Please wait before trying again.',429)
       const id=decodeURIComponent(ownedPropertyMatch[1])
-      const current=await db.prepare('SELECT id,owner_id,status FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<{id:string;owner_id:string;status:string}>()
+      const current=await db.prepare('SELECT * FROM properties WHERE id=? AND owner_id=?').bind(id,user.id).first<PropertyRow>()
       if(!current)return fail('Listing not found in your account.',404)
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
@@ -897,14 +996,28 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
-      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model='not-run',verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id)
-      const results=await db.batch([
-        update,
-        db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(id,user.id),
-        ...propertyDocumentInsertStatements(db,id,user.id,documents),
-      ])
+      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model='not-run',verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=CASE WHEN status='draft' THEN 'draft' ELSE 'published' END,updated_at=? WHERE id=? AND owner_id=? AND updated_at=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id,current.updated_at)
+      const currentDocumentsResult=await db.prepare('SELECT id,document_type,description,url,source_domain FROM property_documents WHERE property_id=? AND owner_id=?').bind(id,user.id).all<{id:string;document_type:string;description:string;url:string;source_domain:string}>()
+      const previousDocuments=new Map(currentDocumentsResult.results.map(document=>[document.id,document]))
+      const submittedExistingIds=new Set(documents.map(document=>document.id).filter((documentId):documentId is string=>!!documentId&&previousDocuments.has(documentId)))
+      const historyStatements:D1PreparedStatement[]=[]
+      if(current.price!==price)historyStatements.push(listingHistoryStatement(db,id,user.id,price>current.price?'price_increased':'price_decreased',String(current.price),String(price),{},updateTime,updateTime))
+      if(current.description!==description)historyStatements.push(listingHistoryStatement(db,id,user.id,'description_changed',null,null,{},updateTime,updateTime))
+      const previousDetails={location:current.location,city:current.city,propertyType:current.property_type,purpose:current.purpose,bedrooms:current.bedrooms,bathrooms:current.bathrooms,area:current.area,amenities:current.amenities_json}
+      const nextDetails={location,city,propertyType,purpose,bedrooms,bathrooms,area,amenities:JSON.stringify(amenities)}
+      if(JSON.stringify(previousDetails)!==JSON.stringify(nextDetails))historyStatements.push(listingHistoryStatement(db,id,user.id,'property_details_changed',JSON.stringify(previousDetails),JSON.stringify(nextDetails),{},updateTime,updateTime))
+      for(const document of documents) {
+        const old=document.id?previousDocuments.get(document.id):undefined
+        if(!old)historyStatements.push(listingHistoryStatement(db,id,user.id,'document_added',null,null,{description:document.description,sourceDomain:document.sourceDomain},updateTime,updateTime))
+        else if(old.url!==document.url)historyStatements.push(listingHistoryStatement(db,id,user.id,'document_replaced',null,null,{description:document.description,sourceDomain:document.sourceDomain},updateTime,updateTime))
+        else if(old.document_type!==document.type||old.description!==document.description)historyStatements.push(listingHistoryStatement(db,id,user.id,'document_updated',null,null,{description:document.description,sourceDomain:document.sourceDomain},updateTime,updateTime))
+      }
+      for(const old of currentDocumentsResult.results)if(!submittedExistingIds.has(old.id))historyStatements.push(listingHistoryStatement(db,id,user.id,'document_removed',null,null,{description:old.description,sourceDomain:old.source_domain},updateTime,updateTime))
+      const documentStatements=await propertyDocumentReplacementStatements(db,id,user.id,documents,updateTime)
+      const results=await db.batch([update,...documentStatements,...historyStatements])
       if(!results[0]?.meta?.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      return ok({id,status:'published',verified:false,message:'Changes saved and are live. Verification has reset to Unverified until an administrator checks the updated details.'})
+      const nextStatus=current.status==='draft'?'draft':'published'
+      return ok({id,status:nextStatus,verified:false,message:nextStatus==='draft'?'Draft changes saved privately. Add at least one photo and one seller-provided document to publish.':'Changes saved. Verification has reset to Unverified until an administrator checks the updated details.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
@@ -931,7 +1044,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/favorites'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
-      const result=await db.prepare("SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' ORDER BY f.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow>()
+      const result=await db.prepare(`SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' AND ${publicListingRequirements} ORDER BY f.created_at DESC LIMIT 100`).bind(user.id).all<PropertyRow>()
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p))))
     }
     const favoriteMatch=path.match(/^\/api\/favorites\/([^/]+)$/)
@@ -939,11 +1052,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to save properties.',401)
       const id=decodeURIComponent(favoriteMatch[1])
       if(method==='GET') {
-        const row=await db.prepare("SELECT 1 AS saved FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND f.property_id=? AND p.status='published'").bind(user.id,id).first<{saved:number}>()
+        const row=await db.prepare(`SELECT 1 AS saved FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND f.property_id=? AND p.status='published' AND ${publicListingRequirements}`).bind(user.id,id).first<{saved:number}>()
         return ok({saved:!!row})
       }
       if(method==='POST') {
-        const p=await db.prepare("SELECT id FROM properties WHERE id=? AND status='published'").bind(id).first<{id:string}>();if(!p)return fail('Property not found.',404)
+        const p=await db.prepare(`SELECT p.id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(id).first<{id:string}>();if(!p)return fail('Property not found.',404)
         await db.prepare('INSERT OR IGNORE INTO favorites(user_id,property_id) VALUES(?,?)').bind(user.id,id).run()
         return ok({saved:true})
       }
@@ -956,7 +1069,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const propertyId=clean(input.propertyId,80),reason=clean(input.reason,40),details=clean(input.details,1200)
       const reasons=['suspected_fraud','incorrect_price','duplicate','unavailable','misleading_details','other']
       if(!propertyId||!reasons.includes(reason)||details.trim().length<10||details.length>1200)return fail('Choose a report reason and provide at least 10 characters of specific detail.')
-      const property=await db.prepare("SELECT id,owner_id FROM properties WHERE id=? AND status='published'").bind(propertyId).first<{id:string;owner_id:string}>()
+      const property=await db.prepare(`SELECT p.id,p.owner_id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string}>()
       if(!property)return fail('This property is not currently available to report.',404)
       if(property.owner_id===user.id)return fail('You cannot report your own listing.',403)
       const existing=await db.prepare("SELECT id FROM property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')").bind(propertyId,user.id).first<{id:string}>()
@@ -1020,7 +1133,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
-      const result=await db.prepare("SELECT * FROM properties WHERE status='pending' OR (status='published' AND COALESCE(verification_status,'unverified')<>'verified') ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, created_at ASC LIMIT 200").all<PropertyRow>()
+      const result=await db.prepare(`SELECT p.* FROM properties p WHERE p.status='pending' OR (p.status='published' AND COALESCE(p.verification_status,'unverified')<>'verified' AND ${publicListingRequirements}) ORDER BY CASE WHEN p.status='pending' THEN 0 ELSE 1 END, p.created_at ASC LIMIT 200`).all<PropertyRow>()
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p,true))))
     }
     const reviewMatch=path.match(/^\/api\/admin\/properties\/([^/]+)$/)
@@ -1034,6 +1147,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const record=await db.prepare("SELECT * FROM properties WHERE id=? AND status IN ('pending','published')").bind(id).first<PropertyRow & {updated_at:string}>()
       if(!record)return fail('Listing was not found in a reviewable state.',404)
       const priorStatus=record.status
+      if(status==='published') {
+        const readiness=await db.prepare(`SELECT
+          (SELECT COUNT(*) FROM property_media m WHERE m.property_id=p.id AND m.media_type='image' AND m.status='active') AS image_count,
+          (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id) AS document_count
+          FROM properties p WHERE p.id=?`).bind(id).first<{image_count:number;document_count:number}>()
+        if(Number(readiness?.document_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one seller-provided property document is attached.',409)
+        if(Number(readiness?.image_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one active property photo is attached.',409)
+      }
       if(status==='published'&&priorStatus!=='pending'&&!(priorStatus==='published'&&verifyEvidence))return fail('Only pending listings can be published; live listings can only be marked verified.',409)
       if(status==='archived'&&priorStatus!=='published')return fail('Only a published listing can be archived by the moderation team.',409)
       if((status==='rejected'||status==='archived')&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for this moderation action.')
@@ -1049,9 +1170,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const nextVerificationNote=verificationDecision==='unchanged'?(record.verification_note||''):reviewNote
       // The decision is bound to the exact submitted listing and evidence link.
       const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=? AND COALESCE(verification_status,'unverified')=? AND COALESCE(verification_evidence_type,'none')=? AND COALESCE(verification_evidence_url,'')=?"
+      const statusHistoryEvent=status==='published'&&priorStatus!=='published'
+        ? listingHistoryStatement(db,id,user.id,'listing_published',null,null,{moderated:true},reviewTime,reviewTime)
+        : priorStatus==='published'&&status!=='published'
+          ? listingHistoryStatement(db,id,user.id,'listing_unpublished',null,null,{reason:status,moderated:true},reviewTime,reviewTime)
+          : null
       const auditResults=await db.batch([
         db.prepare("UPDATE properties SET status=?,updated_at=?,verification_status=?,verification_reviewed_at=?,verification_reviewed_by=?,verification_note=? WHERE id=? AND status=?"+snapshotGuard).bind(status,reviewTime,nextVerificationStatus,nextVerificationReviewedAt,nextVerificationReviewedBy,nextVerificationNote,id,priorStatus,record.title,record.location,record.city,record.price,record.description,record.property_type,record.purpose,record.bedrooms,record.bathrooms,record.area,record.amenities_json||'[]',record.price_period||'',record.ai_risk_level||'not-screened',Number(record.ai_risk_score)||0,record.ai_risk_reasons_json||'[]',record.ai_model||'not-screened',record.ai_screened_at||'',record.updated_at,record.verification_status||'unverified',record.verification_evidence_type||'none',record.verification_evidence_url||''),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at,verification_decision) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,verificationDecision,id,status)
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at,verification_decision) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,verificationDecision,id,status),
+        ...(statusHistoryEvent ? [statusHistoryEvent] : [])
       ])
       if(!auditResults[0]?.meta?.changes)return fail('The listing or evidence changed while it was being reviewed. Refresh the queue and review the latest details.',409)
       if(!auditResults[1]?.meta?.changes)return fail('The moderation audit could not be recorded. The change was rolled back; retry or contact support.',500)
@@ -1066,7 +1193,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!propertyId||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||message.trim().length<12||message.length>2000)return fail('Enter a valid email and a message of at least 12 characters.')
       if(!await limited(db,'inquiry-email:'+email,8,60))return fail('Too many inquiries from this email address. Please wait before trying again.',429)
       if(!await limited(db,'inquiry-email-property:'+email+':'+propertyId,2,60))return fail('You have already sent a recent inquiry about this property. Please wait before sending another.',429)
-      const property=await db.prepare("SELECT p.id,p.owner_id,p.title,p.slug,p.city,u.email AS owner_email FROM properties p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.status='published'").bind(propertyId).first<{id:string;owner_id:string;title:string;slug:string;city:string;owner_email:string}>()
+      const property=await db.prepare(`SELECT p.id,p.owner_id,p.title,p.slug,p.city,u.email AS owner_email FROM properties p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string;title:string;slug:string;city:string;owner_email:string}>()
       if(!property)return fail('Property not found or no longer available.',404)
       const sender=await getUser(request,env)
       if(sender?.id===property.owner_id)return fail('You cannot send an inquiry to your own listing.',403)
@@ -1102,7 +1229,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid chat request.')
       const propertyId=clean(input.propertyId,80),message=clean(input.message,2000)
       if(!propertyId||!message.trim()||message.length>2000)return fail('Choose a property and write a message (maximum 2,000 characters).')
-      const property=await db.prepare("SELECT id,owner_id FROM properties WHERE id=? AND status='published'").bind(propertyId).first<{id:string;owner_id:string}>()
+      const property=await db.prepare(`SELECT p.id,p.owner_id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string}>()
       if(!property)return fail('This property is not currently available for chat.',404)
       if(property.owner_id===user.id)return fail('You cannot start a chat with yourself about your own listing.',403)
       if(!await limited(db,'conversation-first-message:'+user.id+':'+propertyId,3,60))return fail('You recently started a chat about this property. Please wait before sending another.',429)
