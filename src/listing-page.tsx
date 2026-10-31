@@ -104,7 +104,7 @@ export function ListingPage() {
   }
 
   if (checking) return <main className="page-shell"><div className="container"><p className="status-message">Checking your account…</p></div></main>
-  if (!authorized) return <main className="page-shell"><div className="container"><p className="status-message">Redirecting to sign in…</p></div></main>
+  if (!authorized) return <main className="page-shell"><div className="container"><p className={error ? 'status-message error' : 'status-message'} role={error ? 'alert' : undefined}>{error || 'Redirecting to sign in…'}</p>{error && <button className="btn btn-outline" type="button" onClick={() => window.location.reload()}>Retry session check</button>}</div></main>
 
   return <main className="page-shell"><div className="container">
     <div className="page-title"><SectionKicker>Property owners</SectionKicker><h1>List a property.<br /><span className="serif">With clarity.</span></h1><p>Sign-in is required. A listing is published after at least one property photo and one seller-provided PDF/image document are saved. It remains Unverified until an administrator manually checks the details.</p></div>
