@@ -29,6 +29,12 @@ const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='
 const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
 const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
 if(!listingSubmitBlock||listingSubmitBlock.includes('riskLevel:risk.level')||listingSubmitBlock.includes('riskScore:risk.score')||listingSubmitBlock.includes('riskReasons:risk.reasons'))errors.push('Property submission must not expose internal AI risk scores or detailed risk reasons to the listing owner')
+if(!listingSubmitBlock.includes('documents.length===0')||!listingSubmitBlock.includes("'draft'"))errors.push('New listings must require at least one seller-provided document and remain private drafts until image upload completes')
+const publishStart=worker.indexOf('const publishMatch=path.match')
+const publishEnd=worker.indexOf('const archiveMatch=',publishStart)
+const publishBlock=publishStart>=0&&publishEnd>publishStart?worker.slice(publishStart,publishEnd):''
+if(!publishBlock.includes('property_media')||!publishBlock.includes('property_documents')||!publishBlock.includes("status==='draft'")||!publishBlock.includes("status='published'"))errors.push('Publishing must require an active property photo and at least one seller-provided document')
+if(!worker.includes('const publicListingRequirements =')||!worker.includes('AND ${publicListingRequirements}'))errors.push('Public search and detail APIs must exclude listings without both an active photo and a seller-provided document')
 const listingEditStart=worker.indexOf("if(ownedPropertyMatch&&method==='PATCH')")
 const listingEditEnd=worker.indexOf("if(path==='/api/my/properties'&&method==='GET')",listingEditStart)
 const listingEditBlock=listingEditStart>=0&&listingEditEnd>listingEditStart?worker.slice(listingEditStart,listingEditEnd):''
@@ -123,6 +129,10 @@ const cleanupRoute=cleanupRouteStart>=0&&cleanupRouteEnd>cleanupRouteStart?worke
 if(!cleanupRoute.includes("status='deletion_pending'")||!cleanupRoute.includes('imagekit_cleanup_queue')||!cleanupRoute.includes('queueImageKitCleanup'))errors.push('Admin ImageKit retry must recover both queued orphans and hidden pending media rows')
 if(!worker.includes('ok({id:mediaId,deleted:true,cleanupPending:true})'))errors.push('Photo removal must report the actual hidden/removal result when provider cleanup is pending')
 if(!imagekitMigration.includes("document_type IN ('pdf', 'image')")||!imagekitMigration.includes('source_domain'))errors.push('Property document metadata must support described PDF/image links and source domains')
+const listingWizard=read('src/listing-page.tsx')
+if(!listingWizard.includes("const steps = ['Purpose', 'Details', 'Photos & documents']")||listingWizard.includes('Review before submission.')||listingWizard.includes('step === 4'))errors.push('New listing flow must submit directly without a separate review step')
+if(!listingWizard.includes('imageFiles.length === 0')||!listingWizard.includes('publicDocuments.length === 0')||!listingWizard.includes("'/publish'"))errors.push('New listing form must require photos and documents and publish only after uploads finish')
+if(!read('src/components.tsx').includes('property.publicEligible !== false')||!read('src/account-pages.tsx').includes('item.publicEligible === false'))errors.push('Incomplete owner listings must be visibly marked hidden and must not link to public detail pages')
 const imagekitClient=read('src/lib/imagekit.ts')
 if(!imagekitClient.includes('findPersistedPropertyImage')||!imagekitClient.includes("'/api/my/properties/'")||!imagekitClient.includes('knownMediaIds')||!imagekitClient.includes('imageMedia'))errors.push('Ambiguous image upload responses must be reconciled against the owner listing media saved in D1')
 if(!read('src/edit-listing-page.tsx').includes('[...knownMediaIds]')||!read('src/listing-page.tsx').includes('[...knownMediaIds]'))errors.push('Create and edit listing uploads must pass their known media IDs so reconciliation only accepts newly saved photos')
