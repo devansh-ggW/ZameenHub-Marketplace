@@ -34,6 +34,7 @@ export type Property = {
   verificationNote?: string
   documents?: PropertyDocument[]
   imageMedia?: PropertyImage[]
+  publicEligible?: boolean
   status: ListingStatus
   ownerName: string
   ownerProfileImageUrl?: string

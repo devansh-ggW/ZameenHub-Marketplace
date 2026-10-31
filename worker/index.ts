@@ -38,6 +38,7 @@ const digest=async(s:string)=>b64(await crypto.subtle.digest('SHA-256',new TextE
 const randomToken=()=>b64(bytes(32))
 const nowIso=()=>new Date().toISOString()
 const future=(minutes:number)=>new Date(Date.now()+minutes*60_000).toISOString()
+const publicListingRequirements = "EXISTS (SELECT 1 FROM property_media pm WHERE pm.property_id=p.id AND pm.media_type='image' AND pm.status='active') AND EXISTS (SELECT 1 FROM property_documents pd WHERE pd.property_id=p.id)"
 const normalizeEmail=(s:string)=>s.trim().toLowerCase()
 function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('/')||s.startsWith('//')||s.includes('\\'))return '';try{const u=new URL(s,'https://zameenhub.invalid');return u.origin==='https://zameenhub.invalid'?u.pathname+u.search+u.hash:''}catch{return ''}}
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
@@ -213,6 +214,7 @@ function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerificatio
     documents,
     ...(includePrivateVerification ? {
       imageMedia,
+      publicEligible:images.length>0&&documents.length>0,
       verificationEvidenceType:p.verification_evidence_type||'none',
       verificationEvidenceUrl:p.verification_evidence_url||'',
       verificationSubmittedAt:p.verification_submitted_at||undefined,
@@ -737,7 +739,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/properties'&&method==='GET') {
       const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),bedsRaw=url.searchParams.get('beds'),bathsRaw=url.searchParams.get('baths'),minPriceRaw=url.searchParams.get('minPrice'),maxPriceRaw=url.searchParams.get('maxPrice'),minAreaRaw=url.searchParams.get('minArea'),maxAreaRaw=url.searchParams.get('maxArea'),amenityRaw=url.searchParams.get('amenities'),beds=bedsRaw?safeInt(bedsRaw,0,100):null,baths=bathsRaw?safeInt(bathsRaw,0,100):null,minPrice=minPriceRaw?safeInt(minPriceRaw,0,1_000_000_000):null,maxPrice=maxPriceRaw?safeInt(maxPriceRaw,0,1_000_000_000):null,minArea=minAreaRaw?safeInt(minAreaRaw,0,100_000_000):null,maxArea=maxAreaRaw?safeInt(maxAreaRaw,0,100_000_000):null,requestedAmenities=sanitizeAmenities(amenityRaw?amenityRaw.split(','):[]),sort=url.searchParams.get('sort')
-      const viewer=await getUser(request,env); let sql="SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published'",args:unknown[]=[viewer?.id||'']
+      const viewer=await getUser(request,env); let sql=`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published' AND ${publicListingRequirements}`,args:unknown[]=[viewer?.id||'']
       if(q){sql+=' AND (p.location LIKE ? OR p.city LIKE ? OR p.title LIKE ?)';const term='%'+q.replace(/[%_]/g,'')+'%';args.push(term,term,term)}
       if(purpose==='sale'||purpose==='rent'){sql+=' AND p.purpose=?';args.push(purpose)}
       if(type){sql+=' AND p.property_type=?';args.push(type)}
@@ -756,7 +758,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     const detailMatch=path.match(/^\/api\/properties\/([^/]+)$/)
     if(detailMatch&&method==='GET') {
       const slug=decodeURIComponent(detailMatch[1])
-      const viewer=await getUser(request,env); const p=await db.prepare("SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published'").bind(viewer?.id||'',slug).first<PropertyRow>()
+      const viewer=await getUser(request,env); const p=await db.prepare(`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published' AND ${publicListingRequirements}`).bind(viewer?.id||'',slug).first<PropertyRow>()
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
     }
@@ -804,17 +806,37 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
       if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
+      if(documents.length===0)return fail('Add at least one seller-provided property document link before submitting this listing.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const createdAt=nowIso()
       const statements=[
-        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','published','unverified',evidence.type,evidence.url,evidence.submittedAt),
+        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','draft','unverified',evidence.type,evidence.url,evidence.submittedAt),
         ...propertyDocumentInsertStatements(db,id,user.id,documents)
       ]
       await db.batch(statements)
-      const message='Your listing is now live and marked Unverified. It will remain unverified until an administrator manually verifies it.'
-      return ok({id,status:'published',verified:false,message},201)
+      const message='Your draft is saved privately. It will publish after at least one property photo and one seller-provided document are attached.'
+      return ok({id,status:'draft',verified:false,message},201)
+    }
+    const publishMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/publish$/)
+    if(publishMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to publish your listing.',401)
+      if(!await authLimit(request,db,'listing-publish',6)||!await limited(db,'listing-publish-user:'+user.id,8,60))return fail('Too many publish attempts. Please wait before trying again.',429)
+      const id=decodeURIComponent(publishMatch[1])
+      const readiness=await db.prepare(`SELECT p.status,
+        (SELECT COUNT(*) FROM property_media m WHERE m.property_id=p.id AND m.media_type='image' AND m.status='active') AS image_count,
+        (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id) AS document_count
+        FROM properties p WHERE p.id=? AND p.owner_id=?`).bind(id,user.id).first<{status:string;image_count:number;document_count:number}>()
+      if(!readiness)return fail('Listing not found in your account.',404)
+      if(Number(readiness.document_count)<1)return fail('Add at least one seller-provided PDF/image property document before publishing.',409)
+      if(Number(readiness.image_count)<1)return fail('Upload at least one property photo before publishing.',409)
+      if(readiness.status!=='draft'&&readiness.status!=='published')return fail('This listing cannot be published from its current status.',409)
+      if(readiness.status==='draft') {
+        const published=await db.prepare(`UPDATE properties SET status='published',updated_at=? WHERE id=? AND owner_id=? AND status='draft'`).bind(nowIso(),id,user.id).run()
+        if(!published.meta.changes)return fail('The draft changed before it could be published. Refresh and try again.',409)
+      }
+      return ok({id,status:'published',message:'Your listing is now public with its required photo and seller-provided document. It remains Unverified until an administrator manually checks it.'})
     }
     const archiveMatch=path.match(/^\/api\/my\/properties\/([^/]+)\/archive$/)
     if(archiveMatch&&method==='POST') {
@@ -897,14 +919,15 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
-      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model='not-run',verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id)
+      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model='not-run',verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=CASE WHEN status='draft' THEN 'draft' ELSE 'published' END,updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id)
       const results=await db.batch([
         update,
         db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(id,user.id),
         ...propertyDocumentInsertStatements(db,id,user.id,documents),
       ])
       if(!results[0]?.meta?.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      return ok({id,status:'published',verified:false,message:'Changes saved and are live. Verification has reset to Unverified until an administrator checks the updated details.'})
+      const nextStatus=current.status==='draft'?'draft':'published'
+      return ok({id,status:nextStatus,verified:false,message:nextStatus==='draft'?'Draft changes saved privately. Add at least one photo and one seller-provided document to publish.':'Changes saved. Verification has reset to Unverified until an administrator checks the updated details.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view your listings.',401)
@@ -931,7 +954,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/favorites'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to view saved properties.',401)
-      const result=await db.prepare("SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' ORDER BY f.created_at DESC LIMIT 100").bind(user.id).all<PropertyRow>()
+      const result=await db.prepare(`SELECT p.*,1 AS favorite FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND p.status='published' AND ${publicListingRequirements} ORDER BY f.created_at DESC LIMIT 100`).bind(user.id).all<PropertyRow>()
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p))))
     }
     const favoriteMatch=path.match(/^\/api\/favorites\/([^/]+)$/)
@@ -939,11 +962,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to save properties.',401)
       const id=decodeURIComponent(favoriteMatch[1])
       if(method==='GET') {
-        const row=await db.prepare("SELECT 1 AS saved FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND f.property_id=? AND p.status='published'").bind(user.id,id).first<{saved:number}>()
+        const row=await db.prepare(`SELECT 1 AS saved FROM favorites f JOIN properties p ON p.id=f.property_id WHERE f.user_id=? AND f.property_id=? AND p.status='published' AND ${publicListingRequirements}`).bind(user.id,id).first<{saved:number}>()
         return ok({saved:!!row})
       }
       if(method==='POST') {
-        const p=await db.prepare("SELECT id FROM properties WHERE id=? AND status='published'").bind(id).first<{id:string}>();if(!p)return fail('Property not found.',404)
+        const p=await db.prepare(`SELECT p.id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(id).first<{id:string}>();if(!p)return fail('Property not found.',404)
         await db.prepare('INSERT OR IGNORE INTO favorites(user_id,property_id) VALUES(?,?)').bind(user.id,id).run()
         return ok({saved:true})
       }
@@ -956,7 +979,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const propertyId=clean(input.propertyId,80),reason=clean(input.reason,40),details=clean(input.details,1200)
       const reasons=['suspected_fraud','incorrect_price','duplicate','unavailable','misleading_details','other']
       if(!propertyId||!reasons.includes(reason)||details.trim().length<10||details.length>1200)return fail('Choose a report reason and provide at least 10 characters of specific detail.')
-      const property=await db.prepare("SELECT id,owner_id FROM properties WHERE id=? AND status='published'").bind(propertyId).first<{id:string;owner_id:string}>()
+      const property=await db.prepare(`SELECT p.id,p.owner_id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string}>()
       if(!property)return fail('This property is not currently available to report.',404)
       if(property.owner_id===user.id)return fail('You cannot report your own listing.',403)
       const existing=await db.prepare("SELECT id FROM property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')").bind(propertyId,user.id).first<{id:string}>()
@@ -1020,7 +1043,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
-      const result=await db.prepare("SELECT * FROM properties WHERE status='pending' OR (status='published' AND COALESCE(verification_status,'unverified')<>'verified') ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, created_at ASC LIMIT 200").all<PropertyRow>()
+      const result=await db.prepare(`SELECT p.* FROM properties p WHERE p.status='pending' OR (p.status='published' AND COALESCE(p.verification_status,'unverified')<>'verified' AND ${publicListingRequirements}) ORDER BY CASE WHEN p.status='pending' THEN 0 ELSE 1 END, p.created_at ASC LIMIT 200`).all<PropertyRow>()
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p,true))))
     }
     const reviewMatch=path.match(/^\/api\/admin\/properties\/([^/]+)$/)
@@ -1034,6 +1057,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const record=await db.prepare("SELECT * FROM properties WHERE id=? AND status IN ('pending','published')").bind(id).first<PropertyRow & {updated_at:string}>()
       if(!record)return fail('Listing was not found in a reviewable state.',404)
       const priorStatus=record.status
+      if(status==='published') {
+        const readiness=await db.prepare(`SELECT
+          (SELECT COUNT(*) FROM property_media m WHERE m.property_id=p.id AND m.media_type='image' AND m.status='active') AS image_count,
+          (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id) AS document_count
+          FROM properties p WHERE p.id=?`).bind(id).first<{image_count:number;document_count:number}>()
+        if(Number(readiness?.document_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one seller-provided property document is attached.',409)
+        if(Number(readiness?.image_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one active property photo is attached.',409)
+      }
       if(status==='published'&&priorStatus!=='pending'&&!(priorStatus==='published'&&verifyEvidence))return fail('Only pending listings can be published; live listings can only be marked verified.',409)
       if(status==='archived'&&priorStatus!=='published')return fail('Only a published listing can be archived by the moderation team.',409)
       if((status==='rejected'||status==='archived')&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for this moderation action.')
@@ -1066,7 +1097,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!propertyId||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||message.trim().length<12||message.length>2000)return fail('Enter a valid email and a message of at least 12 characters.')
       if(!await limited(db,'inquiry-email:'+email,8,60))return fail('Too many inquiries from this email address. Please wait before trying again.',429)
       if(!await limited(db,'inquiry-email-property:'+email+':'+propertyId,2,60))return fail('You have already sent a recent inquiry about this property. Please wait before sending another.',429)
-      const property=await db.prepare("SELECT p.id,p.owner_id,p.title,p.slug,p.city,u.email AS owner_email FROM properties p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.status='published'").bind(propertyId).first<{id:string;owner_id:string;title:string;slug:string;city:string;owner_email:string}>()
+      const property=await db.prepare(`SELECT p.id,p.owner_id,p.title,p.slug,p.city,u.email AS owner_email FROM properties p JOIN users u ON u.id=p.owner_id WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string;title:string;slug:string;city:string;owner_email:string}>()
       if(!property)return fail('Property not found or no longer available.',404)
       const sender=await getUser(request,env)
       if(sender?.id===property.owner_id)return fail('You cannot send an inquiry to your own listing.',403)
@@ -1102,7 +1133,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid chat request.')
       const propertyId=clean(input.propertyId,80),message=clean(input.message,2000)
       if(!propertyId||!message.trim()||message.length>2000)return fail('Choose a property and write a message (maximum 2,000 characters).')
-      const property=await db.prepare("SELECT id,owner_id FROM properties WHERE id=? AND status='published'").bind(propertyId).first<{id:string;owner_id:string}>()
+      const property=await db.prepare(`SELECT p.id,p.owner_id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string}>()
       if(!property)return fail('This property is not currently available for chat.',404)
       if(property.owner_id===user.id)return fail('You cannot start a chat with yourself about your own listing.',403)
       if(!await limited(db,'conversation-first-message:'+user.id+':'+propertyId,3,60))return fail('You recently started a chat about this property. Please wait before sending another.',429)

@@ -30,6 +30,10 @@
 ## Seller-hosted property evidence
 
 - [ ] Seller can create, edit and remove up to ten evidence links with a declared PDF/image format and a meaningful description.
+- [ ] A listing cannot publish unless it has at least one active ImageKit property photo and at least one seller-provided PDF/image document link.
+- [ ] Public search, direct property detail, favorites, reports, inquiries and new chats all exclude published records missing either requirement.
+- [ ] Existing incomplete published listings remain visible to their owners with a clear missing-photo/document status and are hidden from public discovery until repaired.
+- [ ] New-listing flow creates a private draft, uploads the selected photos, and only then publishes; no separate pre-submit review step is shown.
 - [ ] Only HTTPS URLs are accepted. javascript:, data:, file:, credential-bearing and malformed URLs are rejected.
 - [ ] Worker does not fetch arbitrary seller-provided URLs or proxy the documents.
 - [ ] Buyer property detail shows document description, declared format and source hostname.
