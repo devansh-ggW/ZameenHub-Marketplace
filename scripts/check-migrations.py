@@ -3,6 +3,7 @@
 from pathlib import Path
 import sqlite3
 import sys
+from datetime import datetime, timedelta, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = sorted((ROOT / "migrations").glob("*.sql"))
@@ -20,15 +21,41 @@ def main() -> int:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
 
+    rollout_time = datetime.now(timezone.utc).replace(microsecond=0)
+    rollout_iso = rollout_time.isoformat(timespec="seconds").replace("+00:00", "Z")
+    rollout_expiry = (rollout_time + timedelta(days=14)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    history_seeded = False
     for migration in MIGRATIONS:
+        # Seed a realistic pre-upgrade installation immediately before the
+        # additive session/history migration so its backfills are exercised.
+        if migration.name == "0009_listing_history_persistent_sessions.sql":
+            db.execute("INSERT INTO users(id,email,name) VALUES(?,?,?)",
+                       ("rollout-owner", "rollout-owner@example.test", "Rollout Owner"))
+            db.execute("""INSERT INTO properties
+                (id,owner_id,slug,title,purpose,property_type,location,city,price,description,status,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ("rollout-property", "rollout-owner", "rollout-property", "Existing rollout home",
+                 "sale", "Apartment", "Central area", "Test City", 8500000,
+                 "Existing property for migration backfill testing.", "published", rollout_iso, rollout_iso))
+            db.execute("""INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at)
+                          VALUES(?,?,?,?,?)""",
+                       ("rollout-session", "rollout-owner", "rollout-token-hash", rollout_expiry, rollout_iso))
+            db.execute("""INSERT INTO property_documents
+                (id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                ("rollout-document", "rollout-property", "rollout-owner", "pdf",
+                 "Existing property record", "https://seller.example/record.pdf", "seller.example", 0, rollout_iso))
+            db.commit()
+            history_seeded = True
         print(f"Applying {migration.name}")
         db.executescript(migration.read_text(encoding="utf-8"))
+    expect(history_seeded, "The persistent session/listing-history migration was not applied")
 
     required = {
         "users", "sessions", "properties", "favorites", "inquiries",
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
-        "property_moderation_events", "property_media", "property_documents", "property_conversations", "property_messages", "property_message_hidden", "imagekit_cleanup_queue",
+        "property_moderation_events", "property_media", "property_documents", "property_conversations", "property_messages", "property_message_hidden", "imagekit_cleanup_queue", "property_listing_history",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
@@ -36,7 +63,29 @@ def main() -> int:
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
     expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext", "profile_image_url", "profile_image_file_id"} <= user_columns,
            "MFA/ImageKit profile user columns are incomplete")
-    moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
+    session_columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+    expect({"last_seen_at", "absolute_expires_at"} <= session_columns,
+           "Persistent sessions must include rolling activity and absolute-expiry columns")
+    document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
+    expect("updated_at" in document_columns, "Property documents must track their latest metadata update")
+    history_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_listing_history)")}
+    expect({"event_type", "previous_value", "new_value", "metadata_json", "created_at"} <= history_columns,
+           "Listing history event schema is incomplete")
+    seeded_session = db.execute("SELECT last_seen_at,absolute_expires_at,expires_at FROM sessions WHERE id='rollout-session'").fetchone()
+    expect(seeded_session is not None and seeded_session["last_seen_at"] == rollout_iso,
+           "Existing sessions must receive a last-seen timestamp without being invalidated")
+    expected_absolute = rollout_time + timedelta(days=90)
+    actual_absolute = datetime.fromisoformat(seeded_session["absolute_expires_at"].replace("Z", "+00:00"))
+    expect(abs((actual_absolute - expected_absolute).total_seconds()) <= 1,
+           "Existing sessions must receive an absolute lifetime capped at 90 days from creation")
+    seeded_document = db.execute("SELECT created_at,updated_at FROM property_documents WHERE id='rollout-document'").fetchone()
+    expect(seeded_document is not None and seeded_document["created_at"] == seeded_document["updated_at"],
+           "Existing seller documents must retain their original added date as their initial updated date")
+    seeded_history = db.execute("SELECT event_type,metadata_json FROM property_listing_history WHERE property_id='rollout-property'").fetchone()
+    expect(seeded_history is not None and seeded_history["event_type"] == "tracking_started"
+           and "Listing history begins from the date tracking became available." in seeded_history["metadata_json"],
+           "Pre-existing listings must start history with an honest tracking-start event")
+        moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
     expect({"owner_message", "review_note", "new_status", "verification_decision"} <= moderation_columns,
            "Moderation audit must separate private internal notes from owner-facing feedback")
 
@@ -312,6 +361,47 @@ def main() -> int:
     db.execute("UPDATE mfa_recovery_codes SET used_at=? WHERE id=? AND used_at IS NULL", (now, "recovery-1"))
     expect(db.execute("SELECT used_at FROM mfa_recovery_codes WHERE id='recovery-1'").fetchone()[0] == now,
            "Recovery-code consumption failed")
+
+    # Exercise the persistent-session renewal policy against real SQLite rows.
+    renewal_time = rollout_time + timedelta(days=5)
+    next_expiry = min(renewal_time + timedelta(days=30), expected_absolute)
+    renewed = db.execute("""UPDATE sessions SET last_seen_at=?,expires_at=?
+        WHERE id=? AND expires_at>? AND absolute_expires_at>?""",
+        (renewal_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
+         next_expiry.isoformat(timespec="seconds").replace("+00:00", "Z"),
+         "rollout-session", renewal_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
+         renewal_time.isoformat(timespec="seconds").replace("+00:00", "Z")))
+    expect(renewed.rowcount == 1, "A valid persistent session should renew within its inactivity window")
+    renewed_session = db.execute("SELECT expires_at,last_seen_at FROM sessions WHERE id='rollout-session'").fetchone()
+    expect(renewed_session["expires_at"] == next_expiry.isoformat(timespec="seconds").replace("+00:00", "Z"),
+           "Session renewal must extend inactivity by 30 days")
+    expect(renewed_session["last_seen_at"] == renewal_time.isoformat(timespec="seconds").replace("+00:00", "Z"),
+           "Session renewal must update last-seen time")
+    # A session close to its hard limit may never be extended beyond day 90.
+    cap_time = expected_absolute - timedelta(days=1)
+    cap_time_iso = cap_time.isoformat(timespec="seconds").replace("+00:00", "Z")
+    absolute_iso = expected_absolute.isoformat(timespec="seconds").replace("+00:00", "Z")
+    db.execute("UPDATE sessions SET expires_at=? WHERE id='rollout-session'", (absolute_iso,))
+    capped = db.execute("""UPDATE sessions SET last_seen_at=?,expires_at=?
+        WHERE id=? AND expires_at>? AND absolute_expires_at>?""",
+        (cap_time_iso, min(cap_time + timedelta(days=30), expected_absolute).isoformat(timespec="seconds").replace("+00:00", "Z"),
+         "rollout-session", cap_time_iso, cap_time_iso))
+    expect(capped.rowcount == 1 and db.execute("SELECT expires_at FROM sessions WHERE id='rollout-session'").fetchone()[0] == absolute_iso,
+           "Rolling activity must never extend a session beyond its 90-day absolute expiry")
+    expired_time = (expected_absolute + timedelta(seconds=1)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    expired_renewal = db.execute("""UPDATE sessions SET last_seen_at=?,expires_at=?
+        WHERE id=? AND expires_at>? AND absolute_expires_at>?""",
+        (expired_time, expired_time, "rollout-session", expired_time, expired_time))
+    expect(expired_renewal.rowcount == 0, "Expired or absolutely expired sessions must not renew")
+    db.execute("INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at,last_seen_at,absolute_expires_at) VALUES(?,?,?,?,?,?,?)",
+               ("logout-session", "rollout-owner", "logout-token-hash", rollout_expiry, rollout_iso, rollout_iso,
+                expected_absolute.isoformat(timespec="seconds").replace("+00:00", "Z")))
+    db.execute("DELETE FROM sessions WHERE token_hash=?", ("rollout-token-hash",))
+    expect(db.execute("SELECT COUNT(*) FROM sessions WHERE id='logout-session'").fetchone()[0] == 0,
+           "Current-device logout must revoke its own session")
+    db.execute("DELETE FROM sessions WHERE user_id=?", ("rollout-owner",))
+    expect(db.execute("SELECT COUNT(*) FROM sessions WHERE user_id='rollout-owner'").fetchone()[0] == 0,
+           "Logout-all must revoke every active user session")
 
     # Exercise the same owned-data cleanup order as account deletion.
     db.execute("DELETE FROM properties WHERE owner_id=?", ("owner",))
