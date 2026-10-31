@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { EmptyState, SectionKicker } from './components'
 import { apiRequest, getSession } from './lib/auth'
@@ -56,18 +56,40 @@ export function MessagesPage() {
     return () => { active = false }
   }, [navigate, loadConversations])
 
+  const messagesRequestInFlight = useRef(false)
+
   const loadMessages = useCallback(async (quiet = false) => {
     if (!selectedId) { setMessages([]); return }
+    // Keep a slow network from stacking overlapping five-second polls.
+    if (messagesRequestInFlight.current) return
+    messagesRequestInFlight.current = true
     if (!quiet) setMessagesLoading(true)
-    const result = await apiRequest<ChatMessage[]>('/api/conversations/' + encodeURIComponent(selectedId) + '/messages')
-    if (result.ok) {
-      setMessages(result.data)
-      await apiRequest<{ read: boolean }>('/api/conversations/' + encodeURIComponent(selectedId) + '/read', { method: 'PATCH', body: '{}' })
-      void loadConversations()
-      setError('')
-    } else setError(result.error)
-    if (!quiet) setMessagesLoading(false)
-  }, [selectedId, loadConversations])
+    try {
+      const result = await apiRequest<ChatMessage[]>('/api/conversations/' + encodeURIComponent(selectedId) + '/messages')
+      if (result.ok) {
+        setMessages(result.data)
+        // Avoid a write on every poll; only mark the conversation read when
+        // there is actually an unread message from the other participant.
+        const hasUnreadIncoming = result.data.some(message => message.senderId !== currentUserId && !message.readAt)
+        if (hasUnreadIncoming) {
+          const readResult = await apiRequest<{ read: boolean }>('/api/conversations/' + encodeURIComponent(selectedId) + '/read', { method: 'PATCH', body: '{}' })
+          if (readResult.ok) void loadConversations()
+        }
+        setError('')
+      } else setError(result.error)
+    } finally {
+      messagesRequestInFlight.current = false
+      if (!quiet) setMessagesLoading(false)
+    }
+  }, [selectedId, currentUserId, loadConversations])
+
+  // Inbox summaries change much less often than message contents. Refreshing
+  // them once a minute keeps the list current without exhausting the Worker
+  // IP rate limit while an open conversation is polling.
+  useEffect(() => {
+    const timer = window.setInterval(() => { void loadConversations() }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [loadConversations])
 
   useEffect(() => {
     if (!selectedId) { setMessages([]); return }
