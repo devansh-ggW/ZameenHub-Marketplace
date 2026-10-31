@@ -28,14 +28,14 @@ def main() -> int:
         "users", "sessions", "properties", "favorites", "inquiries",
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
-        "property_moderation_events", "property_media", "property_conversations", "property_messages",
+        "property_moderation_events", "property_media", "property_documents", "property_conversations", "property_messages", "property_message_hidden",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
 
     user_columns = {row["name"] for row in db.execute("PRAGMA table_info(users)")}
-    expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext", "profile_image_url"} <= user_columns,
-           "MFA user columns are incomplete")
+    expect({"mfa_enabled", "mfa_last_counter", "mfa_secret_ciphertext", "mfa_pending_secret_ciphertext", "profile_image_url", "profile_image_file_id"} <= user_columns,
+           "MFA/ImageKit profile user columns are incomplete")
     moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
     expect({"owner_message", "review_note", "new_status", "verification_decision"} <= moderation_columns,
            "Moderation audit must separate private internal notes from owner-facing feedback")
@@ -44,14 +44,20 @@ def main() -> int:
     expect({"verification_status", "verification_evidence_type", "verification_evidence_url", "verification_reviewed_by"} <= property_columns,
            "Property evidence review columns are incomplete")
     media_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_media)")}
-    expect({"property_id", "media_type", "media_url", "sort_order"} <= media_columns,
-           "URL-based property media columns are incomplete")
+    expect({"property_id", "media_type", "media_url", "sort_order", "imagekit_file_id", "file_path", "uploader_id", "status"} <= media_columns,
+           "ImageKit property media columns are incomplete")
+    document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
+    expect({"property_id", "owner_id", "document_type", "description", "url", "source_domain", "sort_order"} <= document_columns,
+           "Seller-hosted property document columns are incomplete")
     conversation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_conversations)")}
     expect({"property_id", "buyer_id", "owner_id", "status", "last_message_at"} <= conversation_columns,
            "Private conversation metadata columns are incomplete")
     message_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_messages)")}
-    expect({"conversation_id", "sender_id", "body", "created_at", "read_at"} <= message_columns,
-           "Private message columns are incomplete")
+    expect({"conversation_id", "sender_id", "body", "created_at", "read_at", "edited_at", "reply_to_message_id", "forwarded_from_message_id", "deleted_at"} <= message_columns,
+           "Private message action columns are incomplete")
+    hidden_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_message_hidden)")}
+    expect({"message_id", "user_id", "hidden_at"} <= hidden_columns,
+           "Per-user message hiding columns are incomplete")
 
     now = "2026-10-28T00:00:00.000Z"
 
@@ -93,13 +99,24 @@ def main() -> int:
     db.execute("UPDATE properties SET amenities_json=?,area=1200 WHERE id='published'", ('["Parking","Lift"]',))
     db.execute("UPDATE properties SET area=1800 WHERE id='other-property'")
 
-    # Public URL references are stored in D1; no binary upload/R2 object is required.
-    db.execute("UPDATE users SET profile_image_url=? WHERE id='owner'", ("https://media.example.test/avatar.jpg",))
-    expect(db.execute("SELECT profile_image_url FROM users WHERE id='owner'").fetchone()[0] == "https://media.example.test/avatar.jpg",
-           "Profile image URL was not persisted in D1")
+    # ImageKit stores the image bytes; D1 stores only the provider reference/metadata.
+    db.execute("UPDATE users SET profile_image_url=?,profile_image_file_id=? WHERE id='owner'",
+               ("https://ik.imagekit.io/test/avatar.jpg", "ik-profile-file-1"))
+    expect(db.execute("SELECT profile_image_url,profile_image_file_id FROM users WHERE id='owner'").fetchone()[:] ==
+           ("https://ik.imagekit.io/test/avatar.jpg", "ik-profile-file-1"),
+           "ImageKit profile metadata was not persisted in D1")
+    db.execute("""INSERT INTO property_documents
+        (id,property_id,owner_id,document_type,description,url,source_domain,sort_order)
+        VALUES(?,?,?,?,?,?,?,?)""",
+        ("document-one", "published", "owner", "pdf", "Seller-provided sale deed reference",
+         "https://seller.example.test/records/deed.pdf", "seller.example.test", 0))
+    document = db.execute("SELECT document_type,source_domain FROM property_documents WHERE id='document-one'").fetchone()
+    expect(document is not None and document[:] == ("pdf", "seller.example.test"),
+           "Seller-hosted evidence metadata was not persisted")
     for index in range(5):
-        db.execute("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,?,?,?,?)",
-                   (f"media-{index}", "published", "image", f"https://media.example.test/home-{index}.jpg", "Property view", index))
+        db.execute("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order,imagekit_file_id,file_path,uploader_id,status) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                   (f"media-{index}", "published", "image", f"https://ik.imagekit.io/test/home-{index}.jpg", "Property view", index,
+                    f"ik-file-{index}", f"/zameenhub/properties/published/home-{index}.jpg", "owner", "active"))
     try:
         db.execute("INSERT INTO property_media(id,property_id,media_type,media_url,alt_text,sort_order) VALUES(?,?,?,?,?,?)",
                    ("media-six", "published", "image", "https://media.example.test/home-6.jpg", "Extra view", 0))
@@ -170,11 +187,25 @@ def main() -> int:
     expect(db.execute("SELECT status FROM inquiries WHERE id='inquiry-owner'").fetchone()[0] == "read",
            "Listing owner could not mark their inquiry as read")
 
-    # Exercise the new private chat schema, participant separation, and unread counts.
+    # Exercise participant separation and the new per-message action metadata.
     db.execute("""INSERT INTO property_conversations(id,property_id,buyer_id,owner_id,created_at,updated_at,last_message_at,status)
                   VALUES('conversation-one','published','reporter','owner',?,?,?,'open')""", (now, now, now))
     db.execute("""INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at)
                   VALUES('message-one','conversation-one','reporter','Could I arrange a viewing?',?)""", (now,))
+    db.execute("""INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at,reply_to_message_id)
+                  VALUES('message-reply','conversation-one','owner','Yes, when would you like to visit?',?,'message-one')""", (now,))
+    db.execute("""INSERT INTO property_messages(id,conversation_id,sender_id,body,created_at,forwarded_from_message_id)
+                  VALUES('message-forward','conversation-one','owner','Forwarded message copy',?,'message-one')""", (now,))
+    db.execute("UPDATE property_messages SET body=?,edited_at=? WHERE id='message-reply'", ("Yes, Saturday works.", now))
+    expect(db.execute("SELECT edited_at,reply_to_message_id FROM property_messages WHERE id='message-reply'").fetchone()[:] == (now, "message-one"),
+           "Message edit/reply metadata did not persist")
+    expect(db.execute("SELECT forwarded_from_message_id FROM property_messages WHERE id='message-forward'").fetchone()[0] == "message-one",
+           "Forward attribution did not persist")
+    db.execute("INSERT INTO property_message_hidden(message_id,user_id,hidden_at) VALUES(?,?,?)", ("message-one", "reporter", now))
+    hidden_for_reporter = db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE message_id='message-one' AND user_id='reporter'").fetchone()[0]
+    hidden_for_owner = db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE message_id='message-one' AND user_id='owner'").fetchone()[0]
+    expect(hidden_for_reporter == 1 and hidden_for_owner == 0,
+           "Delete-for-me must hide a message only for the requesting participant")
     buyer_conversations = db.execute("""SELECT c.id,p.title,
         (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unread
         FROM property_conversations c JOIN properties p ON p.id=c.property_id
@@ -267,6 +298,10 @@ def main() -> int:
     db.execute("DELETE FROM properties WHERE owner_id=?", ("owner",))
     db.execute("DELETE FROM inquiries WHERE sender_id=?", ("owner",))
     db.execute("DELETE FROM users WHERE id=?", ("owner",))
+    expect(db.execute("SELECT COUNT(*) FROM property_documents WHERE owner_id='owner'").fetchone()[0] == 0,
+           "Seller documents did not cascade with property/account deletion")
+    expect(db.execute("SELECT COUNT(*) FROM property_message_hidden WHERE user_id='owner'").fetchone()[0] == 0,
+           "Per-user hidden-message metadata did not cascade with account deletion")
     expect(db.execute("SELECT COUNT(*) FROM users WHERE id='owner'").fetchone()[0] == 0,
            "Account row was not removed")
     expect(db.execute("SELECT COUNT(*) FROM sessions WHERE user_id='owner'").fetchone()[0] == 0,
