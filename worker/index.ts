@@ -276,7 +276,7 @@ function imageKitUrlAllowed(value:unknown,env:Env):value is string {
   try {
     const actual=new URL(value),endpoint=new URL(env.IMAGEKIT_URL_ENDPOINT)
     const prefix=endpoint.pathname.replace(/\/$/,'')
-    return actual.protocol==='https:'&&actual.hostname===endpoint.hostname&&(!prefix||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
+    return endpoint.protocol==='https:'&&actual.protocol==='https:'&&actual.host===endpoint.host&&!actual.username&&!actual.password&&(!prefix||actual.pathname===prefix||actual.pathname.startsWith(prefix+'/'))
   } catch { return false }
 }
 async function queueImageKitCleanup(db:D1Database,fileId:string,filePath:string,reason:string):Promise<void> {
