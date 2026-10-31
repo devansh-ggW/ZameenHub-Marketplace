@@ -96,15 +96,17 @@ export function EditListingPage() {
     if (!result.ok) { setSaving(false); setError(result.error); return }
     setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
 
+    const knownMediaIds = new Set((property?.imageMedia || []).map(media => media.id))
     for (let index = 0; index < imageFiles.length; index++) {
       setUploadStatus('Uploading image ' + (index + 1) + ' of ' + imageFiles.length)
-      const uploaded = await uploadPropertyImage(id, imageFiles[index], setUploadProgress)
+      const uploaded = await uploadPropertyImage(id, imageFiles[index], setUploadProgress, [...knownMediaIds])
       if (!uploaded.ok) {
         setSaving(false)
-        setError('Your listing changes were saved, but image ' + (index + 1) + ' failed: ' + uploaded.error)
-        setNotice('Listing changes saved. Some photos still need uploading.')
+        setError('Your listing changes were saved, but image ' + (index + 1) + ' could not be confirmed: ' + uploaded.error)
+        setNotice('Listing changes saved. Check the photo gallery before retrying this image.')
         return
       }
+      knownMediaIds.add(uploaded.data.id)
       setProperty(current => current ? { ...current, gallery: [...current.gallery, uploaded.data.url], image: current.image || uploaded.data.url, imageMedia: [...(current.imageMedia || []), { id: uploaded.data.id, url: uploaded.data.url, fileId: uploaded.data.fileId, sortOrder: uploaded.data.sortOrder }] } : current)
       setUploadProgress(0)
     }
