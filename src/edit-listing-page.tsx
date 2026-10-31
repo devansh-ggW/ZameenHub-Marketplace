@@ -94,7 +94,7 @@ export function EditListingPage() {
       }),
     })
     if (!result.ok) { setSaving(false); setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, documents: documents.filter(item => item.url.trim() && item.description.trim()), verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
 
     for (let index = 0; index < imageFiles.length; index++) {
       setUploadStatus('Uploading image ' + (index + 1) + ' of ' + imageFiles.length)
