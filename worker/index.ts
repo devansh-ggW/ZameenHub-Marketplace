@@ -299,8 +299,11 @@ async function imageKitUpload(file:File,fileName:string,folder:string,env:Env):P
   form.append('tags','zameenhub,property-image')
   const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
   const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string}|null
-  if(!response.ok||!result?.fileId||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env))return null
-  if(!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size)return null
+  if(!response.ok||!result?.fileId||!result.url||!result.filePath)return null
+  if(!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size) {
+    await imageKitDelete(result.fileId,env).catch(()=>false)
+    return null
+  }
   return {fileId:result.fileId,url:result.url,filePath:result.filePath,size:Number(result.size)}
 }
 async function imageKitDelete(fileId:string,env:Env):Promise<boolean> {
