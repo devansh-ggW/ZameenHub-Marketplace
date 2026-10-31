@@ -36,7 +36,12 @@ export function EditListingPage() {
     let active = true
     async function load() {
       const session = await getSession()
-      if (!session.ok || !session.data.authenticated) {
+      if (!session.ok) {
+        setError('We could not check your sign-in right now. Your session has not been cleared. Check your connection and retry.')
+        setLoading(false)
+        return
+      }
+      if (!session.data.authenticated) {
         navigate('/login?next=' + encodeURIComponent('/edit-listing/' + id), { replace: true })
         setLoading(false)
         return
