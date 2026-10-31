@@ -396,7 +396,7 @@ def main() -> int:
     db.execute("INSERT INTO sessions(id,user_id,token_hash,expires_at,created_at,last_seen_at,absolute_expires_at) VALUES(?,?,?,?,?,?,?)",
                ("logout-session", "rollout-owner", "logout-token-hash", rollout_expiry, rollout_iso, rollout_iso,
                 expected_absolute.isoformat(timespec="seconds").replace("+00:00", "Z")))
-    db.execute("DELETE FROM sessions WHERE token_hash=?", ("rollout-token-hash",))
+    db.execute("DELETE FROM sessions WHERE token_hash=?", ("logout-token-hash",))
     expect(db.execute("SELECT COUNT(*) FROM sessions WHERE id='logout-session'").fetchone()[0] == 0,
            "Current-device logout must revoke its own session")
     db.execute("DELETE FROM sessions WHERE user_id=?", ("rollout-owner",))
