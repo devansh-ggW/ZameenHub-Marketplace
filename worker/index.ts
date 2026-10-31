@@ -283,8 +283,37 @@ async function queueImageKitCleanup(db:D1Database,fileId:string,filePath:string,
   await db.prepare("INSERT INTO imagekit_cleanup_queue(file_id,file_path,reason,attempts,created_at,last_attempt_at) VALUES(?,?,?,0,?,NULL) ON CONFLICT(file_id) DO UPDATE SET file_path=CASE WHEN excluded.file_path<>'' THEN excluded.file_path ELSE imagekit_cleanup_queue.file_path END,reason=excluded.reason")
     .bind(fileId,clean(filePath,1000),clean(reason,100)||'cleanup',nowIso()).run()
 }
+const MAX_IMAGE_FILE_BYTES=10*1024*1024
+const MAX_IMAGE_MULTIPART_BYTES=MAX_IMAGE_FILE_BYTES+128*1024
+async function readLimitedMultipart(request:Request,maxBytes=MAX_IMAGE_MULTIPART_BYTES):Promise<{formData:FormData|null;tooLarge:boolean}> {
+  const contentType=request.headers.get('content-type')||''
+  if(!contentType.toLowerCase().startsWith('multipart/form-data;')||!contentType.toLowerCase().includes('boundary='))return {formData:null,tooLarge:false}
+  const declared=Number(request.headers.get('content-length')||0)
+  if(Number.isFinite(declared)&&declared>maxBytes)return {formData:null,tooLarge:true}
+  const reader=request.body?.getReader()
+  if(!reader)return {formData:null,tooLarge:false}
+  const chunks:Uint8Array[]=[]
+  let total=0
+  try {
+    while(true) {
+      const part=await reader.read()
+      if(part.done)break
+      total+=part.value.byteLength
+      if(total>maxBytes) {
+        await reader.cancel().catch(()=>{})
+        return {formData:null,tooLarge:true}
+      }
+      chunks.push(part.value)
+    }
+  } catch {
+    return {formData:null,tooLarge:false}
+  }
+  const rebuilt=new Request(request.url,{method:'POST',headers:new Headers(request.headers),body:new Blob(chunks)})
+  const formData=await rebuilt.formData().catch(()=>null)
+  return {formData,tooLarge:false}
+}
 async function sniffImageFile(file:File):Promise<{mime:string;extension:string}|null> {
-  if(file.size<12||file.size>10*1024*1024)return null
+  if(file.size<12||file.size>MAX_IMAGE_FILE_BYTES)return null
   const header=new Uint8Array(await file.slice(0,12).arrayBuffer())
   const mime=file.type.toLowerCase()
   if(mime==='image/jpeg'&&header[0]===0xff&&header[1]===0xd8&&header[2]===0xff)return {mime,extension:'jpg'}
@@ -604,10 +633,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to upload a profile image.',401)
       if(!await authLimit(request,db,'profile-image-upload',8)||!await limited(db,'profile-image-upload-user:'+user.id,8,60))return fail('Too many profile image uploads. Please wait before trying again.',429)
       if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for this environment.',503)
-      const declared=Number(request.headers.get('content-length')||0)
-      if(Number.isFinite(declared)&&declared>10*1024*1024+65536)return fail('Profile image must be 10 MB or smaller.',413)
-      const form=await request.formData().catch(()=>null)
-      const file=form?.get('file')
+      const parsed=await readLimitedMultipart(request)
+      if(parsed.tooLarge)return fail('Profile image upload request is too large. Use a file of 10 MB or smaller.',413)
+      const file=parsed.formData?.get('file')
       if(!(typeof File!=='undefined'&&file instanceof File))return fail('Choose a JPEG, PNG or WebP image.')
       const sniffed=await sniffImageFile(file)
       if(!sniffed||file.type.toLowerCase()!==sniffed.mime)return fail('The selected file is not a valid JPEG, PNG or WebP image.')
@@ -729,10 +757,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before uploading property images.',401)
       if(!await authLimit(request,db,'property-image-upload',10)||!await limited(db,'property-image-upload-user:'+user.id,15,60))return fail('Too many property image uploads. Please wait before trying again.',429)
       if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for this environment.',503)
-      const declared=Number(request.headers.get('content-length')||0)
-      if(Number.isFinite(declared)&&declared>10*1024*1024+65536)return fail('Property images must be 10 MB or smaller.',413)
-      const form=await request.formData().catch(()=>null)
-      const file=form?.get('file'),propertyId=clean(form?.get('propertyId'),80)
+      const parsed=await readLimitedMultipart(request)
+      if(parsed.tooLarge)return fail('Property image upload request is too large. Use a file of 10 MB or smaller.',413)
+      const file=parsed.formData?.get('file'),propertyId=clean(parsed.formData?.get('propertyId'),80)
       if(!(typeof File!=='undefined'&&file instanceof File)||!propertyId)return fail('Choose a property image and listing.')
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
       if(!owned)return fail('This property is not available in your account.',404)
