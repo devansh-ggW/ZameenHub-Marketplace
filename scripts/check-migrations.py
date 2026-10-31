@@ -85,7 +85,7 @@ def main() -> int:
     expect(seeded_history is not None and seeded_history["event_type"] == "tracking_started"
            and "Listing history begins from the date tracking became available." in seeded_history["metadata_json"],
            "Pre-existing listings must start history with an honest tracking-start event")
-        moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
+    moderation_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_moderation_events)")}
     expect({"owner_message", "review_note", "new_status", "verification_decision"} <= moderation_columns,
            "Moderation audit must separate private internal notes from owner-facing feedback")
 
