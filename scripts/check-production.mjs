@@ -101,6 +101,11 @@ for(const route of ['conversationMessageActionMatch','messageDeleteForMeMatch','
 for(const capability of ['replyToMessageId','forwardedFromMessageId','editedAt','Delete for everyone','Delete for me','Forward','Reply'])if(!read('src/messages-page.tsx').includes(capability))errors.push('Inbox UI missing message action '+capability)
 if(!worker.includes("if(path==='/api/account/profile-image'&&method==='POST')")||!worker.includes("if(path==='/api/account/profile-image'&&method==='DELETE')"))errors.push('Profile images must use authenticated ImageKit upload and delete endpoints')
 for(const key of ['property-image-upload-user:','property-image-delete-user:','profile-image-upload-user:','profile-image-delete-user:'])if(!worker.includes("'"+key+"'"))errors.push('Account deletion must clean ImageKit rate-limit key '+key)
+const propertyImageDeleteStart=worker.indexOf("const propertyImageDeleteMatch=")
+const propertyImageDeleteEnd=worker.indexOf("const ownedPropertyMatch=",propertyImageDeleteStart)
+const propertyImageDeleteRoute=propertyImageDeleteStart>=0&&propertyImageDeleteEnd>propertyImageDeleteStart?worker.slice(propertyImageDeleteStart,propertyImageDeleteEnd):''
+if(!propertyImageDeleteRoute.includes("authLimit(request,db,'property-image-delete'")||!propertyImageDeleteRoute.includes("property-image-delete-user:"))errors.push('Property image deletion must be rate-limited by IP and account')
+if(!worker.includes("ok({id:mediaId,deleted:true,cleanupPending:false})"))errors.push('Successful provider deletion must return an explicit cleanup status')
 if(!worker.includes("if(path==='/api/media/property-image'&&method==='POST')")||!worker.includes('imageKitUpload')||!worker.includes('imageKitDelete')||!worker.includes('IMAGEKIT_PRIVATE_KEY')||!worker.includes('IMAGEKIT_URL_ENDPOINT'))errors.push('Worker ImageKit upload/delete integration or server-only configuration is missing')
 const mediaUploadStart=worker.indexOf("if(path==='/api/media/property-image'&&method==='POST')")
 const mediaUploadEnd=worker.indexOf("if(path==='/api/properties'&&method==='POST')",mediaUploadStart)
