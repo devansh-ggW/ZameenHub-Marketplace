@@ -819,9 +819,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
-      const result=await db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id).run()
-      if(!result.meta.changes)return fail('The listing could not be updated. Refresh and try again.',409)
-      await replacePropertyDocuments(db,id,user.id,documents)
+      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model=NULL,verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status='published',updated_at=? WHERE id=? AND owner_id=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id)
+      const results=await db.batch([
+        update,
+        db.prepare('DELETE FROM property_documents WHERE property_id=? AND owner_id=?').bind(id,user.id),
+        ...propertyDocumentInsertStatements(db,id,user.id,documents),
+      ])
+      if(!results[0]?.meta?.changes)return fail('The listing could not be updated. Refresh and try again.',409)
       return ok({id,status:'published',verified:false,message:'Changes saved and are live. Verification has reset to Unverified until an administrator checks the updated details.'})
     }
     if(path==='/api/my/properties'&&method==='GET') {
