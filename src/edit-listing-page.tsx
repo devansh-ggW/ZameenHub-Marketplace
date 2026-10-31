@@ -135,6 +135,13 @@ export function EditListingPage() {
     } else {
       setNotice(result.data.message)
     }
+    // Re-read the saved seller documents so newly assigned IDs and timestamps
+    // remain stable if the owner edits this listing again without reloading.
+    const refreshed = await apiRequest<Property>('/api/my/properties/' + encodeURIComponent(id))
+    if (refreshed.ok) {
+      setProperty(refreshed.data)
+      setDocuments(refreshed.data.documents || [])
+    }
     setSaving(false)
     setUploadStatus(imageFiles.length ? 'All selected photos uploaded to ImageKit.' : '')
   }
