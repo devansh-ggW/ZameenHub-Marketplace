@@ -1034,7 +1034,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       ])
       return ok({id:messageId,senderId:user.id,body:message,createdAt:timestamp,readAt:null,replyToMessageId:replyToMessageId||null},201)
     }
-    const conversationMessageActionMatch=path.match(/^\\/api\\/conversations\\/([^/]+)\\/messages\\/([^/]+)$/)
+    const conversationMessageActionMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)$/)
     if(conversationMessageActionMatch&&(method==='PATCH'||method==='DELETE')) {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to manage private messages.',401)
       const conversationId=decodeURIComponent(conversationMessageActionMatch[1]),messageId=decodeURIComponent(conversationMessageActionMatch[2])
@@ -1064,7 +1064,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       await db.prepare('UPDATE property_conversations SET updated_at=?,last_message_at=? WHERE id=?').bind(deletedAt,deletedAt,conversationId).run()
       return ok({id:messageId,deleted:true,deletedAt})
     }
-    const messageDeleteForMeMatch=path.match(/^\\/api\\/conversations\\/([^/]+)\\/messages\\/([^/]+)\\/me$/)
+    const messageDeleteForMeMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)\/me$/)
     if(messageDeleteForMeMatch&&method==='DELETE') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to manage private messages.',401)
       const conversationId=decodeURIComponent(messageDeleteForMeMatch[1]),messageId=decodeURIComponent(messageDeleteForMeMatch[2])
@@ -1075,7 +1075,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       await db.prepare('INSERT OR IGNORE INTO property_message_hidden(message_id,user_id,hidden_at) VALUES(?,?,?)').bind(messageId,user.id,nowIso()).run()
       return ok({id:messageId,hidden:true})
     }
-    const messageForwardMatch=path.match(/^\\/api\\/conversations\\/([^/]+)\\/messages\\/([^/]+)\\/forward$/)
+    const messageForwardMatch=path.match(/^\/api\/conversations\/([^/]+)\/messages\/([^/]+)\/forward$/)
     if(messageForwardMatch&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to forward private messages.',401)
       if(!await authLimit(request,db,'message-forward',8)||!await limited(db,'message-forward-user:'+user.id,20,60))return fail('Too many forwarded messages. Please wait before trying again.',429)
