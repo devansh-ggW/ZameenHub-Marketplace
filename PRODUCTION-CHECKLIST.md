@@ -8,7 +8,7 @@
 - [ ] Confirm IMAGEKIT_PRIVATE_KEY is configured as a Worker Secret and IMAGEKIT_URL_ENDPOINT as a Worker variable. Use the restricted ImageKit private key with only the Media Management read/write permissions needed for upload and deletion.
 - [ ] Confirm APP_URL, RESEND_FROM_EMAIL and SUPPORT_EMAIL use the intended production values and the sender domain is Verified in Resend.
 - [ ] Back up the intended D1 database and verify the restore procedure before applying schema changes.
-- [ ] Apply pending D1 migrations through migrations/0007_message_actions.sql to the intended database before deploying Worker code that references the new schema. Do not apply to production without a reviewed backup and deployment authorization.
+- [ ] Apply pending D1 migrations through migrations/0008_imagekit_cleanup_queue.sql to the intended database before deploying Worker code that references the new schema. Do not apply to production without a reviewed backup and deployment authorization.
 - [ ] Run python3 scripts/check-migrations.py, pnpm build, pnpm test:smoke and Wrangler dry-run; review the source diff.
 - [ ] Review Privacy Policy and Terms with the actual operator identity, address, governing law, grievance process and real data-retention practices.
 - [ ] Test registration/login password hashing on the actual Cloudflare plan and inspect CPU-limit errors.
