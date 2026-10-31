@@ -143,9 +143,10 @@ export function EditListingPage() {
                 <span className="muted">Photo {index + 1}</span>
                 {media?.id && <button className="btn btn-outline media-remove" type="button" onClick={async () => {
                   setError(''); setNotice('')
-                  const result = await apiRequest<{ id: string; deleted: boolean }>('/api/my/properties/' + encodeURIComponent(id) + '/images/' + encodeURIComponent(media.id), { method: 'DELETE' })
+                  const result = await apiRequest<{ id: string; deleted: boolean; cleanupPending?: boolean }>('/api/my/properties/' + encodeURIComponent(id) + '/images/' + encodeURIComponent(media.id), { method: 'DELETE' })
                   if (!result.ok) { setError(result.error); return }
                   setProperty(current => current ? { ...current, gallery: current.gallery.filter((_, i) => i !== index), image: current.gallery.filter((_, i) => i !== index)[0] || '', imageMedia: (current.imageMedia || []).filter(item => item.id !== media.id) } : current)
+                  setNotice(result.data.cleanupPending ? 'Photo removed from the listing. ImageKit cleanup is queued for an administrator.' : 'Photo removed.')
                 }}>Remove</button>}
               </div>
             })}
