@@ -1043,7 +1043,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/admin/review-queue'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
-      const result=await db.prepare("SELECT * FROM properties WHERE status='pending' OR (status='published' AND COALESCE(verification_status,'unverified')<>'verified') ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, created_at ASC LIMIT 200").all<PropertyRow>()
+      const result=await db.prepare(`SELECT p.* FROM properties p WHERE p.status='pending' OR (p.status='published' AND COALESCE(p.verification_status,'unverified')<>'verified' AND ${publicListingRequirements}) ORDER BY CASE WHEN p.status='pending' THEN 0 ELSE 1 END, p.created_at ASC LIMIT 200`).all<PropertyRow>()
       return ok(await Promise.all(result.results.map(p=>withProperty(db,p,true))))
     }
     const reviewMatch=path.match(/^\/api\/admin\/properties\/([^/]+)$/)
@@ -1057,6 +1057,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const record=await db.prepare("SELECT * FROM properties WHERE id=? AND status IN ('pending','published')").bind(id).first<PropertyRow & {updated_at:string}>()
       if(!record)return fail('Listing was not found in a reviewable state.',404)
       const priorStatus=record.status
+      if(status==='published') {
+        const readiness=await db.prepare(`SELECT
+          (SELECT COUNT(*) FROM property_media m WHERE m.property_id=p.id AND m.media_type='image' AND m.status='active') AS image_count,
+          (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id) AS document_count
+          FROM properties p WHERE p.id=?`).bind(id).first<{image_count:number;document_count:number}>()
+        if(Number(readiness?.document_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one seller-provided property document is attached.',409)
+        if(Number(readiness?.image_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one active property photo is attached.',409)
+      }
       if(status==='published'&&priorStatus!=='pending'&&!(priorStatus==='published'&&verifyEvidence))return fail('Only pending listings can be published; live listings can only be marked verified.',409)
       if(status==='archived'&&priorStatus!=='published')return fail('Only a published listing can be archived by the moderation team.',409)
       if((status==='rejected'||status==='archived')&&reviewNote.trim().length<8)return fail('Add at least 8 characters explaining the evidence-based reason for this moderation action.')
