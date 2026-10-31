@@ -151,6 +151,15 @@ def main() -> int:
                (now, "reviewer", "Public record inspected and matched to the listing details"))
     expect(db.execute("SELECT verification_status,verification_reviewed_by FROM properties WHERE id='published'").fetchone()[:] ==
            ("verified", "reviewer"), "Moderator evidence review decision was not persisted")
+    # A photo added or removed by the owner changes evidence context and must revoke
+    # the prior manual verification until the updated listing is reviewed again.
+    db.execute("""UPDATE properties SET verification_status='unverified',
+        verification_submitted_at=NULL,verification_reviewed_at=NULL,
+        verification_reviewed_by=NULL,verification_note='',updated_at=?
+        WHERE id='published' AND owner_id='owner'""", (now,))
+    expect(db.execute("SELECT verification_status,verification_reviewed_at,verification_reviewed_by FROM properties WHERE id='published'").fetchone()[:] ==
+           ("unverified", None, None),
+           "Owner media changes must reset prior manual verification")
     area_range_query = "SELECT id FROM properties WHERE status='published' AND area>=? AND area<=? ORDER BY id"
     expect([row["id"] for row in db.execute(area_range_query, (1000, 1500))] == ["published"],
            "Area-range filtering did not return the expected property")
