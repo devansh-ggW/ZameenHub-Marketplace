@@ -23,11 +23,11 @@ This comparison uses the competitors' publicly reachable pages, not their privat
 | Market content | Not yet | Property news, market guides, buying guides, research | Knowledge Centre stories and real-estate content |
 | Risk screening | This branch adds text-based AI/rule-based risk triage; it is not ownership verification | Housing's public seller portal advertises free posting, buyer leads and a price calculator; separate help material describes seller self-verification, and its public terms still caution users to verify ownership/title independently | Internal fraud-prevention details not independently verified |
 | Owner identity / document verification | Optional public record reference stored privately; moderator evidence review is separately audited. No automatic legal title or government-record validation is configured | Public verification material describes additional evidence/quality review | Not fully verified from accessible public material |
-| Photo/video media | Up to five external HTTPS image URLs and one video URL per property; profile image URL; URL references in D1, no binary uploads/R2 or automated duplicate-photo detection | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
+| Photo/document media | Current engineering branch uses ImageKit for up to five property photos and profile images; seller-hosted PDF/image evidence is stored as links only. No Phase 1 video upload/playback and no R2 | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
 | Advanced map and filter experience | Basic filters; no map or locality autocomplete | Broader discovery experience | Broader project/locality discovery experience |
 | Account controls | Email authentication, optional TOTP MFA, recovery codes, delete-account flow | Mature marketplace account workflows | Mature marketplace account workflows |
 | Owner/agent workflow | My listings, edit/archive, private inquiry inbox; no buyer-seller chat, listing expiry, repost, lead feedback, or promoted-placement packages | Seller dashboard documents listing create/edit/delete/repost, filters, lead panel, chat/feedback, listing validity, profile editing, and promotional packages | Public search and builder/project pages; a complete current seller-dashboard audit was not available |
-| Listing media and project evidence | URL-based gallery + one video and optional private public-record reference; moderator review decision is audited, but record matching is not an automated government integration | Seller help documents optional photo uploads and listing self-verification | Public project pages can display configurations, amenities, RERA/possession details when supplied; this is not proof those details have been independently validated |
+| Listing media and project evidence | ImageKit-backed property gallery plus seller-hosted PDF/image evidence links; optional private review reference remains separate, with no automated government record matching | Seller help documents optional photo uploads and listing self-verification | Public project pages can display configurations, amenities, RERA/possession details when supplied; this is not proof those details have been independently validated |
 
 Public reference pages:
 - Housing.com main site: https://housing.com/
@@ -44,7 +44,7 @@ Public reference pages:
 
 ## Changes included in this branch
 
-- URL-based media in D1: up to five public HTTPS image references and one supported video per property, plus a per-user profile image URL. File bytes are not uploaded or stored by ZameenHub; broken/offline third-party media URLs can stop working.
+- ImageKit-backed property/profile image uploads: supported images are validated in the Worker, ownership is checked server-side, and D1 stores file IDs/URLs/metadata rather than image bytes. Seller evidence remains on the seller's website; ZameenHub stores only a described HTTPS PDF/image link. Video is postponed.
 - Evidence-reference review workflow: owners may submit a public record URL and evidence type; the reference is private from public APIs; moderators have a separate explicit “publish + mark evidence reviewed” action and a required audit note. The UI describes what was reviewed rather than claiming guaranteed legal title. AI/rule risk scores never make the evidence decision.
 
 - Optional authenticator-app TOTP MFA, time-limited challenge cookies, atomically capped attempts, one-time TOTP counter tracking to prevent replay, and one-time recovery codes stored as hashes.
@@ -53,7 +53,7 @@ Public reference pages:
 - Account deletion requires the current password, typing `DELETE`, and a valid MFA/recovery code when MFA is enabled. Owned listings are removed as part of this action. The last administrator is protected from deleting their own account.
 - Cloudflare Workers AI listing risk triage plus deterministic red-flag and duplicate-title/location checks. Risk reasons and model metadata are saved in D1 and shown only in the authorized moderation review queue.
 - A property-report form, an admin/moderator report queue, resolution notes, and a moderation-decision audit record. Reports do not automatically ban users or remove listings.
-- Owner-scoped listing editing and archiving. Any material edit is re-screened and returns the listing to pending review.
+- Owner-scoped listing editing and archiving. Material edits reset the listing's separate evidence-review status; the actual publication state must be read from the current Worker/database, not inferred from this historical report.
 - A private owner inquiry inbox with read/archive status controls; inbox queries only return inquiries for listings owned by the signed-in account.
 - Budget, bathroom, and minimum-area filters on property search, all encoded in the URL for shareable searches.
 - A home-loan EMI calculator using the standard reducing-balance formula, with known-value tests, validation, and an explicit estimate-not-quote disclaimer.
@@ -93,7 +93,7 @@ Public reference pages:
 1. **Apply and test the database migrations.** Back up production D1 and apply pending migrations through `migrations/0004_media_verification.sql` before deploying Worker code that references those columns/tables.
 2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. Workers AI calls incur usage charges under Cloudflare's current pricing and quotas; verify the current pricing and account limits before launch. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
 3. **Do not advertise automated ownership verification.** This implementation can flag scam language and exact duplicates, and lets a moderator document a check of an owner-supplied public record reference. It does not call government record APIs or establish legal title, prove identity, validate a sale mandate, or verify that photos depict the claimed property. Add evidence-backed owner/agent verification and a clear audit trail before using a “verified owner/property” badge.
-4. **Treat URL-based media as a reference feature, not upload hosting.** This branch stores public HTTPS image/video URLs in D1, not media bytes. Test third-party link stability and permissions. If direct file uploads are later required, provision R2 and add file-type/size validation, non-guessable keys, active-content handling, deletion, and access-control tests before enabling them.
+4. **Verify the ImageKit integration.** The current engineering branch uses ImageKit for ZameenHub-hosted images and keeps only metadata in D1. Live upload, restricted-key permissions, replacement/deletion, provider-failure cleanup and legacy image migration still require non-production integration tests. Seller-hosted PDF/image evidence links are not fetched or rehosted.
 5. **Exercise reporting, moderation audit, owner lifecycle and inbox isolation.** The report form/queue, resolution notes, moderation-event table, owner edit/archive controls, and private lead inbox are included. Test duplicate reports, role restrictions, concurrent status changes, owner isolation, and retention after account deletion.
 6. **Expand listing management gradually.** Safe edit and archive/unpublish are now implemented and edits re-enter moderation. Remaining workflow improvements include draft autosave, photo management once uploads are enabled, and clear owner-facing reasons when reviewers reject a submission.
 7. **Improve discovery parity gradually.** Basic budget, bathroom, and minimum-area filters, the owner inbox and an EMI calculator are now included. Remaining gaps are locality autocomplete/map, amenities/furnishing/possession filters, market-price research, listing/project/builder profiles, dynamic listing sitemaps and saved-search alerts; add them only as reliable data and providers become available.
@@ -109,12 +109,12 @@ Public reference pages:
 - Make listing review evidence-based. Never describe a text-risk score or moderation approval as independent title/ownership verification.
 
 ### P1 — next practical marketplace upgrades
-- Add direct file uploads only if needed, after provisioning R2 and testing file size/type validation, unguessable object keys, content handling, deletion, and access controls. Current URLs are external references stored in D1.
+- Complete non-production ImageKit end-to-end tests and reconcile any legacy image URLs; retain seller-hosted PDF/image evidence links and do not build a document proxy.
 - Add owner/agent evidence review and clearly labelled RERA/project fields backed by records that can actually be checked; record what was checked and when.
 - Add locality autocomplete/map only with a suitable provider, permitted usage, privacy review and rate limits. Expand property-type filters (such as commercial or PG/co-living) only if those categories are genuinely supported by the listing schema and moderation workflow.
 
 ### P2 — after inventory and operations justify them
-- Buyer-seller chat, saved-search alerts, listing expiry/repost, lead feedback, project/developer profiles, verified market guides, and optional promotional listings.
+- Saved-search alerts, listing expiry/repost, lead feedback, project/developer profiles, verified market guides, and optional promotional listings. Buyer/owner chat and message actions are now present in the engineering branch but still need real multi-account browser tests.
 - Price/rent trends or property valuation only when there is a traceable, licensed and current data source with transparent methodology and limitations.
 
 ### Keep out of the product
@@ -137,3 +137,17 @@ Public reference pages:
 - [ ] Complete the legal/operator details and test the actual production deployment before publicly claiming “production ready”.
 
 **No source-code review can guarantee a website is “perfect.”** This report records concrete changes and the remaining checks instead of claiming a complete penetration test.
+
+
+## Engineering branch update — 31 October 2026
+
+The original review above is a historical repository snapshot. The current engineering branch adds the following implementation work and must be reviewed alongside the original report:
+
+- ImageKit upload/delete integration for property and profile images. The Worker uses the restricted private key server-side; the frontend never receives it. D1 stores metadata, not image bytes.
+- Seller-hosted property evidence: up to ten HTTPS PDF/image links with descriptions and source domains. Buyers open the original seller-hosted link. The Worker does not fetch or proxy user-submitted URLs.
+- Phase 1 video controls, player and Worker video paths have been removed. The historical `property_media` video schema/trigger remains only to preserve old database data and compatibility.
+- Message reply references, sender-only edit, sender-only soft-delete for everyone, per-user delete-for-me and forwarding to a conversation the sender also participates in. Worker-side membership and sender checks are authoritative.
+- Additive D1 migrations `0006_imagekit_and_property_documents.sql` and `0007_message_actions.sql`.
+- The conversation-summary poll interval is reduced and message polling is guarded against overlapping requests to avoid exhausting inbox rate limits.
+
+**Not yet independently verified:** live ImageKit uploads with the configured Cloudflare secret, remote D1 migration/restore, full browser journeys, actual email delivery, and external security testing. Apply migrations only after a restorable backup, and do not deploy this branch to production until CI and non-production acceptance tests pass.
