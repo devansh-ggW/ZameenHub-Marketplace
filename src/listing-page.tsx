@@ -32,7 +32,6 @@ export function ListingPage() {
   const steps = ['Purpose', 'Details', 'Description', 'Review']
   const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
   const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
-  const steps = ['Purpose', 'Details', 'Description', 'Review']
 
   useEffect(() => {
     let current = true
