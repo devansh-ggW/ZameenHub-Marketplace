@@ -28,7 +28,7 @@ export function EditListingPage() {
   const [imageFiles, setImageFiles] = useState<File[]>([])
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
-  const [documents, setDocuments] = useState<Array<{ id?: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain?: string; sortOrder?: number }>>([])
+  const [documents, setDocuments] = useState<Array<{ id?: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain?: string; sortOrder?: number; createdAt?: string; updatedAt?: string }>>([])
   const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
   const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
 
@@ -196,6 +196,7 @@ export function EditListingPage() {
             <div className="form-field"><label htmlFor={'edit-document-type-' + index}>Seller-declared format</label><select className="form-control" id={'edit-document-type-' + index} value={document.documentType} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, documentType: event.target.value as 'pdf' | 'image' } : item))}><option value="pdf">PDF</option><option value="image">Image</option></select></div>
             <div className="form-field"><label htmlFor={'edit-document-description-' + index}>Description</label><input className="form-control" id={'edit-document-description-' + index} maxLength={180} value={document.description} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} placeholder="e.g. Property tax receipt" /></div>
             <div className="form-field"><label htmlFor={'edit-document-url-' + index}>Original HTTPS link</label><input className="form-control" id={'edit-document-url-' + index} type="url" maxLength={2000} value={document.url} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))} placeholder="https://yourwebsite.example/record.pdf" /></div>
+            {document.createdAt && <small className="muted">Added {new Date(document.createdAt).toLocaleString('en-IN')}{document.updatedAt && document.updatedAt !== document.createdAt ? ' · Updated ' + new Date(document.updatedAt).toLocaleString('en-IN') : ''}</small>}
             <button className="btn btn-outline media-remove" type="button" onClick={() => setDocuments(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
           </div>)}
           {documents.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add document link</button>}
