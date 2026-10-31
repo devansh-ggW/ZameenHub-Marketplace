@@ -71,15 +71,17 @@ export function ListingPage() {
       return
     }
 
+    const knownMediaIds = new Set<string>()
     for (let index = 0; index < imageFiles.length; index++) {
       setUploadStatus('Uploading image ' + (index + 1) + ' of ' + imageFiles.length)
-      const uploaded = await uploadPropertyImage(result.data.id, imageFiles[index], setUploadProgress)
+      const uploaded = await uploadPropertyImage(result.data.id, imageFiles[index], setUploadProgress, [...knownMediaIds])
       if (!uploaded.ok) {
         setBusy(false)
-        setError('Your listing was created, but image ' + (index + 1) + ' failed: ' + uploaded.error + ' You can retry from Edit listing.')
-        setNotice('Listing created successfully. Some photos still need uploading.')
+        setError('Your listing was created, but image ' + (index + 1) + ' could not be confirmed: ' + uploaded.error + ' You can retry from Edit listing.')
+        setNotice('Listing created successfully. Check the photo gallery before retrying this image.')
         return
       }
+      knownMediaIds.add(uploaded.data.id)
       setUploadProgress(0)
     }
     setBusy(false)
