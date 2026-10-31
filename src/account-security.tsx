@@ -78,6 +78,14 @@ export function AccountSecurity({ user }: { user: AppUser }) {
     catch { setError('Clipboard access is unavailable. Select and copy the codes manually.') }
   }
 
+  async function endSessions(allDevices: boolean) {
+    setBusy(true); setError(''); setNotice('')
+    const result = await apiRequest<{ loggedOut: boolean }>('/api/auth/' + (allDevices ? 'logout-all' : 'logout'), { method: 'POST', body: '{}' })
+    setBusy(false)
+    if (!result.ok) { setError(result.error); return }
+    navigate('/login', { replace: true })
+  }
+
   async function deleteAccount(event: FormEvent) {
     event.preventDefault()
     if (deleteConfirmation !== 'DELETE') { setError('Type DELETE exactly to confirm.'); return }
@@ -128,6 +136,14 @@ export function AccountSecurity({ user }: { user: AppUser }) {
       <button className="btn btn-outline" type="button" onClick={() => void copyRecoveryCodes()}>Copy recovery codes</button>
       <button className="btn btn-outline" type="button" onClick={() => { setRecoveryCodes([]); setNotice('Recovery codes hidden. They cannot be displayed again.') }}>I saved them</button>
     </div>}
+    <div className="security-subsection">
+      <h3>Active sessions</h3>
+      <p>End the session on this device, or sign out every device connected to your account. Signing out everywhere revokes all sessions immediately.</p>
+      <div className="listing-actions">
+        <button className="btn btn-outline" type="button" disabled={busy} onClick={() => void endSessions(false)}>Sign out this device</button>
+        <button className="btn btn-outline" type="button" disabled={busy} onClick={() => void endSessions(true)}>Sign out all devices</button>
+      </div>
+    </div>
     <div className="danger-zone">
       <h3>Delete account</h3>
       <p>This permanently deletes your account and the property listings you submitted. This action cannot be undone. If two-factor authentication is enabled, you must also confirm with its code.</p>
