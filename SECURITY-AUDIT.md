@@ -147,7 +147,7 @@ The original review above is a historical repository snapshot. The current engin
 - Seller-hosted property evidence: up to ten HTTPS PDF/image links with descriptions and source domains. Buyers open the original seller-hosted link. The Worker does not fetch or proxy user-submitted URLs.
 - Phase 1 video controls, player and Worker video paths have been removed. The historical `property_media` video schema/trigger remains only to preserve old database data and compatibility.
 - Message reply references, sender-only edit, sender-only soft-delete for everyone, per-user delete-for-me and forwarding to a conversation the sender also participates in. Worker-side membership and sender checks are authoritative.
-- Additive D1 migrations `0006_imagekit_and_property_documents.sql` and `0007_message_actions.sql`.
+- Additive D1 migrations `0006_imagekit_and_property_documents.sql`, `0007_message_actions.sql` and `0008_imagekit_cleanup_queue.sql`; queued cleanup contains provider file IDs/paths only, never ImageKit credentials.
 - The conversation-summary poll interval is reduced and message polling is guarded against overlapping requests to avoid exhausting inbox rate limits.
 
 **Not yet independently verified:** live ImageKit uploads with the configured Cloudflare secret, remote D1 migration/restore, full browser journeys, actual email delivery, and external security testing. Apply migrations only after a restorable backup, and do not deploy this branch to production until CI and non-production acceptance tests pass.
