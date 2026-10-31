@@ -49,9 +49,20 @@ function historyEventDetail(event: ListingHistoryEvent) {
     return description + (domain ? ' · Source: ' + domain : '')
   }
   if (event.eventType === 'listing_unpublished') return event.metadata.reason === 'owner_archived' ? 'The owner archived this listing.' : 'The listing was removed from public discovery.'
-  if (event.eventType === 'description_changed') return 'The seller changed the property description.'
-  if (event.eventType === 'property_details_changed') return 'Important property information such as area, location or room details changed.'
-  if (event.eventType === 'listing_created') return 'The seller created this listing.'
+  if (event.eventType === 'description_changed') return 'The seller changed the property description. Earlier description text is not republished in the public timeline.'
+  if (event.eventType === 'property_details_changed') {
+    const labels: Record<string, string> = { location: 'Location', city: 'City', propertyType: 'Property type', purpose: 'Purpose', bedrooms: 'Bedrooms', bathrooms: 'Bathrooms', area: 'Area', amenities: 'Amenities' }
+    try {
+      const previous = JSON.parse(event.previousValue || '{}') as Record<string, unknown>
+      const current = JSON.parse(event.newValue || '{}') as Record<string, unknown>
+      const changes = Object.keys(labels).filter(key => JSON.stringify(previous[key]) !== JSON.stringify(current[key]))
+      return changes.map(key => {
+        const display = (value: unknown) => key === 'area' ? String(value) + ' sq ft' : key === 'amenities' ? (Array.isArray(value) ? value.join(', ') : 'Updated') : String(value ?? 'Not set')
+        return labels[key] + ': ' + display(previous[key]) + ' → ' + display(current[key])
+      }).join(' · ') || 'Important property information changed.'
+    } catch { return 'Important property information such as area, location or room details changed.' }
+  }
+  if (event.eventType === 'listing_created') return event.newValue ? 'The seller created this listing. Initial asking price: ₹' + Number(event.newValue).toLocaleString('en-IN') : 'The seller created this listing.'
   if (event.eventType === 'listing_published') return 'The listing became publicly available.'
   return ''
 }
