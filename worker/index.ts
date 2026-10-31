@@ -331,7 +331,7 @@ async function imageKitUpload(file:File,fileName:string,folder:string,env:Env,db
   form.append('fileName',fileName)
   form.append('folder',folder)
   form.append('useUniqueFileName','true')
-  form.append('tags','zameenhub,property-image')
+  form.append('tags',folder.startsWith('/zameenhub/profiles/')?'zameenhub,profile-image':'zameenhub,property-image')
   const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
   const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string}|null
   if(!result?.fileId)return null
