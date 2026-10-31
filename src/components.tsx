@@ -21,10 +21,10 @@ export function SiteHeader() {
   </div></header>
 }
 
-export function SiteFooter() { return <footer className="footer"><div className="container footer-grid"><div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. The marketplace stays truthful: only verified records returned by the configured property service are shown.</p></div><div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div><div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact</Link><br /><Link to="/help">Help centre</Link></div><div><h4>Legal</h4><Link to="/privacy">Privacy</Link><br /><Link to="/terms">Terms</Link></div></div><div className="container footer-bottom"><span>© 2026 ZameenHub</span><span>Only verified property records appear here</span></div></footer> }
+export function SiteFooter() { return <footer className="footer"><div className="container footer-grid"><div><Link to="/" className="brand"><img src="/assets/zameenhub-icon.jpg" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. Only complete public listings with a property photo and seller-provided document are shown.</p></div><div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div><div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact</Link><br /><Link to="/help">Help centre</Link></div><div><h4>Legal</h4><Link to="/privacy">Privacy</Link><br /><Link to="/terms">Terms</Link></div></div><div className="container footer-bottom"><span>© 2026 ZameenHub</span><span>Only complete property listings appear here</span></div></footer> }
 
 export function PropertyCard({ property }: { property: Property }) {
-  const isPublished = property.status === 'published'
+  const isPublished = property.status === 'published' && property.publicEligible !== false
   const details = <><span className="property-location">{property.location}</span><h3>{property.title}</h3><div className="property-price">{formatPrice(property.price, property.purpose, property.pricePeriod)}</div></>
   return <article className="property-card">
     <div className="property-image">
