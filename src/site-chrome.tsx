@@ -22,7 +22,7 @@ export function SiteHeader() {
     setBusy(false); setUser(null); navigate('/')
   }
   return <header className="site-header"><div className={'container nav' + (user ? ' nav-authenticated' : '')}>
-    <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/zameenhub-icon.png" alt="" /><span>ZameenHub</span></Link>
+    <Link to="/" className="brand" aria-label="ZameenHub home"><img src="/zameenhub-icon.png?v=20261031" alt="" /><span>ZameenHub</span></Link>
     <nav className={'nav-links ' + (open ? 'open' : '')} aria-label="Primary navigation">
       <NavLink to="/">Home</NavLink>
       <NavLink to="/properties">Browse properties</NavLink>
@@ -52,7 +52,7 @@ export function SiteHeader() {
 
 export function SiteFooter() {
   return <footer className="footer"><div className="container footer-grid">
-    <div><Link to="/" className="brand"><img src="/zameenhub-icon.png" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. Published listings reflect marketplace review status; buyers and renters should independently verify information before a transaction.</p><p><strong>Customer support</strong><br /><a href="mailto:dewifystores@gmail.com">dewifystores@gmail.com</a></p></div>
+    <div><Link to="/" className="brand"><img src="/zameenhub-icon.png?v=20261031" alt="" /><span>ZameenHub</span></Link><p style={{ maxWidth: 280, marginTop: 22 }}>A clearer way to find home. Published listings reflect marketplace review status; buyers and renters should independently verify information before a transaction.</p><p><strong>Customer support</strong><br /><a href="mailto:dewifystores@gmail.com">dewifystores@gmail.com</a></p></div>
     <div><h4>Explore</h4><Link to="/properties">Browse properties</Link><br /><Link to="/tools/emi-calculator">EMI calculator</Link><br /><Link to="/saved">Saved properties</Link><br /><Link to="/list-property">List a property</Link></div>
     <div><h4>Company</h4><Link to="/about">About</Link><br /><Link to="/contact">Contact support</Link><br /><Link to="/help">Help centre</Link></div>
     <div><h4>Legal</h4><Link to="/privacy">Privacy policy</Link><br /><Link to="/cookies">Cookie policy</Link><br /><Link to="/terms">Terms and conditions</Link></div>
