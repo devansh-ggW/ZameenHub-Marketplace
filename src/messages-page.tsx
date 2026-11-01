@@ -71,7 +71,12 @@ export function MessagesPage() {
     let active = true
     void getSession().then(session => {
       if (!active) return
-      if (!session.ok || !session.data.authenticated || !session.data.user) {
+      if (!session.ok) {
+        setError('We could not check your sign-in right now. Your session has not been cleared. Check your connection and retry.')
+        setLoading(false)
+        return
+      }
+      if (!session.data.authenticated || !session.data.user) {
         navigate('/login?next=' + encodeURIComponent('/messages' + window.location.search), { replace: true })
         return
       }

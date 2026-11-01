@@ -29,13 +29,17 @@ Before treating uploads as production-verified, test with a non-production accou
 
 ## Seller-hosted property evidence
 
-Owners can add up to ten described HTTPS links, each identified as PDF or image. ZameenHub does not download, proxy, scan, or rehost those original documents. The property page displays the seller's description, declared format, source domain and a link that opens the original source safely in a new tab.
+Owners can add up to ten described HTTPS links, each identified as PDF or image. At least one seller-provided document link and at least one active property photo are required before a listing appears publicly. New listings are saved as private drafts while photos upload, then published only after the Worker confirms both requirements. Existing published listings missing either requirement are excluded from public search and property-detail APIs until the owner restores them; their records remain available in the owner's account for editing. ZameenHub does not download, proxy, scan, or rehost the original documents. The property page displays the seller's description, declared format, source domain and a link that opens the original source safely in a new tab.
 
 A document link, accessible PDF/image, AI result, content review or ordinary publication does **not** establish legal ownership. The UI must not imply that ZameenHub has authenticated the seller's title.
 
 ## Account and marketplace capabilities
 
 The existing application includes email/password accounts, email verification and recovery, server-issued sessions, optional authenticator-app TOTP MFA with recovery codes, profile settings, property creation/editing/archiving, search and filters, saved properties, owner inquiries, private buyer/owner conversations, reporting, moderation routes, legal pages and an EMI calculator.
+
+Authenticated sessions use Secure, HttpOnly, host-scoped cookies and hashed server-side session records. Active sessions renew with a 30-day inactivity window, capped by a 90-day absolute lifetime. The account security page can end the current session or revoke all devices. Temporary session-check/network failures do not automatically clear the authenticated UI state.
+
+Public property detail pages include a **Property Evidence Room** for seller-hosted PDF/image links and a **Listing History** timeline. The timeline begins at rollout for pre-existing listings; it does not claim to know events that occurred before tracking was enabled.
 
 Message actions include reply, sender-only edit, forwarding to another conversation the user participates in, delete-for-everyone (soft deletion), and delete-for-me (per-user hiding). The Worker performs the authorization checks; the frontend is not trusted for access control.
 
@@ -55,7 +59,7 @@ Property verification status is separate from listing publication and content-ri
 
 6. Test the complete flows on a non-production environment before production rollout.
 
-Migrations 0006–0008 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, per-user message hiding, and a retryable ImageKit cleanup queue. The admin review queue includes a protected cleanup-retry control. These migrations are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
+Migrations 0006–0008 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, per-user message hiding, and a retryable ImageKit cleanup queue. Migration 0009 adds rolling/absolute session-expiry metadata, seller-document update timestamps and the append-only property listing-history table. The admin review queue includes a protected cleanup-retry control. These migrations are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
 
 ## Local checks
 

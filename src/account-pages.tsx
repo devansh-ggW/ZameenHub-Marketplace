@@ -22,7 +22,11 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   async function load() {
     setLoading(true); setError('')
     const session = await getSession()
-    if (!session.ok || !session.data.authenticated || !session.data.user) {
+    if (!session.ok) {
+      setError('We could not check your sign-in right now. Your session has not been cleared. Check your connection and retry.')
+      setLoading(false); return
+    }
+    if (!session.data.authenticated || !session.data.user) {
       navigate('/login?next=' + encodeURIComponent(location.pathname + location.search), { replace: true })
       setLoading(false); return
     }
@@ -103,7 +107,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   }
 
   const title = kind === 'profile' ? 'Your profile.' : kind === 'saved' ? 'Saved properties.' : kind === 'my-listings' ? 'Your listings.' : 'Review queue.'
-  return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Review unverified public listings and handle older pending submissions. Only administrators can mark a listing Verified.' : kind === 'my-listings' ? 'New submissions publish immediately and carry an Unverified badge until an administrator checks the details.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
+  return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Account</SectionKicker><h1>{title}</h1><p>{kind === 'review-queue' ? 'Review unverified public listings and handle older pending submissions. Only administrators can mark a listing Verified.' : kind === 'my-listings' ? 'Listings appear publicly only when they have at least one property photo and one seller-provided PDF/image document. They remain Unverified until an administrator checks the details.' : 'Private account data is loaded from the authenticated server session, not from browser-only state.'}</p></div>
     {loading ? <p className="status-message">Loading your account…</p> : <>
       {kind === 'review-queue' && user?.role === 'admin' && <section className="form-card imagekit-cleanup-panel" aria-labelledby="imagekit-cleanup-title">
         <h2 id="imagekit-cleanup-title">ImageKit cleanup</h2>
@@ -148,8 +152,8 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
       {kind !== 'profile' && !error && items.length > 0 && <div className="property-grid">{items.map(item => <div className="account-property" key={item.id}>
         <PropertyCard property={item} />
         {kind === 'my-listings' && <div className={`listing-status status-${item.status}`}>
-          <strong>{item.status === 'pending' ? 'Pending review' : item.status === 'published' ? 'Published' : item.status === 'rejected' ? 'Rejected' : item.status === 'archived' ? 'Archived' : 'Listing status'}</strong><p><strong>Verification:</strong> {item.verified ? 'Verified · manually checked' : 'Unverified · awaiting manual verification'}</p>
-          <p>{item.status === 'pending' ? 'Saved successfully. This listing is private while awaiting review.' : item.status === 'published' ? (item.verified ? 'This listing has been marked verified after moderator review and is visible in public property search.' : 'This listing is published and visible in public property search. Viewers should independently verify its details.') : item.status === 'rejected' ? (item.reviewMessage || 'This listing was not approved. Contact support if you need help.') : item.status === 'archived' ? 'This listing is archived and is not shown in public search.' : 'Check back here for the latest review status.'}</p>
+          <strong>{item.status === 'draft' ? 'Draft · not public' : item.status === 'pending' ? 'Pending review' : item.status === 'published' && item.publicEligible === false ? 'Hidden · missing photo or document' : item.status === 'published' ? 'Published' : item.status === 'rejected' ? 'Rejected' : item.status === 'archived' ? 'Archived' : 'Listing status'}</strong><p><strong>Verification:</strong> {item.verified ? 'Verified · manually checked' : 'Unverified · awaiting manual verification'}</p>
+          <p>{item.status === 'draft' ? 'This draft is private. Add at least one property photo and one seller-provided document link to publish it.' : item.status === 'pending' ? 'Saved successfully. This listing is private while awaiting review.' : item.status === 'published' && item.publicEligible === false ? 'This listing is hidden from public search because it is missing at least one active property photo or seller-provided document link. Edit it to restore both.' : item.status === 'published' ? (item.verified ? 'This listing has been manually checked and is visible in public property search.' : 'This listing is public with its required photo and seller-provided document. Its details remain Unverified until an administrator checks them.') : item.status === 'rejected' ? (item.reviewMessage || 'This listing was not approved. Contact support if you need help.') : item.status === 'archived' ? 'This listing is archived and is not shown in public search.' : 'Check back here for the latest review status.'}</p>
         </div>}
         {kind === 'my-listings' && <div className="listing-actions listing-management-actions">
           <Link className="btn btn-outline" to={`/edit-listing/${encodeURIComponent(item.id)}`}>{item.status === 'archived' ? 'Edit and resubmit' : 'Edit details'}</Link>

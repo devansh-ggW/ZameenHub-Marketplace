@@ -28,7 +28,7 @@ export function EditListingPage() {
   const [imageFiles, setImageFiles] = useState<File[]>([])
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
-  const [documents, setDocuments] = useState<Array<{ id?: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain?: string; sortOrder?: number }>>([])
+  const [documents, setDocuments] = useState<Array<{ id?: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain?: string; sortOrder?: number; createdAt?: string; updatedAt?: string }>>([])
   const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
   const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
 
@@ -36,7 +36,12 @@ export function EditListingPage() {
     let active = true
     async function load() {
       const session = await getSession()
-      if (!session.ok || !session.data.authenticated) {
+      if (!session.ok) {
+        setError('We could not check your sign-in right now. Your session has not been cleared. Check your connection and retry.')
+        setLoading(false)
+        return
+      }
+      if (!session.data.authenticated) {
         navigate('/login?next=' + encodeURIComponent('/edit-listing/' + id), { replace: true })
         setLoading(false)
         return
@@ -83,18 +88,21 @@ export function EditListingPage() {
       return
     }
     setSaving(true)
-    const result = await apiRequest<{ id: string; status: 'published'; verified: false; message: string }>('/api/my/properties/' + encodeURIComponent(id), {
+    const submittedDocuments = documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ ...(item.id ? { id: item.id } : {}), documentType: item.documentType, description: item.description.trim(), url: item.url.trim() }))
+    const hasPublicPhoto = (property?.gallery.length || 0) > 0 || imageFiles.length > 0
+    const hasPublicDocument = submittedDocuments.length > 0
+    const result = await apiRequest<{ id: string; status: 'published' | 'draft'; verified: false; message: string }>('/api/my/properties/' + encodeURIComponent(id), {
       method: 'PATCH',
       body: JSON.stringify({
         title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType,
         price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea,
         description: description.trim(), amenities,
-        documents: documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ documentType: item.documentType, description: item.description.trim(), url: item.url.trim() })),
+        documents: submittedDocuments,
         verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(),
       }),
     })
     if (!result.ok) { setSaving(false); setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, publicEligible: hasPublicPhoto && hasPublicDocument, verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
 
     const knownMediaIds = new Set((property?.imageMedia || []).map(media => media.id))
     for (let index = 0; index < imageFiles.length; index++) {
@@ -110,9 +118,32 @@ export function EditListingPage() {
       setProperty(current => current ? { ...current, gallery: [...current.gallery, uploaded.data.url], image: current.image || uploaded.data.url, imageMedia: [...(current.imageMedia || []), { id: uploaded.data.id, url: uploaded.data.url, fileId: uploaded.data.fileId, sortOrder: uploaded.data.sortOrder }] } : current)
       setUploadProgress(0)
     }
+    if (result.data.status === 'draft' && hasPublicPhoto && hasPublicDocument) {
+      const publication = await apiRequest<{ id: string; status: 'published'; message: string }>('/api/my/properties/' + encodeURIComponent(id) + '/publish', { method: 'POST' })
+      if (!publication.ok) {
+        setSaving(false)
+        setError('Draft saved, but publishing is blocked: ' + publication.error)
+        setNotice('The listing remains private until the required photo and document are saved.')
+        return
+      }
+      setProperty(current => current ? { ...current, status: 'published', publicEligible: true } : current)
+      setNotice(publication.data.message)
+    } else if (result.data.status === 'draft') {
+      setNotice('Draft saved privately. Add at least one property photo and one seller-provided document link, then save again to publish.')
+    } else if (!hasPublicPhoto || !hasPublicDocument) {
+      setNotice('Changes saved. This listing is hidden from public search until it has at least one property photo and one seller-provided document link.')
+    } else {
+      setNotice(result.data.message)
+    }
+    // Re-read the saved seller documents so newly assigned IDs and timestamps
+    // remain stable if the owner edits this listing again without reloading.
+    const refreshed = await apiRequest<Property>('/api/my/properties/' + encodeURIComponent(id))
+    if (refreshed.ok) {
+      setProperty(refreshed.data)
+      setDocuments(refreshed.data.documents || [])
+    }
     setSaving(false)
     setUploadStatus(imageFiles.length ? 'All selected photos uploaded to ImageKit.' : '')
-    setNotice(result.data.message)
   }
 
   if (loading) return <main className="page-shell"><div className="container"><p className="status-message">Loading your listing…</p></div></main>
@@ -136,7 +167,7 @@ export function EditListingPage() {
         <div className="form-field full"><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset></div>
         <section className="media-editor full" aria-labelledby="edit-property-media-heading">
           <h3 id="edit-property-media-heading">Property photos</h3>
-          <p className="muted">Photos are stored in ImageKit. Keep up to five JPEG, PNG or WebP images, maximum 10 MB each.</p>
+          <p className="muted">A public listing needs at least one active photo. Removing the last photo hides the listing from public search until a photo is added again. Keep up to five JPEG, PNG or WebP images, maximum 10 MB each.</p>
           <div className="media-url-list">
             {property?.gallery.map((url, index) => {
               const media = property.imageMedia?.[index]
@@ -167,11 +198,12 @@ export function EditListingPage() {
         </section>
         <section className="verification-editor full" aria-labelledby="edit-property-documents-heading">
           <h3 id="edit-property-documents-heading">Property documents</h3>
-          <p className="muted">Add original PDF or image links hosted on your own website. Buyers inspect the source directly; ZameenHub does not download, rehost or legally authenticate them.</p>
+          <p className="muted">A public listing needs at least one seller-provided PDF/image document link. Removing the last link hides the listing from public search until one is restored. Buyers inspect the source directly; ZameenHub does not download, rehost or legally authenticate the documents.</p>
           {documents.map((document, index) => <div className="media-url-row" key={document.id || index}>
             <div className="form-field"><label htmlFor={'edit-document-type-' + index}>Seller-declared format</label><select className="form-control" id={'edit-document-type-' + index} value={document.documentType} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, documentType: event.target.value as 'pdf' | 'image' } : item))}><option value="pdf">PDF</option><option value="image">Image</option></select></div>
             <div className="form-field"><label htmlFor={'edit-document-description-' + index}>Description</label><input className="form-control" id={'edit-document-description-' + index} maxLength={180} value={document.description} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} placeholder="e.g. Property tax receipt" /></div>
             <div className="form-field"><label htmlFor={'edit-document-url-' + index}>Original HTTPS link</label><input className="form-control" id={'edit-document-url-' + index} type="url" maxLength={2000} value={document.url} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))} placeholder="https://yourwebsite.example/record.pdf" /></div>
+            {document.createdAt && <small className="muted">Added {new Date(document.createdAt).toLocaleString('en-IN')}{document.updatedAt && document.updatedAt !== document.createdAt ? ' · Updated ' + new Date(document.updatedAt).toLocaleString('en-IN') : ''}</small>}
             <button className="btn btn-outline media-remove" type="button" onClick={() => setDocuments(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
           </div>)}
           {documents.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add document link</button>}

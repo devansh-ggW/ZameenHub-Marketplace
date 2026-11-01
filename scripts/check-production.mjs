@@ -5,7 +5,7 @@ const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
   'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/imagekit.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','migrations/0009_listing_history_persistent_sessions.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
@@ -21,20 +21,28 @@ if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('st
 if(!worker.includes('p.owner_id=? ORDER BY CASE i.status')||!worker.includes('inquiries SET status=? WHERE id=? AND EXISTS'))errors.push('Owner inquiry inbox must restrict each message to the listing owner')
 if(!worker.includes("path==='/api/inquiries'&&method==='POST'")||!worker.includes('INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)')||!worker.includes('sendEmail(env,property.owner_email'))errors.push('Public inquiry submission must persist a lead and attempt owner email notification')
 if(!worker.includes('withProperty(db,p,true)'))errors.push('Admin review queue must include private verification evidence')
-if(!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')")||!worker.includes("status='published' AND COALESCE(verification_status,'unverified')<>'verified'"))errors.push('Admin queue must include published listings that still need manual verification')
+if(!worker.includes("if(path==='/api/admin/review-queue'&&method==='GET')")||!worker.includes("p.status='published' AND COALESCE(p.verification_status,'unverified')<>'verified'"))errors.push('Admin queue must include published listings that still need manual verification')
 if(!app.includes('import { HomePage, PropertiesPage, PropertyDetailPage, NotFoundPage }')||!app.includes('<Route path="*" element={<NotFoundPage />} />'))errors.push('Unknown routes must use the dedicated not-found page, not the homepage')
 if(!read('src/App.tsx').includes('import { MessagesPage }')||!read('src/App.tsx').includes('path="/messages"'))errors.push('Private property chat route is missing')
 if(!read('src/components.tsx').includes('const isPublished = property.status === \'published\'')||!read('src/components.tsx').includes('{isPublished && <FavoriteButton'))errors.push('Private listing cards must not show unusable public links or favorites')
 const listingSubmitStart=worker.indexOf("if(path==='/api/properties'&&method==='POST')")
-const listingSubmitEnd=worker.indexOf("const archiveMatch=",listingSubmitStart)
+const listingSubmitEnd=worker.indexOf("const publishMatch=",listingSubmitStart)
 const listingSubmitBlock=listingSubmitStart>=0&&listingSubmitEnd>listingSubmitStart?worker.slice(listingSubmitStart,listingSubmitEnd):''
 if(!listingSubmitBlock||listingSubmitBlock.includes('riskLevel:risk.level')||listingSubmitBlock.includes('riskScore:risk.score')||listingSubmitBlock.includes('riskReasons:risk.reasons'))errors.push('Property submission must not expose internal AI risk scores or detailed risk reasons to the listing owner')
+if(!listingSubmitBlock.includes('documents.length===0')||!listingSubmitBlock.includes("'draft'"))errors.push('New listings must require at least one seller-provided document and remain private drafts until image upload completes')
+const publishStart=worker.indexOf('const publishMatch=path.match')
+const publishEnd=worker.indexOf('const archiveMatch=',publishStart)
+const publishBlock=publishStart>=0&&publishEnd>publishStart?worker.slice(publishStart,publishEnd):''
+if(!publishBlock.includes('property_media')||!publishBlock.includes('property_documents')||!publishBlock.includes("status==='draft'")||!publishBlock.includes("status='published'"))errors.push('Publishing must require an active property photo and at least one seller-provided document')
+if(!worker.includes("if(status==='published') {")||!worker.includes("until at least one seller-provided property document is attached")||!worker.includes("until at least one active property photo is attached"))errors.push('Admin moderation must not publish or verify an incomplete listing')
+if(!worker.includes("COALESCE(p.verification_status,'unverified')<>'verified' AND ${publicListingRequirements}"))errors.push('Admin verification queue must not surface published listings missing required photos or documents')
+if(!worker.includes('const publicListingRequirements =')||!worker.includes('AND ${publicListingRequirements}'))errors.push('Public search and detail APIs must exclude listings without both an active photo and a seller-provided document')
 const listingEditStart=worker.indexOf("if(ownedPropertyMatch&&method==='PATCH')")
 const listingEditEnd=worker.indexOf("if(path==='/api/my/properties'&&method==='GET')",listingEditStart)
 const listingEditBlock=listingEditStart>=0&&listingEditEnd>listingEditStart?worker.slice(listingEditStart,listingEditEnd):''
 if(!listingEditBlock||listingEditBlock.includes('riskLevel:risk.level')||listingEditBlock.includes('riskScore:risk.score')||listingEditBlock.includes('riskReasons:risk.reasons'))errors.push('Listing edit responses must not expose internal AI risk scores or reasons to listing owners')
 if(!listingEditBlock.includes("ai_model='not-run'")||/ai_model\s*=\s*NULL/i.test(listingEditBlock))errors.push('Listing edits must reset ai_model to not-run; NULL violates the properties.ai_model NOT NULL constraint')
-if(!worker.includes("'published','unverified'")||!worker.includes("verified:false"))errors.push('New listings must publish immediately and begin Unverified')
+if(!worker.includes("'draft','unverified'")||!worker.includes("verified:false")||!publishBlock.includes("status:'published'"))errors.push('New listings must save privately as Unverified drafts and publish only after required media is attached')
 if(!worker.includes("property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')"))errors.push('Duplicate open listing reports must be rejected')
 if(!worker.includes('property_moderation_events'))errors.push('Moderation decisions must have an audit trail')
 if(!worker.includes('snapshotGuard')||!worker.includes('AND updated_at=?'))errors.push('Moderation must reject stale listing versions that changed after review-queue load')
@@ -60,7 +68,7 @@ if(!worker.includes("const canDeleteAdmin="))errors.push('Last administrator del
 if(!worker.includes('p.price>=?')||!worker.includes('p.price<=?')||!worker.includes('p.area>=?')||!worker.includes('p.area<=?')||!worker.includes('p.bathrooms>=?'))errors.push('Property budget, bathroom and area filters are missing')
 if(!worker.includes('sanitizeAmenities(input.amenities)')||!worker.includes('amenities_json=?')||!worker.includes('json_each(CASE WHEN json_valid(p.amenities_json)'))errors.push('Listing amenities must be validated, persisted and filterable')
 if(!pages.includes('selectedAmenities')||!pages.includes('PROPERTY_AMENITIES.map'))errors.push('Buyer-facing amenity filters must be available and URL-synced')
-if(!read('src/listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/edit-listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/listing-page.tsx').includes('documents: documents.filter')||!read('src/edit-listing-page.tsx').includes('documents: documents.filter'))errors.push('Owners must be able to submit and edit real amenity data and seller-hosted documents')
+if(!read('src/listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/edit-listing-page.tsx').includes('description: description.trim(), amenities,')||!read('src/listing-page.tsx').includes('documents: publicDocuments')||!read('src/edit-listing-page.tsx').includes('documents: submittedDocuments')||!read('src/listing-page.tsx').includes('const publicDocuments = documents.filter')||!read('src/edit-listing-page.tsx').includes('const submittedDocuments = documents.filter'))errors.push('Owners must be able to submit and edit real amenity data and seller-hosted documents')
 if(!pages.includes("setMinPrice")||!pages.includes("setMaxPrice")||!pages.includes("setMinArea")||!pages.includes("setMaxArea"))errors.push('Buyer-side budget and area range filter controls are missing')
 if(!pages.includes('getProperties(new URLSearchParams())'))errors.push('Homepage must load real public listings from the property API')
 if(!read('src/site-chrome.tsx').includes('to="/inquiries"'))errors.push('Owner inquiry inbox must be reachable from account navigation')
@@ -123,6 +131,10 @@ const cleanupRoute=cleanupRouteStart>=0&&cleanupRouteEnd>cleanupRouteStart?worke
 if(!cleanupRoute.includes("status='deletion_pending'")||!cleanupRoute.includes('imagekit_cleanup_queue')||!cleanupRoute.includes('queueImageKitCleanup'))errors.push('Admin ImageKit retry must recover both queued orphans and hidden pending media rows')
 if(!worker.includes('ok({id:mediaId,deleted:true,cleanupPending:true})'))errors.push('Photo removal must report the actual hidden/removal result when provider cleanup is pending')
 if(!imagekitMigration.includes("document_type IN ('pdf', 'image')")||!imagekitMigration.includes('source_domain'))errors.push('Property document metadata must support described PDF/image links and source domains')
+const listingWizard=read('src/listing-page.tsx')
+if(!listingWizard.includes("const steps = ['Purpose', 'Details', 'Photos & documents']")||listingWizard.includes('Review before submission.')||listingWizard.includes('step === 4'))errors.push('New listing flow must submit directly without a separate review step')
+if(!listingWizard.includes('imageFiles.length === 0')||!listingWizard.includes('publicDocuments.length === 0')||!listingWizard.includes("'/publish'"))errors.push('New listing form must require photos and documents and publish only after uploads finish')
+if(!read('src/components.tsx').includes('property.publicEligible !== false')||!read('src/account-pages.tsx').includes('item.publicEligible === false'))errors.push('Incomplete owner listings must be visibly marked hidden and must not link to public detail pages')
 const imagekitClient=read('src/lib/imagekit.ts')
 if(!imagekitClient.includes('findPersistedPropertyImage')||!imagekitClient.includes("'/api/my/properties/'")||!imagekitClient.includes('knownMediaIds')||!imagekitClient.includes('imageMedia'))errors.push('Ambiguous image upload responses must be reconciled against the owner listing media saved in D1')
 if(!read('src/edit-listing-page.tsx').includes('[...knownMediaIds]')||!read('src/listing-page.tsx').includes('[...knownMediaIds]'))errors.push('Create and edit listing uploads must pass their known media IDs so reconciliation only accepts newly saved photos')
@@ -152,5 +164,28 @@ if(!worker.includes('function emailText('))errors.push('Worker email messages mu
 if(!worker.includes('href=\"${safeUrl}\"'))errors.push('Email HTML must include a link with the generated action URL')
 if(!worker.includes('copy and open this link in your browser'))errors.push('Email HTML must expose the action URL as a visible clickable fallback')
 if(!worker.includes('html,text})'))errors.push('Resend payload must include both HTML and plain-text email bodies')
+// Persistent-session behavior and false-logout regression guards.
+const authScreens=['src/account-pages.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/listing-page.tsx']
+if(!app.includes('SessionKeepAlive')||!app.includes('getSession'))errors.push('The application must periodically renew persistent sessions')
+if(!worker.includes('SESSION_INACTIVITY_MS=30*24*60*60_000')||!worker.includes('SESSION_ABSOLUTE_MS=90*24*60*60_000'))errors.push('Session inactivity and absolute lifetime defaults must be 30 and 90 days')
+if(!worker.includes('refreshUserSession')||!worker.includes('absolute_expires_at>?')||!worker.includes('last_seen_at=?'))errors.push('Session checks must renew active DB sessions without exceeding absolute expiry')
+if(!worker.includes("path==='/api/auth/logout-all'&&method==='POST'")||!read('src/account-security.tsx').includes("allDevices ? 'logout-all' : 'logout'")||!read('src/account-security.tsx').includes('Sign out all devices'))errors.push('Users must be able to revoke all device sessions')
+if(!worker.includes("HttpOnly; Secure; SameSite=Lax")||worker.includes('localStorage.setItem')||read('src/lib/auth.ts').includes('localStorage.setItem'))errors.push('Persistent authentication must remain in secure HttpOnly cookies, not browser local storage')
+for(const file of authScreens) {
+  const source=read(file)
+  if(source.includes('!session.ok || !session.data.authenticated')||source.includes('!result.ok || !result.data.authenticated'))errors.push(file+' must not redirect users on temporary session API errors')
+}
+if(!read('src/site-chrome.tsx').includes('Keep the last known navigation state on transient network failures'))errors.push('A temporary session check failure must not clear the existing authenticated navigation')
+if(!read('scripts/check-migrations.py').includes('Logout-all must revoke every active user session')||!read('scripts/check-migrations.py').includes('Rolling activity must never extend a session beyond its 90-day absolute expiry'))errors.push('Migration tests must cover session renewal caps and revocation')
+
+// Evidence Room and Listing History.
+if(!pages.includes('Property Evidence Room')||!pages.includes('Seller-provided · Not independently authenticated')||!pages.includes('document.createdAt')||!pages.includes('document.updatedAt'))errors.push('Buyer Evidence Room must show seller attribution and document added/updated dates')
+if(!pages.includes('evidence-image-preview')||!pages.includes('referrerPolicy="no-referrer"')||pages.includes('<iframe'))errors.push('Evidence previews must be limited to safe image rendering without untrusted document iframes')
+if(!pages.includes('Listing History')||!pages.includes('/api/properties/')||!pages.includes('/history'))errors.push('Property detail pages must load the chronological Listing History API')
+if(!worker.includes('property_listing_history')||!worker.includes('listingHistoryStatement')||!worker.includes('tracking_started'))errors.push('Listing change history must be recorded by the Worker and backfilled with an honest tracking-start marker')
+if(!worker.includes("event_type")||!worker.includes("'price_increased'")||!worker.includes("'price_decreased'")||!worker.includes("'document_replaced'")||!worker.includes("'listing_unpublished'"))errors.push('Listing history must cover price, documents and publication state changes')
+if(!worker.includes("WHERE id=? AND owner_id=? AND updated_at=?"))errors.push('Listing edits must guard against overwriting a newer concurrent edit')
+if(!read('src/edit-listing-page.tsx').includes('item.id ? { id: item.id } : {}'))errors.push('Seller edits must preserve existing property document IDs and added dates')
+if(!read('src/styles.css').includes('.listing-history-list')||!read('src/styles.css').includes('.evidence-image-preview'))errors.push('Evidence Room and timeline responsive styles are missing')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
 console.log('Static production smoke checks passed. These checks verify wiring, not cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')
