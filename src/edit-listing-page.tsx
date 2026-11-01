@@ -98,7 +98,7 @@ export function EditListingPage() {
       }),
     })
     if (!result.ok) { setSaving(false); setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, publicEligible: hasPublicPhoto && hasPublicDocument, verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, publicEligible: hasPublicPhoto && hasPublicDocument, verificationEvidenceType: property?.verificationEvidenceType || 'none', verificationEvidenceUrl: property?.verificationEvidenceUrl || '', verificationStatus: 'unverified', verified: false } : current)
 
     const knownMediaIds = new Set((property?.imageMedia || []).map(media => media.id))
     for (let index = 0; index < imageFiles.length; index++) {
