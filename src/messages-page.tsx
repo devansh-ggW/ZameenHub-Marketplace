@@ -207,7 +207,7 @@ export function MessagesPage() {
   }
 
   return <main className="page-shell messages-page"><div className="container">
-    <div className="page-title"><SectionKicker>Private conversations</SectionKicker><h1>Messages.</h1><p>Talk directly with a property owner or a viewer about a published listing. Keep payments and personal documents out of chat, and verify property details independently.</p></div>
+    <div className="page-title"><SectionKicker>Private conversations</SectionKicker><h1>Messages.</h1><p>Talk directly with a property owner or a viewer about a published listing. Official ZameenHub administrators carry the ZameenHub Admin badge. We will never ask for your password, OTP or an off-platform payment in chat.</p></div>
     {error && <p className="status-message error" role="alert">{error}</p>}
     {notice && <p className="status-message success" role="status">{notice}</p>}
     <div className="messages-layout">
