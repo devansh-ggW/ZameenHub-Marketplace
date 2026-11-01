@@ -788,7 +788,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         'login-email:'+user.email,'register-email:'+user.email,'resend-email:'+user.email,'forgot-email:'+user.email,
         'listing-user:'+user.id,'listing-edit-user:'+user.id,'listing-manage-user:'+user.id,'listing-delete-user:'+user.id,
         'property-image-upload-user:'+user.id,'property-image-delete-user:'+user.id,
-        'profile-image-upload-user:'+user.id,'profile-image-delete-user:'+user.id,
+        'profile-image-upload-user:'+user.id,'profile-image-delete-user:'+user.id,'profile-update-user:'+user.id,
         'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id,
         'imagekit-cleanup-user:'+user.id,'property-report-user:'+user.id,'inquiry-inbox-user:'+user.id,'inquiry-update-user:'+user.id,
         'moderation-user:'+user.id,'report-review-user:'+user.id
