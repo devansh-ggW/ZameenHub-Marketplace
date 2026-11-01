@@ -1180,7 +1180,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const nextVerificationStatus=status==='rejected'?'rejected':verifyEvidence?'verified':(record.verification_status||'unverified')
       const nextVerificationReviewedAt=verificationDecision==='unchanged'?(record.verification_reviewed_at||null):reviewTime
       const nextVerificationReviewedBy=verificationDecision==='unchanged'?(record.verification_reviewed_by||null):user.id
-      const nextVerificationNote=verificationDecision==='unchanged'?(record.verification_note||''):verificationAuditNote
+      const nextVerificationNote=verificationDecision==='unchanged'?(record.verification_note||''):verificationDecision==='verified'?verificationAuditNote:reviewNote
       // The decision is bound to the exact submitted listing and evidence link.
       const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=? AND COALESCE(verification_status,'unverified')=? AND COALESCE(verification_evidence_type,'none')=? AND COALESCE(verification_evidence_url,'')=?"
       const statusHistoryEvent=status==='published'&&priorStatus!=='published'
