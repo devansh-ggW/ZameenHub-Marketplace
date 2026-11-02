@@ -68,6 +68,27 @@ def main() -> int:
            "Persistent sessions must include rolling activity and absolute-expiry columns")
     document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
     expect("updated_at" in document_columns, "Property documents must track their latest metadata update")
+    expect({"imagekit_file_id", "file_path", "uploader_id", "status"} <= document_columns,
+           "ImageKit evidence storage metadata columns are incomplete")
+    legacy_document = db.execute("SELECT imagekit_file_id,file_path,status FROM property_documents WHERE id='rollout-document'").fetchone()
+    expect(legacy_document is not None and legacy_document["imagekit_file_id"] is None
+           and legacy_document["file_path"] == "" and legacy_document["status"] == "active",
+           "Existing external evidence links must remain active after the ImageKit evidence migration")
+    db.execute("""UPDATE property_documents SET imagekit_file_id=?,file_path=?,uploader_id=?
+                  WHERE id='rollout-document'""",
+               ("ik-evidence-file-1", "/zameenhub/evidence/rollout-property/deed.pdf", "rollout-owner"))
+    uploaded_evidence = db.execute("SELECT imagekit_file_id,file_path,uploader_id,status FROM property_documents WHERE id='rollout-document'").fetchone()
+    expect(uploaded_evidence[:] == ("ik-evidence-file-1", "/zameenhub/evidence/rollout-property/deed.pdf", "rollout-owner", "active"),
+           "ImageKit evidence file metadata was not saved correctly")
+    try:
+        db.execute("""INSERT INTO property_documents
+            (id,property_id,owner_id,document_type,description,url,source_domain,sort_order,imagekit_file_id)
+            VALUES(?,?,?,?,?,?,?,?,?)""",
+            ("duplicate-imagekit-evidence", "rollout-property", "rollout-owner", "pdf",
+             "Duplicate file", "https://ik.example/duplicate.pdf", "ik.example", 1, "ik-evidence-file-1"))
+        raise AssertionError("Duplicate ImageKit file IDs must be rejected")
+    except sqlite3.IntegrityError:
+        pass
     history_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_listing_history)")}
     expect({"event_type", "previous_value", "new_value", "metadata_json", "created_at"} <= history_columns,
            "Listing history event schema is incomplete")
