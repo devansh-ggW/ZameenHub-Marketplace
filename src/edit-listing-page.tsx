@@ -255,6 +255,7 @@ export function EditListingPage() {
             <div className="form-field"><label htmlFor={'edit-new-evidence-description-' + index}>What does this document prove?</label><input className="form-control" id={'edit-new-evidence-description-' + index} value={item.description} maxLength={180} onChange={event => setEvidenceFiles(current => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, description: event.target.value } : entry))} placeholder="e.g. Property tax receipt" /></div>
             <button className="btn btn-outline media-remove" type="button" onClick={() => setEvidenceFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove file</button>
           </div>)}
+          {documents.length + evidenceFiles.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length + evidenceFiles.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add existing HTTPS evidence link</button>}
           <label className="evidence-privacy-ack"><input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} /> <span>I confirm new evidence files and links do not expose personal ID numbers or private information.</span></label>
           {uploadStatus && <p className="status-message" role="status">{uploadStatus}{saving ? ' · ' + uploadProgress + '%' : ''}</p>}
         </section>
