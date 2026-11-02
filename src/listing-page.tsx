@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { SectionKicker } from './components'
 import { apiRequest, getSession } from './lib/auth'
 import { PROPERTY_AMENITIES } from './lib/property-options'
-import { uploadPropertyImage } from './lib/imagekit'
+import { uploadPropertyEvidence, uploadPropertyImage } from './lib/imagekit'
 
 export function ListingPage() {
   const navigate = useNavigate()
@@ -29,6 +29,8 @@ export function ListingPage() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
   const [documents, setDocuments] = useState<Array<{ documentType: 'pdf' | 'image'; description: string; url: string }>>([])
+  const [evidenceFiles, setEvidenceFiles] = useState<Array<{ file: File; description: string }>>([])
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false)
   const steps = ['Purpose', 'Details', 'Photos & documents']
 
   useEffect(() => {
@@ -56,7 +58,9 @@ export function ListingPage() {
     }
     const publicDocuments = documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ ...item, url: item.url.trim(), description: item.description.trim() }))
     if (imageFiles.length === 0) { setError('Upload at least one property photo before submitting.'); return }
-    if (publicDocuments.length === 0) { setError('Add at least one seller-provided property document link before submitting.'); return }
+    if (publicDocuments.length === 0 && evidenceFiles.length === 0) { setError('Upload at least one PDF/image evidence file or add an existing public HTTPS document link.'); return }
+    if ([...publicDocuments].some(item => item.description.length < 3) || evidenceFiles.some(item => item.description.trim().length < 3)) { setError('Give every evidence file or link a clear description of at least 3 characters.'); return }
+    if (!privacyAcknowledged) { setError('Confirm that your evidence does not expose personal IDs or private information.'); return }
 
     setBusy(true)
     setUploadStatus('')
@@ -87,6 +91,20 @@ export function ListingPage() {
         return
       }
       knownMediaIds.add(uploaded.data.id)
+      setUploadProgress(0)
+    }
+    const knownEvidenceIds = new Set<string>()
+    for (let index = 0; index < evidenceFiles.length; index++) {
+      const evidence = evidenceFiles[index]
+      setUploadStatus('Uploading evidence ' + (index + 1) + ' of ' + evidenceFiles.length)
+      const uploaded = await uploadPropertyEvidence(result.data.id, evidence.file, evidence.description.trim(), setUploadProgress, [...knownEvidenceIds])
+      if (!uploaded.ok) {
+        setBusy(false)
+        setError('Your listing draft is saved, but evidence file ' + (index + 1) + ' could not be confirmed: ' + uploaded.error + ' You can retry from Edit listing.')
+        setNotice('Listing draft saved. Add or retry the missing property evidence before publishing.')
+        return
+      }
+      knownEvidenceIds.add(uploaded.data.id)
       setUploadProgress(0)
     }
     const publication = await apiRequest<{ id: string; status: 'published'; message: string }>('/api/my/properties/' + encodeURIComponent(result.data.id) + '/publish', { method: 'POST' })
@@ -124,17 +142,49 @@ export function ListingPage() {
         </div>
         {uploadStatus && <p className="status-message" role="status">{uploadStatus}{busy && imageFiles.length > 0 ? ' · ' + uploadProgress + '%' : ''}</p>}
       </section>
-      <section className="verification-editor" aria-labelledby="property-documents-heading">
-        <h3 id="property-documents-heading">Property documents</h3>
-        <p className="muted">At least one supporting property document is required for public publishing. Add an original HTTPS link to a seller-hosted PDF or image, such as a registered deed copy, property-tax receipt or registry extract. Buyers inspect the source themselves; ZameenHub does not download, store or legally authenticate these documents.</p>
-        {documents.map((document, index) => <div className="media-url-row" key={index}>
-          <div className="form-field"><label htmlFor={`property-document-type-${index}`}>Seller-declared format</label><select className="form-control" id={`property-document-type-${index}`} value={document.documentType} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, documentType: event.target.value as 'pdf' | 'image' } : item))}><option value="pdf">PDF</option><option value="image">Image</option></select></div>
-          <div className="form-field"><label htmlFor={`property-document-description-${index}`}>What does this document represent?</label><input className="form-control" id={`property-document-description-${index}`} value={document.description} maxLength={180} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} placeholder="e.g. Sale deed / property tax receipt" /></div>
-          <div className="form-field"><label htmlFor={`property-document-url-${index}`}>Original HTTPS link</label><input className="form-control" id={`property-document-url-${index}`} type="url" maxLength={2000} value={document.url} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))} placeholder="https://yourwebsite.example/documents/record.pdf" /></div>
-          <button className="btn btn-outline media-remove" type="button" onClick={() => setDocuments(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove</button>
+      <section className="verification-editor evidence-editor" aria-labelledby="property-documents-heading">
+        <div className="evidence-editor-banner">
+          <SectionKicker>THE ZAMEENHUB DIFFERENCE</SectionKicker>
+          <h3 id="property-documents-heading">Property Evidence Room.</h3>
+          <p>DON'T TRUST US. CHECK THE DAMN THING YOURSELF.</p>
+          <span>Give buyers the evidence. Let them inspect it independently.</span>
+        </div>
+        <p className="muted">Upload supporting property records as PDF or image files. Files are stored and delivered through ImageKit and can be opened by anyone viewing your published listing. ZameenHub does not legally authenticate documents or confirm ownership.</p>
+        <div className="evidence-privacy-warning" role="note">
+          <strong>Privacy warning — redact personal information first.</strong>
+          <p>Never upload an Aadhaar card, PAN card, passport, bank statement, full ID number, QR code, personal phone number, bank details, or an unredacted signature. Share only the property-related parts buyers need to inspect. Upload a redacted copy; do not upload the document if you cannot safely hide private details.</p>
+        </div>
+        <div className="form-field evidence-upload-field">
+          <label htmlFor="property-evidence-files">Upload property evidence to ImageKit</label>
+          <input className="form-control" id="property-evidence-files" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp" multiple onChange={event => {
+            const remaining = Math.max(0, 10 - documents.length - evidenceFiles.length)
+            const selected = Array.from(event.target.files || [])
+            if (selected.some(file => file.size > 10 * 1024 * 1024)) { setError('Each evidence file must be 10 MB or smaller.'); event.target.value = ''; return }
+            if (selected.some(file => !['application/pdf','image/jpeg','image/png','image/webp'].includes(file.type.toLowerCase()))) { setError('Evidence files must be PDF, JPEG, PNG or WebP.'); event.target.value = ''; return }
+            setEvidenceFiles(current => [...current, ...selected.slice(0, remaining).map(file => ({ file, description: file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').slice(0, 180) }))])
+            setError('')
+            event.target.value = ''
+          }} />
+          <small>PDF, JPEG, PNG or WebP · up to 10 files total · max 10 MB each · uploaded to ImageKit.</small>
+        </div>
+        {evidenceFiles.map((item, index) => <div className="evidence-selected-file" key={index}>
+          <div className="evidence-selected-file-name"><strong>{item.file.name}</strong><small>{(item.file.size / 1024 / 1024).toFixed(2)} MB</small></div>
+          <div className="form-field"><label htmlFor={'new-evidence-description-' + index}>What does this document prove?</label><input className="form-control" id={'new-evidence-description-' + index} value={item.description} maxLength={180} onChange={event => setEvidenceFiles(current => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, description: event.target.value } : entry))} placeholder="e.g. Property tax receipt" /></div>
+          <button className="btn btn-outline media-remove" type="button" onClick={() => setEvidenceFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove file</button>
         </div>)}
-        {documents.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add document link</button>}
-        <small>HTTPS only · up to 10 links · never share Aadhaar/PAN or private identity information.</small>
+        <label className="evidence-privacy-ack"><input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} /> <span>I confirm these files and links do not expose personal ID numbers or private information.</span></label>
+        <details className="evidence-link-fallback">
+          <summary>Already have a public HTTPS evidence link?</summary>
+          <p className="muted">You can keep using an existing public PDF/image URL. New file uploads above are stored on ImageKit.</p>
+          {documents.map((document, index) => <div className="media-url-row" key={index}>
+            <div className="form-field"><label htmlFor={'property-document-type-' + index}>Format</label><select className="form-control" id={'property-document-type-' + index} value={document.documentType} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, documentType: event.target.value as 'pdf' | 'image' } : item))}><option value="pdf">PDF</option><option value="image">Image</option></select></div>
+            <div className="form-field"><label htmlFor={'property-document-description-' + index}>Description</label><input className="form-control" id={'property-document-description-' + index} value={document.description} maxLength={180} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} placeholder="e.g. Property tax receipt" /></div>
+            <div className="form-field"><label htmlFor={'property-document-url-' + index}>Original HTTPS link</label><input className="form-control" id={'property-document-url-' + index} type="url" maxLength={2000} value={document.url} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))} placeholder="https://example.com/record.pdf" /></div>
+            <button className="btn btn-outline media-remove" type="button" onClick={() => setDocuments(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove link</button>
+          </div>)}
+          {documents.length + evidenceFiles.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length + evidenceFiles.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add existing link</button>}
+        </details>
+        {uploadStatus && <p className="status-message" role="status">{uploadStatus}{busy ? ' · ' + uploadProgress + '%' : ''}</p>}
       </section>
 
     </>}
