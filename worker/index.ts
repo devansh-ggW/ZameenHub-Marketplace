@@ -18,6 +18,8 @@ const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   headers.set('cache-control','no-store')
   headers.set('x-content-type-options','nosniff')
   headers.set('x-frame-options','DENY')
+  headers.set('x-permitted-cross-domain-policies','none')
+  headers.set('cross-origin-resource-policy','same-origin')
   headers.set('referrer-policy','strict-origin-when-cross-origin')
   headers.set('permissions-policy','camera=(), microphone=(), geolocation=()')
   headers.set('cross-origin-opener-policy','same-origin')
