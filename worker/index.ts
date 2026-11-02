@@ -41,7 +41,7 @@ const nowIso=()=>new Date().toISOString()
 const future=(minutes:number)=>new Date(Date.now()+minutes*60_000).toISOString()
 const SESSION_INACTIVITY_MS=30*24*60*60_000
 const SESSION_ABSOLUTE_MS=90*24*60*60_000
-const publicListingRequirements = "EXISTS (SELECT 1 FROM property_media pm WHERE pm.property_id=p.id AND pm.media_type='image' AND pm.status='active') AND EXISTS (SELECT 1 FROM property_documents pd WHERE pd.property_id=p.id)"
+const publicListingRequirements = "EXISTS (SELECT 1 FROM property_media pm WHERE pm.property_id=p.id AND pm.media_type='image' AND pm.status='active') AND EXISTS (SELECT 1 FROM property_documents pd WHERE pd.property_id=p.id AND pd.status='active')"
 const normalizeEmail=(s:string)=>s.trim().toLowerCase()
 const effectiveRole=(email:string,role:string,env:Env)=>((env.ADMIN_EMAILS||'').split(',').map(normalizeEmail).filter(Boolean).includes(normalizeEmail(email))?'admin':role)
 function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('/')||s.startsWith('//')||s.includes('\\'))return '';try{const u=new URL(s,'https://zameenhub.invalid');return u.origin==='https://zameenhub.invalid'?u.pathname+u.search+u.hash:''}catch{return ''}}
@@ -230,7 +230,7 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; sortOrder:number; createdAt:string; updatedAt:string }
+type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; storageProvider:'imagekit'|'external'; sortOrder:number; createdAt:string; updatedAt:string }
 type PropertyImageView = { id:string; url:string; fileId:string|null; sortOrder:number }
 function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:PropertyImageView[]=[],documents:PropertyDocumentView[]=[]) {
   const verificationStatus=p.verification_status||'unverified'
@@ -384,7 +384,17 @@ async function sniffImageFile(file:File):Promise<{mime:string;extension:string}|
   if(mime==='image/webp'&&String.fromCharCode(...header.slice(0,4))==='RIFF'&&String.fromCharCode(...header.slice(8,12))==='WEBP')return {mime,extension:'webp'}
   return null
 }
-async function imageKitUpload(file:File,fileName:string,folder:string,env:Env,db:D1Database):Promise<{fileId:string;url:string;filePath:string;size:number}|null> {
+async function sniffPropertyEvidenceFile(file:File):Promise<{mime:string;extension:string;documentType:'pdf'|'image';fileType:'image'|'non-image'}|null> {
+  if(file.size<5||file.size>MAX_IMAGE_FILE_BYTES)return null
+  if(file.type.toLowerCase()==='application/pdf') {
+    const header=new Uint8Array(await file.slice(0,5).arrayBuffer())
+    if(String.fromCharCode(...header)!=='%PDF-')return null
+    return {mime:'application/pdf',extension:'pdf',documentType:'pdf',fileType:'non-image'}
+  }
+  const image=await sniffImageFile(file)
+  return image?{...image,documentType:'image',fileType:'image'}:null
+}
+async function imageKitUpload(file:File,fileName:string,folder:string,env:Env,db:D1Database,expected:{fileType:'image'|'non-image';mime?:string}={fileType:'image'}):Promise<{fileId:string;url:string;filePath:string;size:number}|null> {
   const authorization=imageKitAuthorization(env)
   if(!authorization||!env.IMAGEKIT_URL_ENDPOINT)return null
   const form=new FormData()
@@ -392,11 +402,12 @@ async function imageKitUpload(file:File,fileName:string,folder:string,env:Env,db
   form.append('fileName',fileName)
   form.append('folder',folder)
   form.append('useUniqueFileName','true')
-  form.append('tags',folder.startsWith('/zameenhub/profiles/')?'zameenhub,profile-image':'zameenhub,property-image')
+  const tag=folder.startsWith('/zameenhub/profiles/')?'profile-image':folder.startsWith('/zameenhub/evidence/')?'property-evidence':'property-image'
+  form.append('tags','zameenhub,'+tag)
   const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
-  const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string}|null
+  const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string;mime?:string}|null
   if(!result?.fileId)return null
-  if(!response.ok||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!=='image'||Number(result.size)!==file.size) {
+  if(!response.ok||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!==expected.fileType||(expected.mime&&result.mime!==expected.mime)||Number(result.size)!==file.size) {
     const deleted=await imageKitDelete(result.fileId,env).catch(()=>false)
     if(!deleted)await queueImageKitCleanup(db,result.fileId,result.filePath||'', 'invalid-upload-response').catch(()=>{})
     return null
@@ -418,8 +429,8 @@ async function propertyMedia(db:D1Database,id:string,includeMetadata=false) {
   }
 }
 async function propertyDocuments(db:D1Database,id:string):Promise<PropertyDocumentView[]> {
-  const result=await db.prepare('SELECT id,document_type,description,url,source_domain,sort_order,created_at,updated_at FROM property_documents WHERE property_id=? ORDER BY sort_order ASC').bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;sort_order:number;created_at:string;updated_at:string}>()
-  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,sortOrder:row.sort_order,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at}))
+  const result=await db.prepare("SELECT id,document_type,description,url,source_domain,imagekit_file_id,sort_order,created_at,updated_at FROM property_documents WHERE property_id=? AND status='active' ORDER BY sort_order ASC").bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;imagekit_file_id:string|null;sort_order:number;created_at:string;updated_at:string}>()
+  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,storageProvider:row.imagekit_file_id?'imagekit':'external',sortOrder:row.sort_order,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at}))
 }
 async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
   const [media,documents]=await Promise.all([propertyMedia(db,p.id,includePrivateVerification),propertyDocuments(db,p.id)])
@@ -919,8 +930,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
-      if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
-      if(documents.length===0)return fail('Add at least one seller-provided property document link before submitting this listing.')
+      if(!documents)return fail('Property documents must be valid PDF/image HTTPS links with a description. Maximum 10 links.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
@@ -942,7 +952,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=decodeURIComponent(publishMatch[1])
       const readiness=await db.prepare(`SELECT p.status,p.updated_at,
         (SELECT COUNT(*) FROM property_media m WHERE m.property_id=p.id AND m.media_type='image' AND m.status='active') AS image_count,
-        (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id) AS document_count
+        (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id AND d.status='active') AS document_count
         FROM properties p WHERE p.id=? AND p.owner_id=?`).bind(id,user.id).first<{status:string;updated_at:string;image_count:number;document_count:number}>()
       if(!readiness)return fail('Listing not found in your account.',404)
       if(Number(readiness.document_count)<1)return fail('Add at least one seller-provided PDF/image property document before publishing.',409)
@@ -1200,7 +1210,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(status==='published') {
         const readiness=await db.prepare(`SELECT
           (SELECT COUNT(*) FROM property_media m WHERE m.property_id=p.id AND m.media_type='image' AND m.status='active') AS image_count,
-          (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id) AS document_count
+          (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.owner_id=p.owner_id AND d.status='active') AS document_count
           FROM properties p WHERE p.id=?`).bind(id).first<{image_count:number;document_count:number}>()
         if(Number(readiness?.document_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one seller-provided property document is attached.',409)
         if(Number(readiness?.image_count||0)<1)return fail('This listing cannot be published or marked Verified until at least one active property photo is attached.',409)
