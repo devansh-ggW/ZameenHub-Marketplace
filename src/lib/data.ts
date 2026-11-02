@@ -37,6 +37,7 @@ export type Property = {
   imageMedia?: PropertyImage[]
   publicEligible?: boolean
   status: ListingStatus
+  ownerId?: string
   ownerName: string
   ownerProfileImageUrl?: string
   ownerRole: string
