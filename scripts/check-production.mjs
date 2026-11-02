@@ -173,7 +173,16 @@ if(!worker.includes('html,text})'))errors.push('Resend payload must include both
 const authScreens=['src/account-pages.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/listing-page.tsx']
 if(!app.includes('SessionKeepAlive')||!app.includes('getSession'))errors.push('The application must periodically renew persistent sessions')
 if(!worker.includes('SESSION_INACTIVITY_MS=30*24*60*60_000')||!worker.includes('SESSION_ABSOLUTE_MS=90*24*60*60_000'))errors.push('Session inactivity and absolute lifetime defaults must be 30 and 90 days')
-if(!worker.includes('refreshUserSession')||!worker.includes('absolute_expires_at>?')||!worker.includes('last_seen_at=?'))errors.push('Session checks must renew active DB sessions without exceeding absolute expiry')
+if(!worker.includes('refreshUserSession')||!worker.includes('absolute_expires_at>?')||!worker.includes("last_seen_at=CASE WHEN COALESCE(last_seen_at,"))errors.push('Session checks must renew active DB sessions without exceeding absolute expiry')
+const sessionRefreshStart=worker.indexOf('async function refreshUserSession')
+const sessionRefreshEnd=worker.indexOf('async function requireUser',sessionRefreshStart)
+const sessionRefreshBlock=sessionRefreshStart>=0&&sessionRefreshEnd>sessionRefreshStart?worker.slice(sessionRefreshStart,sessionRefreshEnd):''
+if(!sessionRefreshBlock.includes('SELECT expires_at FROM sessions WHERE id=?')||sessionRefreshBlock.includes('!renewed.meta.changes'))errors.push('Parallel session refreshes must not be mistaken for revoked sessions')
+if(!worker.includes('Expires=\u0024{cookieExpiry(maxAge)}'))errors.push('Session cookies must include an explicit expiry fallback')
+if(!app.includes('10 * 60 * 1000')||!app.includes("window.addEventListener('focus', onReturn)")||!app.includes("window.addEventListener('pageshow', onReturn)"))errors.push('Active sessions must refresh regularly and when the browser tab returns')
+const controlStyles=read('src/styles.css')
+if(!controlStyles.includes('::file-selector-button')||!controlStyles.includes('.chat-message-actions')||!controlStyles.includes('.chat-action-danger'))errors.push('File-picker and message-action controls must use the unified modern control styles')
+if(!read('src/messages-page.tsx').includes('className="chat-action"'))errors.push('Message actions must not fall back to unstyled browser-default buttons')
 if(!worker.includes("path==='/api/auth/logout-all'&&method==='POST'")||!read('src/account-security.tsx').includes("allDevices ? 'logout-all' : 'logout'")||!read('src/account-security.tsx').includes('Sign out all devices'))errors.push('Users must be able to revoke all device sessions')
 if(!worker.includes("HttpOnly; Secure; SameSite=Lax")||worker.includes('localStorage.setItem')||read('src/lib/auth.ts').includes('localStorage.setItem'))errors.push('Persistent authentication must remain in secure HttpOnly cookies, not browser local storage')
 for(const file of authScreens) {
