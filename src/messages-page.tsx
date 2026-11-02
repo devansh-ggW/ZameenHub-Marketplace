@@ -12,6 +12,7 @@ type Conversation = {
   buyerId: string
   ownerId: string
   otherUserName: string
+  otherUserRole: 'user' | 'moderator' | 'admin'
   role: 'buyer' | 'owner'
   lastMessage: string
   lastMessageAt: string
@@ -21,6 +22,7 @@ type ChatMessage = {
   id: string
   senderId: string
   senderName: string
+  senderRole: 'user' | 'moderator' | 'admin'
   body: string
   createdAt: string
   readAt: string | null
@@ -29,6 +31,7 @@ type ChatMessage = {
   replyToMessageId?: string | null
   replyToBody?: string | null
   replyToSenderName?: string | null
+  replyToSenderRole?: 'user' | 'moderator' | 'admin' | null
   forwardedFromMessageId?: string | null
   forwardedFromSenderName?: string | null
 }
@@ -204,7 +207,7 @@ export function MessagesPage() {
   }
 
   return <main className="page-shell messages-page"><div className="container">
-    <div className="page-title"><SectionKicker>Private conversations</SectionKicker><h1>Messages.</h1><p>Talk directly with a property owner or a viewer about a published listing. Keep payments and personal documents out of chat, and verify property details independently.</p></div>
+    <div className="page-title"><SectionKicker>Private conversations</SectionKicker><h1>Messages.</h1><p>Talk directly with a property owner or a viewer about a published listing. Official ZameenHub administrators carry the ZameenHub Admin badge. We will never ask for your password, OTP or an off-platform payment in chat.</p></div>
     {error && <p className="status-message error" role="alert">{error}</p>}
     {notice && <p className="status-message success" role="status">{notice}</p>}
     <div className="messages-layout">
@@ -212,7 +215,7 @@ export function MessagesPage() {
         <div className="conversation-sidebar-head"><h2>Your conversations</h2><span>{conversations.length}</span></div>
         {loading ? <p className="muted">Loading conversations…</p> : conversations.length === 0 ? <p className="muted">No chats yet. Open a published property and select “Chat with owner” to start one.</p> : conversations.map(item =>
           <button key={item.id} type="button" className={'conversation-row' + (item.id === selectedId ? ' active' : '')} onClick={() => openConversation(item.id)}>
-            <span className="conversation-row-top"><strong>{item.otherUserName || (item.role === 'buyer' ? 'Property owner' : 'Viewer')}</strong>{item.unreadCount > 0 && <span className="conversation-unread">{item.unreadCount}</span>}</span>
+            <span className="conversation-row-top"><strong>{item.otherUserName || (item.role === 'buyer' ? 'Property owner' : 'Viewer')}</strong>{item.otherUserRole === 'admin' && <span className="admin-role-badge">ZameenHub Admin</span>}{item.unreadCount > 0 && <span className="conversation-unread">{item.unreadCount}</span>}</span>
             <span className="conversation-property">{item.propertyTitle}</span>
             <span className="conversation-preview">{item.lastMessage || 'Conversation started'}</span>
             <span className="conversation-time">{item.lastMessageAt ? formatTime(item.lastMessageAt) : ''}</span>
@@ -221,12 +224,12 @@ export function MessagesPage() {
       </aside>
       <section className="conversation-panel" aria-label="Selected conversation">
         {!selected ? <EmptyState title="Choose a conversation." copy="Select a conversation from the inbox, or start a chat from any published property detail page." /> : <>
-          <header className="chat-header"><div><SectionKicker>{selected.role === 'owner' ? 'Viewer conversation' : 'Owner conversation'}</SectionKicker><h2>{selected.otherUserName || (selected.role === 'buyer' ? 'Property owner' : 'Viewer')}</h2><p>{selected.propertyTitle} · {selected.propertyCity}</p></div><Link className="btn btn-outline" to={'/properties/' + selected.propertySlug}>View listing</Link></header>
+          <header className="chat-header"><div><SectionKicker>{selected.role === 'owner' ? 'Viewer conversation' : 'Owner conversation'}</SectionKicker><h2>{selected.otherUserName || (selected.role === 'buyer' ? 'Property owner' : 'Viewer')} {selected.otherUserRole === 'admin' && <span className="admin-role-badge">ZameenHub Admin</span>}</h2><p>{selected.propertyTitle} · {selected.propertyCity}</p></div><Link className="btn btn-outline" to={'/properties/' + selected.propertySlug}>View listing</Link></header>
           <div className="chat-messages" aria-live="polite">
             {messagesLoading && messages.length === 0 ? <p className="muted">Loading messages…</p> : messages.length === 0 ? <p className="muted">Start the conversation with a useful question or detail.</p> : messages.map(message => {
               const mine = message.senderId === currentUserId
               return <article key={message.id} className={'chat-message' + (mine ? ' mine' : '')}>
-                <div className="chat-message-meta"><strong>{mine ? 'You' : message.senderName}</strong><time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div>
+                <div className="chat-message-meta"><strong>{mine ? 'You' : message.senderName}</strong>{message.senderRole === 'admin' && <span className="admin-role-badge">ZameenHub Admin</span>}<time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time></div>
                 {message.forwardedFromMessageId && <div className="chat-message-forwarded">Forwarded from {message.forwardedFromSenderName || 'another participant'}</div>}
                 {message.replyToMessageId && <div className="chat-message-reply-preview"><strong>Reply to {message.replyToSenderName || 'participant'}</strong><span>{message.replyToBody || 'Original message unavailable.'}</span></div>}
                 {editingMessageId === message.id ? <form className="chat-message-edit" onSubmit={saveEdit}>
@@ -254,7 +257,7 @@ export function MessagesPage() {
           </div>
           <form className="chat-composer" onSubmit={sendMessage}>
             {replyingTo && <div className="chat-reply-composer">
-              <div><strong>Replying to {replyingTo.senderId === currentUserId ? 'your message' : replyingTo.senderName}</strong><span>{replyingTo.body}</span></div>
+              <div><strong>Replying to {replyingTo.senderId === currentUserId ? 'your message' : replyingTo.senderName}</strong>{replyingTo.senderRole === 'admin' && <span className="admin-role-badge">ZameenHub Admin</span>}<span>{replyingTo.body}</span></div>
               <button type="button" className="btn btn-outline" onClick={() => setReplyingTo(null)}>Cancel reply</button>
             </div>}
             <label htmlFor="chat-message">Message</label>

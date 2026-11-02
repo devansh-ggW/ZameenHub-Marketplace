@@ -8,9 +8,10 @@ export type Env = {
   RESEND_FROM_EMAIL?: string
   SUPPORT_EMAIL?: string
   APP_URL?: string
+  ADMIN_EMAILS?: string
 }
 type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; profile_image_file_id?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
-type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
+type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; owner_role?:string; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
   headers.set('content-type','application/json; charset=utf-8')
@@ -42,11 +43,12 @@ const SESSION_INACTIVITY_MS=30*24*60*60_000
 const SESSION_ABSOLUTE_MS=90*24*60*60_000
 const publicListingRequirements = "EXISTS (SELECT 1 FROM property_media pm WHERE pm.property_id=p.id AND pm.media_type='image' AND pm.status='active') AND EXISTS (SELECT 1 FROM property_documents pd WHERE pd.property_id=p.id)"
 const normalizeEmail=(s:string)=>s.trim().toLowerCase()
+const effectiveRole=(email:string,role:string,env:Env)=>((env.ADMIN_EMAILS||'').split(',').map(normalizeEmail).filter(Boolean).includes(normalizeEmail(email))?'admin':role)
 function safeNextPath(value:unknown){const s=clean(value,500);if(!s.startsWith('/')||s.startsWith('//')||s.includes('\\'))return '';try{const u=new URL(s,'https://zameenhub.invalid');return u.origin==='https://zameenhub.invalid'?u.pathname+u.search+u.hash:''}catch{return ''}}
 const clean=(v:unknown,max=500)=>typeof v==='string'?v.trim().slice(0,max):''
 const passwordValue=(v:unknown)=>typeof v==='string'?v:''
 const safeInt=(v:unknown,min=0,max=100_000_000)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>=min&&n<=max?n:null}
-const userView=(u:UserRow)=>({id:u.id,email:u.email,name:u.name,role:u.role,emailVerified:u.email_verified===1,mfaEnabled:u.mfa_enabled===1,profileImageUrl:u.profile_image_url||''})
+const userView=(u:UserRow,env:Env)=>({id:u.id,email:u.email,name:u.name,role:effectiveRole(u.email,u.role,env),emailVerified:u.email_verified===1,mfaEnabled:u.mfa_enabled===1,profileImageUrl:u.profile_image_url||''})
 async function passwordHash(password:string) {
   const salt=bytes(16), iterations=100000
   const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits'])
@@ -114,13 +116,20 @@ async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
   const timestamp=nowIso()
   const row=await env.DB.prepare('SELECT u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.profile_image_file_id,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.absolute_expires_at>? AND u.email_verified=1').bind(await digest(token),timestamp,timestamp).first<UserRow>()
-  return row??null
+  if(!row)return null
+  const role=effectiveRole(row.email,row.role,env)
+  if(role==='admin'&&row.role!=='admin')await env.DB.prepare("UPDATE users SET role='admin',updated_at=? WHERE id=?").bind(timestamp,row.id).run()
+  row.role=role
+  return row
 }
-async function refreshUserSession(request:Request,db:D1Database):Promise<{user:UserRow;token:string;maxAge:number}|null>{
+async function refreshUserSession(request:Request,db:D1Database,env:Env):Promise<{user:UserRow;token:string;maxAge:number}|null>{
   const token=cookieToken(request);if(!token)return null
   const timestamp=nowIso()
   const row=await db.prepare('SELECT s.id AS session_id,s.absolute_expires_at,u.id,u.email,u.name,u.role,u.password_hash,u.email_verified,u.profile_image_url,u.profile_image_file_id,u.mfa_enabled,u.mfa_secret_ciphertext,u.mfa_last_counter FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND s.absolute_expires_at>? AND u.email_verified=1').bind(await digest(token),timestamp,timestamp).first<UserRow & {session_id:string;absolute_expires_at:string}>()
   if(!row)return null
+  const role=effectiveRole(row.email,row.role,env)
+  if(role==='admin'&&row.role!=='admin')await db.prepare("UPDATE users SET role='admin',updated_at=? WHERE id=?").bind(nowIso(),row.id).run()
+  row.role=role
   const current=Date.now(),absolute=Date.parse(row.absolute_expires_at)
   if(!Number.isFinite(absolute)||absolute<=current)return null
   const expiresAt=Math.min(current+SESSION_INACTIVITY_MS,absolute)
@@ -227,7 +236,7 @@ function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerificatio
     amenities:parseArray(p.amenities_json),status:p.status,
     verified:verificationStatus==='verified',
     verificationStatus:includePrivateVerification?verificationStatus:(verificationStatus==='verified'?'verified':'unverified'),
-    ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',
+    ownerName:p.owner_name||'',ownerProfileImageUrl:p.owner_profile_image_url||'',ownerRole:p.owner_role||'user',
     favorite:!!p.favorite,
     documents,
     ...(includePrivateVerification ? {
@@ -447,9 +456,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/auth/session'&&method==='GET') {
       const token=cookieToken(request)
       if(!token)return ok({authenticated:false})
-      const session=await refreshUserSession(request,db)
+      const session=await refreshUserSession(request,db,env)
       if(!session)return okWithCookies({authenticated:false},200,[sessionCookie('',0)])
-      return okWithCookies({authenticated:true,user:userView(session.user)},200,[sessionCookie(session.token,session.maxAge)])
+      return okWithCookies({authenticated:true,user:userView(session.user,env)},200,[sessionCookie(session.token,session.maxAge)])
     }
     if(path==='/api/auth/mfa/status'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before checking two-factor setup.',401)
@@ -574,7 +583,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         return okWithCookies({mfaRequired:true},200,[sessionCookie('',0),mfaChallengeCookie(challenge,300)])
       }
       const token=await createSession(db,user.id)
-      return okWithCookies({user:userView(user),mfaRequired:false},200,[sessionCookie(token,Math.floor(SESSION_INACTIVITY_MS/1000)),mfaChallengeCookie('',0)])
+      return okWithCookies({user:userView(user,env),mfaRequired:false},200,[sessionCookie(token,Math.floor(SESSION_INACTIVITY_MS/1000)),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/verify'&&method==='POST') {
       if(!await authLimit(request,db,'mfa-verify',8))return fail('Too many verification attempts. Please wait before trying again.',429)
@@ -600,7 +609,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       const token=await createSession(db,record.user_id)
       await db.prepare('DELETE FROM auth_mfa_challenges WHERE id=?').bind(record.id).run()
-      return okWithCookies({user:userView(user as UserRow)},200,[sessionCookie(token,Math.floor(SESSION_INACTIVITY_MS/1000)),mfaChallengeCookie('',0)])
+      return okWithCookies({user:userView(user as UserRow,env)},200,[sessionCookie(token,Math.floor(SESSION_INACTIVITY_MS/1000)),mfaChallengeCookie('',0)])
     }
     if(path==='/api/auth/mfa/setup'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before enabling two-factor authentication.',401)
@@ -733,10 +742,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/account/profile'&&method==='PATCH') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in to update your profile.',401)
+      if(!await authLimit(request,db,'profile-update',8)||!await limited(db,'profile-update-user:'+user.id,8,60))return fail('Too many profile updates. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid profile update.')
-      const raw=clean(input.profileImageUrl,1500)
-      if(raw)return fail('Profile images must be uploaded through the ImageKit profile uploader.')
-      return fail('Use the profile image remove action to clear your avatar.')
+      if(input.profileImageUrl!==undefined)return fail('Profile images must be uploaded through the ImageKit profile uploader.')
+      if(input.name===undefined)return fail('No supported profile changes were provided.')
+      const name=clean(input.name,100)
+      if(name.length<2)return fail('Your display name must contain at least 2 characters.')
+      await db.prepare('UPDATE users SET name=?,updated_at=? WHERE id=?').bind(name,nowIso(),user.id).run()
+      return ok({name})
     }
     if(path==='/api/account/delete'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before deleting your account.',401)
@@ -775,7 +788,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         'login-email:'+user.email,'register-email:'+user.email,'resend-email:'+user.email,'forgot-email:'+user.email,
         'listing-user:'+user.id,'listing-edit-user:'+user.id,'listing-manage-user:'+user.id,'listing-delete-user:'+user.id,
         'property-image-upload-user:'+user.id,'property-image-delete-user:'+user.id,
-        'profile-image-upload-user:'+user.id,'profile-image-delete-user:'+user.id,
+        'profile-image-upload-user:'+user.id,'profile-image-delete-user:'+user.id,'profile-update-user:'+user.id,
         'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id,
         'imagekit-cleanup-user:'+user.id,'property-report-user:'+user.id,'inquiry-inbox-user:'+user.id,'inquiry-update-user:'+user.id,
         'moderation-user:'+user.id,'report-review-user:'+user.id
@@ -794,7 +807,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     }
     if(path==='/api/properties'&&method==='GET') {
       const q=clean(url.searchParams.get('q'),120),purpose=clean(url.searchParams.get('purpose'),8),type=clean(url.searchParams.get('type'),40),bedsRaw=url.searchParams.get('beds'),bathsRaw=url.searchParams.get('baths'),minPriceRaw=url.searchParams.get('minPrice'),maxPriceRaw=url.searchParams.get('maxPrice'),minAreaRaw=url.searchParams.get('minArea'),maxAreaRaw=url.searchParams.get('maxArea'),amenityRaw=url.searchParams.get('amenities'),beds=bedsRaw?safeInt(bedsRaw,0,100):null,baths=bathsRaw?safeInt(bathsRaw,0,100):null,minPrice=minPriceRaw?safeInt(minPriceRaw,0,1_000_000_000):null,maxPrice=maxPriceRaw?safeInt(maxPriceRaw,0,1_000_000_000):null,minArea=minAreaRaw?safeInt(minAreaRaw,0,100_000_000):null,maxArea=maxAreaRaw?safeInt(maxAreaRaw,0,100_000_000):null,requestedAmenities=sanitizeAmenities(amenityRaw?amenityRaw.split(','):[]),sort=url.searchParams.get('sort')
-      const viewer=await getUser(request,env); let sql=`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published' AND ${publicListingRequirements}`,args:unknown[]=[viewer?.id||'']
+      const viewer=await getUser(request,env); let sql=`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url,u.role AS owner_role, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.status='published' AND ${publicListingRequirements}`,args:unknown[]=[viewer?.id||'']
       if(q){sql+=' AND (p.location LIKE ? OR p.city LIKE ? OR p.title LIKE ?)';const term='%'+q.replace(/[%_]/g,'')+'%';args.push(term,term,term)}
       if(purpose==='sale'||purpose==='rent'){sql+=' AND p.purpose=?';args.push(purpose)}
       if(type){sql+=' AND p.property_type=?';args.push(type)}
@@ -813,7 +826,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     const detailMatch=path.match(/^\/api\/properties\/([^/]+)$/)
     if(detailMatch&&method==='GET') {
       const slug=decodeURIComponent(detailMatch[1])
-      const viewer=await getUser(request,env); const p=await db.prepare(`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published' AND ${publicListingRequirements}`).bind(viewer?.id||'',slug).first<PropertyRow>()
+      const viewer=await getUser(request,env); const p=await db.prepare(`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url,u.role AS owner_role, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published' AND ${publicListingRequirements}`).bind(viewer?.id||'',slug).first<PropertyRow>()
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
     }
@@ -1142,6 +1155,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review listings.',403)
       if(!await authLimit(request,db,'moderation',30)||!await limited(db,'moderation-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
       const input=await body(request),status=clean(input?.status,20),reviewNote=clean(input?.reviewNote,1000),ownerMessage=clean(input?.ownerMessage,1000),verifyEvidence=input?.verifyEvidence===true
+      const verificationAuditNote='Manual verification completed by administrator.'
       if(status!=='published'&&status!=='rejected'&&status!=='archived')return fail('Unsupported review status.')
       const id=decodeURIComponent(reviewMatch[1])
       const record=await db.prepare("SELECT * FROM properties WHERE id=? AND status IN ('pending','published')").bind(id).first<PropertyRow & {updated_at:string}>()
@@ -1161,13 +1175,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(status==='rejected'&&ownerMessage.trim().length<10)return fail('Add a clear owner-facing explanation of at least 10 characters. Internal notes stay private.')
       if(verifyEvidence&&status!=='published')return fail('Evidence can only be marked reviewed while publishing the listing.')
       if(verifyEvidence&&user.role!=='admin')return fail('Only an administrator can manually verify a property.',403)
-      if(verifyEvidence&&reviewNote.trim().length<20)return fail('Record at least 20 characters describing the evidence you checked before marking it reviewed.')
       const reviewTime=nowIso()
       const verificationDecision=status==='rejected'?'rejected':verifyEvidence?'verified':'unchanged'
       const nextVerificationStatus=status==='rejected'?'rejected':verifyEvidence?'verified':(record.verification_status||'unverified')
       const nextVerificationReviewedAt=verificationDecision==='unchanged'?(record.verification_reviewed_at||null):reviewTime
       const nextVerificationReviewedBy=verificationDecision==='unchanged'?(record.verification_reviewed_by||null):user.id
-      const nextVerificationNote=verificationDecision==='unchanged'?(record.verification_note||''):reviewNote
+      const nextVerificationNote=verificationDecision==='unchanged'?(record.verification_note||''):verificationDecision==='verified'?verificationAuditNote:reviewNote
       // The decision is bound to the exact submitted listing and evidence link.
       const snapshotGuard = " AND title=? AND location=? AND city=? AND price=? AND description=? AND property_type=? AND purpose=? AND bedrooms=? AND bathrooms=? AND area=? AND amenities_json=? AND COALESCE(price_period,'')=? AND COALESCE(ai_risk_level,'not-screened')=? AND COALESCE(ai_risk_score,0)=? AND COALESCE(ai_risk_reasons_json,'[]')=? AND COALESCE(ai_model,'not-screened')=? AND COALESCE(ai_screened_at,'')=? AND updated_at=? AND COALESCE(verification_status,'unverified')=? AND COALESCE(verification_evidence_type,'none')=? AND COALESCE(verification_evidence_url,'')=?"
       const statusHistoryEvent=status==='published'&&priorStatus!=='published'
@@ -1177,7 +1190,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           : null
       const auditResults=await db.batch([
         db.prepare("UPDATE properties SET status=?,updated_at=?,verification_status=?,verification_reviewed_at=?,verification_reviewed_by=?,verification_note=? WHERE id=? AND status=?"+snapshotGuard).bind(status,reviewTime,nextVerificationStatus,nextVerificationReviewedAt,nextVerificationReviewedBy,nextVerificationNote,id,priorStatus,record.title,record.location,record.city,record.price,record.description,record.property_type,record.purpose,record.bedrooms,record.bathrooms,record.area,record.amenities_json||'[]',record.price_period||'',record.ai_risk_level||'not-screened',Number(record.ai_risk_score)||0,record.ai_risk_reasons_json||'[]',record.ai_model||'not-screened',record.ai_screened_at||'',record.updated_at,record.verification_status||'unverified',record.verification_evidence_type||'none',record.verification_evidence_url||''),
-        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at,verification_decision) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,reviewNote,ownerMessage,reviewTime,verificationDecision,id,status),
+        db.prepare("INSERT INTO property_moderation_events(id,property_id,reviewer_id,prior_status,new_status,review_note,owner_message,ai_risk_level,ai_risk_score,created_at,verification_decision) SELECT ?,?,?,?,?,?,?,COALESCE(ai_risk_level,'not-screened'),COALESCE(ai_risk_score,0),?,? FROM properties WHERE id=? AND status=? AND changes()=1").bind(uuid(),id,user.id,priorStatus,status,verificationDecision==='verified'?verificationAuditNote:reviewNote,ownerMessage,reviewTime,verificationDecision,id,status),
         ...(statusHistoryEvent ? [statusHistoryEvent] : [])
       ])
       if(!auditResults[0]?.meta?.changes)return fail('The listing or evidence changed while it was being reviewed. Refresh the queue and review the latest details.',409)
@@ -1214,13 +1227,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           ORDER BY m.created_at DESC LIMIT 1),c.created_at) AS lastMessageAt,
         CASE WHEN c.buyer_id=? THEN 'buyer' ELSE 'owner' END AS role,
         CASE WHEN c.buyer_id=? THEN uo.name ELSE ub.name END AS otherUserName,
+        CASE WHEN c.buyer_id=? THEN uo.role ELSE ub.role END AS otherUserRole,
         COALESCE((SELECT m.body FROM property_messages m WHERE m.conversation_id=c.id
           AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)
           ORDER BY m.created_at DESC LIMIT 1),'') AS lastMessage,
         (SELECT COUNT(*) FROM property_messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM property_message_hidden h WHERE h.message_id=m.id AND h.user_id=?)) AS unreadCount
         FROM property_conversations c JOIN properties p ON p.id=c.property_id JOIN users ub ON ub.id=c.buyer_id JOIN users uo ON uo.id=c.owner_id
-        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY lastMessageAt DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
+        WHERE c.buyer_id=? OR c.owner_id=? ORDER BY lastMessageAt DESC LIMIT 100`).bind(user.id,user.id,user.id,user.id,user.id,user.id,user.id,user.id,user.id).all<Record<string,unknown>>()
       return ok(result.results)
     }
     if(path==='/api/conversations'&&method==='POST') {
@@ -1254,9 +1268,9 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const conversation=await db.prepare('SELECT id,buyer_id,owner_id,status FROM property_conversations WHERE id=? AND (buyer_id=? OR owner_id=?)').bind(id,user.id,user.id).first<{id:string;buyer_id:string;owner_id:string;status:string}>()
       if(!conversation)return fail('Conversation not found.',404)
       if(method==='GET') {
-        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,m.body,m.created_at AS createdAt,m.read_at AS readAt,
+        const result=await db.prepare(`SELECT m.id,m.sender_id AS senderId,u.name AS senderName,u.role AS senderRole,m.body,m.created_at AS createdAt,m.read_at AS readAt,
             m.edited_at AS editedAt,m.deleted_at AS deletedAt,m.reply_to_message_id AS replyToMessageId,
-            rm.body AS replyToBody,ru.name AS replyToSenderName,
+            rm.body AS replyToBody,ru.name AS replyToSenderName,ru.role AS replyToSenderRole,
             m.forwarded_from_message_id AS forwardedFromMessageId,fu.name AS forwardedFromSenderName
           FROM property_messages m
           JOIN users u ON u.id=m.sender_id

@@ -29,8 +29,6 @@ export function EditListingPage() {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
   const [documents, setDocuments] = useState<Array<{ id?: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain?: string; sortOrder?: number; createdAt?: string; updatedAt?: string }>>([])
-  const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
-  const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
 
   useEffect(() => {
     let active = true
@@ -67,8 +65,6 @@ export function EditListingPage() {
       setDescription(item.description)
       setAmenities(item.amenities.filter(amenity => (PROPERTY_AMENITIES as readonly string[]).includes(amenity)))
       setDocuments(item.documents || [])
-      setVerificationEvidenceType(item.verificationEvidenceType || 'none')
-      setVerificationEvidenceUrl(item.verificationEvidenceUrl || '')
       setLoading(false)
     }
     void load()
@@ -98,11 +94,11 @@ export function EditListingPage() {
         price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea,
         description: description.trim(), amenities,
         documents: submittedDocuments,
-        verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(),
+        verificationEvidenceType: property?.verificationEvidenceType || 'none', verificationEvidenceUrl: property?.verificationEvidenceUrl || '',
       }),
     })
     if (!result.ok) { setSaving(false); setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, publicEligible: hasPublicPhoto && hasPublicDocument, verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(), verificationStatus: 'unverified', verified: false } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, publicEligible: hasPublicPhoto && hasPublicDocument, verificationEvidenceType: property?.verificationEvidenceType || 'none', verificationEvidenceUrl: property?.verificationEvidenceUrl || '', verificationStatus: 'unverified', verified: false } : current)
 
     const knownMediaIds = new Set((property?.imageMedia || []).map(media => media.id))
     for (let index = 0; index < imageFiles.length; index++) {
@@ -209,7 +205,6 @@ export function EditListingPage() {
           {documents.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add document link</button>}
           <small>HTTPS only · up to 10 links · seller-hosted files remain on the seller’s site.</small>
         </section>
-        <section className="verification-editor full" aria-labelledby="edit-evidence-heading"><h3 id="edit-evidence-heading">Property verification evidence</h3><p className="muted">Optional public official-record reference. An administrator can use it as one part of a manual verification check. Do not share private identity documents, Aadhaar/PAN numbers, or private file links.</p><div className="form-field"><label htmlFor="edit-evidence-type">Evidence type</label><select className="form-control" id="edit-evidence-type" value={verificationEvidenceType} onChange={event => setVerificationEvidenceType(event.target.value)}><option value="none">No evidence reference yet</option><option value="official_record">Official public land/property record</option><option value="property_tax_record">Public property-tax record</option><option value="registry_reference">Registration/registry reference</option><option value="other_public_record">Other public record</option></select></div><div className="form-field"><label htmlFor="edit-evidence-url">Public evidence URL</label><input className="form-control" id="edit-evidence-url" type="url" maxLength={1500} value={verificationEvidenceUrl} onChange={event => setVerificationEvidenceUrl(event.target.value)} placeholder="https://official-record-portal.example/record" /><small>Saving changes resets manual verification to Unverified until an administrator rechecks the updated details.</small></div></section>
       </div>
       {error && <p className="status-message error" role="alert">{error}</p>}
       {notice && <p className="status-message success" role="status">{notice}</p>}

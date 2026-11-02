@@ -30,8 +30,6 @@ export function ListingPage() {
   const [uploadStatus, setUploadStatus] = useState('')
   const [documents, setDocuments] = useState<Array<{ documentType: 'pdf' | 'image'; description: string; url: string }>>([])
   const steps = ['Purpose', 'Details', 'Photos & documents']
-  const [verificationEvidenceType, setVerificationEvidenceType] = useState('none')
-  const [verificationEvidenceUrl, setVerificationEvidenceUrl] = useState('')
 
   useEffect(() => {
     let current = true
@@ -69,7 +67,6 @@ export function ListingPage() {
         price: numericPrice, bedrooms: Number(bedrooms), bathrooms: Number(bathrooms), area: Number(area || 0),
         description: description.trim(), amenities,
         documents: publicDocuments,
-        verificationEvidenceType, verificationEvidenceUrl: verificationEvidenceUrl.trim(),
       }),
     })
     if (!result.ok) {
@@ -139,25 +136,7 @@ export function ListingPage() {
         {documents.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add document link</button>}
         <small>HTTPS only · up to 10 links · never share Aadhaar/PAN or private identity information.</small>
       </section>
-      <section className="verification-editor" aria-labelledby="verification-evidence-heading">
-        <h3 id="verification-evidence-heading">Private review reference (optional)</h3>
-        <p className="muted">This optional HTTPS reference is shared only with the owner and authorized reviewers. Buyers inspect the separate PDF/image document links above on the seller's website. Neither a reference nor a listing badge proves legal ownership.</p>
-        <div className="form-field">
-          <label htmlFor="evidence-type">Evidence type</label>
-          <select className="form-control" id="evidence-type" value={verificationEvidenceType} onChange={event => setVerificationEvidenceType(event.target.value)}>
-            <option value="none">No private reference</option>
-            <option value="official_record">Official public land/property record</option>
-            <option value="property_tax_record">Public property-tax record</option>
-            <option value="registry_reference">Registration/registry reference</option>
-            <option value="other_public_record">Other public record</option>
-          </select>
-        </div>
-        <div className="form-field">
-          <label htmlFor="evidence-url">Private review reference URL</label>
-          <input className="form-control" id="evidence-url" type="url" maxLength={1500} value={verificationEvidenceUrl} onChange={event => setVerificationEvidenceUrl(event.target.value)} placeholder="https://official-record-portal.example/record" />
-          <small>Do not submit private identity records, Aadhaar/PAN details or credentials.</small>
-        </div>
-      </section>
+
     </>}
       {error && <p className="status-message error" role="alert">{error}</p>}
       {notice && <div className="status-message success" role="status">{notice} <a href="/my-listings">View my listings</a></div>}

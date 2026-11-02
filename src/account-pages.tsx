@@ -16,6 +16,8 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
   const [workingId, setWorkingId] = useState('')
   const [notice, setNotice] = useState('')
   const [profileImageUrl, setProfileImageUrl] = useState('')
+  const [profileName, setProfileName] = useState('')
+  const [editingProfile, setEditingProfile] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
   const [cleanupRunning, setCleanupRunning] = useState(false)
 
@@ -32,6 +34,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
     }
     setUser(session.data.user)
     setProfileImageUrl(session.data.user.profileImageUrl || '')
+    setProfileName(session.data.user.name)
     if (kind === 'saved') {
       const result = await apiRequest<Property[]>('/api/favorites')
       if (result.ok) setItems(result.data); else setError(result.error)
@@ -54,10 +57,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
     let reviewNote = ''
     if (status === 'published' && verifyEvidence) {
       if (user?.role !== 'admin') { setError('Only an administrator can manually verify a listing.'); return }
-      const verificationNote = window.prompt('Describe how you manually checked this property and its details (at least 20 characters). You may include a public record reference check or another independent check:')
-      if (verificationNote === null) return
-      if (verificationNote.trim().length < 20) { setError('Verification cancelled. Record at least 20 characters describing the checks you completed.'); return }
-      reviewNote = 'Manual verification: ' + verificationNote.trim()
+      reviewNote = 'Manual verification completed by administrator.'
     }
     let ownerMessage = ''
     if (status === 'rejected') {
@@ -114,7 +114,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
         <p className="muted">Retry deletion of ImageKit files that could not be cleaned up during an earlier upload replacement or D1 failure. This only processes queued file IDs; it does not change listing verification.</p>
         <button className="btn btn-outline" type="button" disabled={cleanupRunning} onClick={() => void retryImageKitCleanup()}>{cleanupRunning ? 'Retrying cleanup…' : 'Retry pending ImageKit cleanup'}</button>
       </section>}
-      {kind === 'profile' && user && <><div className="form-card account-profile"><div className="profile-heading"><div className="profile-avatar">{profileImageUrl ? <img src={profileImageUrl} alt={user.name + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>}</div><div><h2>Account details</h2><p className="muted">Your profile image appears beside your public listing contact details.</p></div></div><p><strong>Name</strong><br />{user.name}</p><p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role}</p><form className="profile-image-form" onSubmit={async event => {
+      {kind === 'profile' && user && <><div className="form-card account-profile"><div className="profile-heading"><div className="profile-avatar">{profileImageUrl ? <img src={profileImageUrl} alt={user.name + ' profile'} onError={event => { event.currentTarget.style.display = 'none' }} /> : <span aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>}</div><div><h2>Account details</h2><p className="muted">Your profile image appears beside your public listing contact details.</p></div></div><div className="profile-name-row"><p><strong>Name</strong><br />{user.name}</p>{user.role === 'admin' && <span className="admin-role-badge">ZameenHub Admin</span>}<button className="btn btn-outline" type="button" onClick={() => { setProfileName(user.name); setEditingProfile(current => !current) }}>{editingProfile ? 'Cancel edit' : 'Edit profile'}</button></div>{editingProfile && <form className="profile-edit-form" onSubmit={async event => { event.preventDefault(); const name = profileName.trim(); if (name.length < 2) { setError('Your display name must contain at least 2 characters.'); return } setSavingProfile(true); setError(''); const result = await apiRequest<{ name: string }>('/api/account/profile', { method: 'PATCH', body: JSON.stringify({ name }) }); setSavingProfile(false); if (!result.ok) { setError(result.error); return } setUser(current => current ? { ...current, name: result.data.name } : current); setProfileName(result.data.name); setEditingProfile(false); setNotice('Profile updated successfully.') }}><div className="form-field"><label htmlFor="profile-display-name">Display name</label><input className="form-control" id="profile-display-name" minLength={2} maxLength={100} required value={profileName} onChange={event => setProfileName(event.target.value)} /></div><button className="btn btn-primary" disabled={savingProfile || profileName.trim().length < 2}>{savingProfile ? 'Saving…' : 'Save profile'}</button></form>}<p><strong>Email</strong><br />{user.email}</p><p><strong>Email status</strong><br />{user.emailVerified ? 'Verified' : 'Not verified'}</p><p><strong>Account role</strong><br />{user.role === 'admin' ? 'Administrator' : user.role}</p><form className="profile-image-form" onSubmit={async event => {
         event.preventDefault()
         const fileInput = event.currentTarget.elements.namedItem('profile-image-file') as HTMLInputElement | null
         const file = fileInput?.files?.[0]
@@ -160,7 +160,7 @@ export function AccountPage({ kind }: { kind: AccountKind }) {
           {item.status !== 'archived' && <button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void archiveListing(item.id)}>{workingId === item.id ? 'Working…' : 'Archive listing'}</button>}
           <button className="btn-danger" disabled={workingId === item.id} onClick={() => void deleteListing(item.id)}>{workingId === item.id ? 'Working…' : 'Delete property'}</button>
         </div>}
-        {kind === 'review-queue' && <div className="verification-evidence-card"><strong>Verification: {item.verified ? 'Verified' : 'Unverified'}</strong>{item.verificationEvidenceUrl ? <><p>Reference type: {item.verificationEvidenceType || 'public record reference'}</p><a href={item.verificationEvidenceUrl} target="_blank" rel="noopener noreferrer">Open private evidence reference ↗</a><p className="muted">Check that the reference and submitted property details match. The link is private and is not itself proof of ownership.</p></> : <p className="muted">No public evidence reference supplied. Complete your independent checks before marking this listing Verified.</p>}</div>}
+        {kind === 'review-queue' && <div className="verification-evidence-card"><strong>Verification: {item.verified ? 'Verified' : 'Unverified'}</strong>{item.verificationEvidenceUrl ? <><p>Reference type: {item.verificationEvidenceType || 'public record reference'}</p><a href={item.verificationEvidenceUrl} target="_blank" rel="noopener noreferrer">Open private evidence reference ↗</a><p className="muted">Check that the reference and submitted property details match. The link is private and is not itself proof of ownership.</p></> : <p className="muted">No public evidence reference supplied. The seller did not provide an optional public reference. Complete independent checks using supporting documents or public sources before marking this listing Verified.</p>}</div>}
         {kind === 'review-queue' && <div className="review-actions">{item.status === 'pending' && <button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item, 'published')}>Approve & publish</button>}{!item.verified && user?.role === 'admin' && <button className="btn btn-primary" disabled={workingId === item.id} onClick={() => void review(item, 'published', true)}>Mark as verified</button>}<button className="btn btn-outline" disabled={workingId === item.id} onClick={() => void review(item, 'rejected')}>Reject listing</button></div>}
       </div>)}</div>}
       {kind !== 'profile' && !error && items.length === 0 && <EmptyState title={kind === 'saved' ? 'Nothing saved yet.' : kind === 'my-listings' ? 'No submitted listings yet.' : 'No unverified listings.'} copy={kind === 'saved' ? 'Use the heart control on a property to save it to your account.' : kind === 'my-listings' ? 'Listings you submit will appear here with their review status.' : 'New and previously published unverified listings appear here so you can verify them manually.'} />}
