@@ -1206,6 +1206,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const pending=await db.prepare(`SELECT file_id FROM imagekit_cleanup_queue
         UNION
         SELECT imagekit_file_id AS file_id FROM property_media WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
+        UNION
+        SELECT imagekit_file_id AS file_id FROM property_documents WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
         LIMIT 25`).all<{file_id:string}>()
       let deleted=0
       for(const item of pending.results) {
@@ -1213,6 +1215,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         if(success) {
           await db.batch([
             db.prepare("DELETE FROM property_media WHERE imagekit_file_id=? AND status='deletion_pending'").bind(item.file_id),
+            db.prepare("DELETE FROM property_documents WHERE imagekit_file_id=? AND status='deletion_pending'").bind(item.file_id),
             db.prepare('DELETE FROM imagekit_cleanup_queue WHERE file_id=?').bind(item.file_id)
           ])
           deleted++
@@ -1225,6 +1228,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         SELECT file_id FROM imagekit_cleanup_queue
         UNION
         SELECT imagekit_file_id AS file_id FROM property_media WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
+        UNION
+        SELECT imagekit_file_id AS file_id FROM property_documents WHERE status='deletion_pending' AND imagekit_file_id IS NOT NULL
       )`).first<{total:number}>()
       return ok({processed:pending.results.length,deleted,remaining:Number(remaining?.total||0)})
     }
