@@ -308,7 +308,7 @@ async function propertyDocumentReplacementStatements(db:D1Database,propertyId:st
     const existingId=document.id&&existingIds.has(document.id)?document.id:null
     if(existingId) {
       retainedIds.push(existingId)
-      statements.push(db.prepare('UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,imagekit_file_id=CASE WHEN url<>? THEN NULL ELSE imagekit_file_id END,file_path=CASE WHEN url<>? THEN '' ELSE file_path END,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?'+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.url,document.url,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
+      statements.push(db.prepare("UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,imagekit_file_id=CASE WHEN url<>? THEN NULL ELSE imagekit_file_id END,file_path=CASE WHEN url<>? THEN '' ELSE file_path END,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?"+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.url,document.url,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
     } else {
       const newId=uuid()
       retainedIds.push(newId)
@@ -795,6 +795,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           return fail('Your account was not deleted. Property images are hidden while ImageKit cleanup is retried; an administrator can retry the cleanup.',502)
         }
       }
+      await db.prepare("UPDATE property_documents SET status='deletion_pending' WHERE owner_id=? AND imagekit_file_id IS NOT NULL AND status='active'").bind(user.id).run()
+      const ownedEvidence=await db.prepare("SELECT imagekit_file_id,file_path FROM property_documents WHERE owner_id=? AND imagekit_file_id IS NOT NULL AND status='deletion_pending'").bind(user.id).all<{imagekit_file_id:string;file_path:string}>()
+      for(const evidence of ownedEvidence.results) {
+        if(!await imageKitDelete(evidence.imagekit_file_id,env)) {
+          await queueImageKitCleanup(db,evidence.imagekit_file_id,evidence.file_path,'account-delete-evidence').catch(()=>{})
+          return fail('Your account was not deleted. Property evidence files are hidden while ImageKit cleanup is retried; an administrator can retry the cleanup.',502)
+        }
+      }
       if(user.profile_image_file_id) {
         if(!await imageKitDelete(user.profile_image_file_id,env))return fail('Your account was not deleted because its profile image could not be removed from ImageKit. Retry later.',502)
         await db.prepare("UPDATE users SET profile_image_url='',profile_image_file_id=NULL,updated_at=? WHERE id=?").bind(nowIso(),user.id).run()
@@ -804,7 +812,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const accountRateKeys=await Promise.all([
         'login-email:'+user.email,'register-email:'+user.email,'resend-email:'+user.email,'forgot-email:'+user.email,
         'listing-user:'+user.id,'listing-edit-user:'+user.id,'listing-manage-user:'+user.id,'listing-delete-user:'+user.id,
-        'property-image-upload-user:'+user.id,'property-image-delete-user:'+user.id,
+        'property-image-upload-user:'+user.id,'property-image-delete-user:'+user.id,'property-evidence-upload-user:'+user.id,
         'profile-image-upload-user:'+user.id,'profile-image-delete-user:'+user.id,'profile-update-user:'+user.id,
         'mfa-setup-user:'+user.id,'mfa-enable-user:'+user.id,'mfa-disable-user:'+user.id,'account-delete-user:'+user.id,
         'imagekit-cleanup-user:'+user.id,'property-report-user:'+user.id,'inquiry-inbox-user:'+user.id,'inquiry-update-user:'+user.id,
