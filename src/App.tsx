@@ -20,29 +20,46 @@ function SessionKeepAlive() {
     let active = true
     let pending = false
     let lastActivity = Date.now()
-    const markActivity = () => { lastActivity = Date.now() }
+    let lastRefresh = 0
+    const minimumRefreshGap = 5 * 60 * 1000
     const refresh = async () => {
-      // A tab left open and untouched should not keep extending the user's
-      // inactivity window. Returning to a visible tab counts as activity.
-      if (!active || pending || document.visibilityState === 'hidden' || Date.now() - lastActivity > 24 * 60 * 60 * 1000) return
+      const now = Date.now()
+      // Only a visible, recently active tab renews the rolling inactivity window.
+      // This avoids six-hour gaps and still lets a returning user refresh immediately.
+      if (!active || pending || document.visibilityState === 'hidden' ||
+          now - lastActivity > 24 * 60 * 60 * 1000 || now - lastRefresh < minimumRefreshGap) return
       pending = true
-      try { await getSession() } catch { /* A transient failure must not clear a valid session. */ }
-      finally { pending = false }
+      try {
+        const result = await getSession()
+        if (result.ok) lastRefresh = Date.now()
+      } catch {
+        // A temporary network failure must never clear a valid session.
+      } finally {
+        pending = false
+      }
+    }
+    const markActivity = () => {
+      lastActivity = Date.now()
+      void refresh()
     }
     const activityEvents: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'touchstart', 'scroll']
     for (const eventName of activityEvents) window.addEventListener(eventName, markActivity, { passive: true })
-    void refresh()
-    const interval = window.setInterval(() => { void refresh() }, 6 * 60 * 60 * 1000)
+    const onReturn = () => markActivity()
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        markActivity()
-        void refresh()
-      }
+      if (document.visibilityState === 'visible') onReturn()
     }
+    void refresh()
+    const interval = window.setInterval(() => { void refresh() }, 10 * 60 * 1000)
+    window.addEventListener('focus', onReturn)
+    window.addEventListener('pageshow', onReturn)
+    window.addEventListener('online', onReturn)
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       active = false
       window.clearInterval(interval)
+      window.removeEventListener('focus', onReturn)
+      window.removeEventListener('pageshow', onReturn)
+      window.removeEventListener('online', onReturn)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       for (const eventName of activityEvents) window.removeEventListener(eventName, markActivity)
     }
