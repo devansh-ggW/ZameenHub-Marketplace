@@ -922,6 +922,45 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       return ok({id:mediaId,url:uploaded.url,fileId:uploaded.fileId,sortOrder},201)
     }
+    if(path==='/api/media/property-evidence'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before uploading property evidence.',401)
+      if(!await authLimit(request,db,'property-evidence-upload',8)||!await limited(db,'property-evidence-upload-user:'+user.id,20,60))return fail('Too many evidence uploads. Please wait before trying again.',429)
+      if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for property evidence in this environment.',503)
+      const parsed=await readLimitedMultipart(request)
+      if(parsed.tooLarge)return fail('Property evidence files must be 10 MB or smaller.',413)
+      const file=parsed.formData?.get('file'),propertyId=clean(parsed.formData?.get('propertyId'),80),description=clean(parsed.formData?.get('description'),180)
+      if(!(typeof File!=='undefined'&&file instanceof File)||!propertyId)return fail('Choose a PDF/image evidence file and listing.')
+      if(description.length<3)return fail('Add a short description for this property record.')
+      const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
+      if(!owned)return fail('This property is not available in your account.',404)
+      const existing=await db.prepare('SELECT sort_order FROM property_documents WHERE property_id=?').bind(propertyId).all<{sort_order:number}>()
+      if(existing.results.length>=10)return fail('A listing can have at most 10 evidence documents.',409)
+      const occupiedOrders=new Set(existing.results.map(row=>Number(row.sort_order)))
+      let sortOrder=-1
+      for(let candidate=0;candidate<10;candidate++)if(!occupiedOrders.has(candidate)){sortOrder=candidate;break}
+      if(sortOrder<0)return fail('There is no available evidence slot. Remove an unused document and retry.',409)
+      const sniffed=await sniffPropertyEvidenceFile(file)
+      if(!sniffed||file.type.toLowerCase()!==sniffed.mime)return fail('Evidence must be a valid PDF, JPEG, PNG or WebP file.')
+      const folder='/zameenhub/evidence/'+propertyId
+      const fileName='evidence-'+uuid()+'.'+sniffed.extension
+      let uploaded:{fileId:string;url:string;filePath:string;size:number}|null=null
+      try { uploaded=await imageKitUpload(file,fileName,folder,env,db,{fileType:sniffed.fileType,mime:sniffed.mime}) } catch { uploaded=null }
+      if(!uploaded)return fail('ImageKit could not accept this evidence file. Check the restricted key permissions and retry.',502)
+      const documentId=uuid(),timestamp=nowIso(),sourceDomain=new URL(uploaded.url).hostname.toLowerCase()
+      try {
+        const saved=await db.batch([
+          db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,imagekit_file_id,file_path,uploader_id,status) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,'active' WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(documentId,propertyId,user.id,sniffed.documentType,description,uploaded.url,sourceDomain,sortOrder,timestamp,timestamp,uploaded.fileId,uploaded.filePath,user.id,propertyId,user.id),
+          db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(timestamp,propertyId,user.id),
+          listingHistoryStatement(db,propertyId,user.id,'document_added',null,null,{description,sourceDomain,storageProvider:'imagekit'},timestamp,timestamp)
+        ])
+        if(!saved[0]?.meta?.changes)throw new Error('Evidence row was not inserted.')
+      } catch {
+        const cleaned=await imageKitDelete(uploaded.fileId,env).catch(()=>false)
+        if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'evidence-d1-insert-failed').catch(()=>{})
+        return fail('The evidence upload could not be saved to this listing. Please retry.',500)
+      }
+      return ok({id:documentId,documentType:sniffed.documentType,description,url:uploaded.url,sourceDomain,storageProvider:'imagekit',sortOrder,createdAt:timestamp,updatedAt:timestamp},201)
+    }
     if(path==='/api/properties'&&method==='POST') {
       const user=await requireUser(request,env)
       if(!user)return fail('Sign in with a verified email before listing a property.',401)
