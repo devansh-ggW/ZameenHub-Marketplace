@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Forward, Pencil, Reply, Trash2 } from 'lucide-react'
 import { EmptyState, SectionKicker } from './components'
 import { apiRequest, getSession } from './lib/auth'
 
@@ -237,12 +238,12 @@ export function MessagesPage() {
                   <div><button className="btn btn-outline" type="button" disabled={actionBusy} onClick={() => { setEditingMessageId(''); setEditDraft('') }}>Cancel</button><button className="btn btn-primary" disabled={actionBusy || !editDraft.trim()}>{actionBusy ? 'Saving…' : 'Save edit'}</button></div>
                 </form> : <p>{message.body}</p>}
                 {message.editedAt && !message.deletedAt && <small className="chat-message-edited">Edited</small>}
-                <div className="chat-message-actions">
-                  {!message.deletedAt && <button type="button" disabled={actionBusy} onClick={() => setReplyingTo(message)}>Reply</button>}
-                  {!message.deletedAt && <button type="button" disabled={actionBusy || mine && !forwardTargets.length} onClick={() => { setForwardingMessageId(forwardingMessageId === message.id ? '' : message.id); setForwardTargetId('') }}>Forward</button>}
-                  {mine && !message.deletedAt && <button type="button" disabled={actionBusy} onClick={() => { setEditingMessageId(message.id); setEditDraft(message.body); setForwardingMessageId('') }}>Edit</button>}
-                  {mine && !message.deletedAt && <button type="button" disabled={actionBusy} onClick={() => void deleteForEveryone(message)}>Delete for everyone</button>}
-                  <button type="button" disabled={actionBusy} onClick={() => void deleteForMe(message)}>Delete for me</button>
+                <div className="chat-message-actions" aria-label="Message actions">
+                  {!message.deletedAt && <button className="chat-action" type="button" disabled={actionBusy} onClick={() => setReplyingTo(message)}><Reply size={14} aria-hidden="true" />Reply</button>}
+                  {!message.deletedAt && <button className="chat-action" type="button" disabled={actionBusy || mine && !forwardTargets.length} onClick={() => { setForwardingMessageId(forwardingMessageId === message.id ? '' : message.id); setForwardTargetId('') }}><Forward size={14} aria-hidden="true" />Forward</button>}
+                  {mine && !message.deletedAt && <button className="chat-action" type="button" disabled={actionBusy} onClick={() => { setEditingMessageId(message.id); setEditDraft(message.body); setForwardingMessageId('') }}><Pencil size={14} aria-hidden="true" />Edit</button>}
+                  {mine && !message.deletedAt && <button className="chat-action chat-action-danger" type="button" disabled={actionBusy} onClick={() => void deleteForEveryone(message)}><Trash2 size={14} aria-hidden="true" />Delete for everyone</button>}
+                  <button className="chat-action" type="button" disabled={actionBusy} onClick={() => void deleteForMe(message)}><Trash2 size={14} aria-hidden="true" />Delete for me</button>
                 </div>
                 {forwardingMessageId === message.id && <div className="chat-forward-controls">
                   <label htmlFor={'forward-target-' + message.id}>Forward to conversation</label>
