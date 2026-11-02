@@ -4,7 +4,7 @@ import process from 'node:process'
 const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
-  'src/cookie-notice.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/imagekit.ts','src/lib/property-options.ts','worker/index.ts',
+  'src/cookie-notice.tsx','src/public-profile-page.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/imagekit.ts','src/lib/property-options.ts','worker/index.ts',
   'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','migrations/0009_listing_history_persistent_sessions.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
 ]
 const errors=[]
@@ -201,5 +201,15 @@ if(!worker.includes("event_type")||!worker.includes("'price_increased'")||!worke
 if(!worker.includes("WHERE id=? AND owner_id=? AND updated_at=?"))errors.push('Listing edits must guard against overwriting a newer concurrent edit')
 if(!read('src/edit-listing-page.tsx').includes('item.id ? { id: item.id } : {}'))errors.push('Seller edits must preserve existing property document IDs and added dates')
 if(!read('src/styles.css').includes('.listing-history-list')||!read('src/styles.css').includes('.evidence-image-preview'))errors.push('Evidence Room and timeline responsive styles are missing')
+const publicProfileRouteStart=worker.indexOf("const publicProfileMatch=path.match")
+const publicProfileRouteEnd=worker.indexOf("const historyMatch=path.match",publicProfileRouteStart)
+const publicProfileRoute=publicProfileRouteStart>=0&&publicProfileRouteEnd>publicProfileRouteStart?worker.slice(publicProfileRouteStart,publicProfileRouteEnd):''
+if(!publicProfileRoute.includes("email_verified=1")||!publicProfileRoute.includes("status='published'")||!publicProfileRoute.includes('publicListingRequirements'))errors.push('Public lister profiles must only expose accounts with complete, published listings')
+if(!publicProfileRoute.includes('profileImageUrl:owner.profile_image_url')||!publicProfileRoute.includes('memberSince:owner.created_at')||!publicProfileRoute.includes("isAdmin:publicRole==='admin'")||publicProfileRoute.includes('email:owner.email'))errors.push('Public lister profiles must expose only approved display information and no contact email')
+if(!publicProfileRoute.includes('LIMIT 100')||!publicProfileRoute.includes('publicListingCount:Number(count?.count||0)'))errors.push('Public lister profiles must return a bounded list and an accurate published listing count')
+if(!worker.includes('ownerId:p.owner_id'))errors.push('Public property responses must include the public lister profile identifier')
+if(!app.includes('PublicListerProfilePage')||!app.includes('path="/people/:id"')||!read('src/pages.tsx').includes('View lister profile'))errors.push('Property details must link to a working public lister profile page')
+const publicProfilePage=read('src/public-profile-page.tsx')
+if(!publicProfilePage.includes('/api/public-profiles/')||!publicProfilePage.includes('PropertyCard')||!publicProfilePage.includes('Public listings'))errors.push('Public lister profile page must fetch its public profile and render that lister’s live listings')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
 console.log('Static production smoke checks passed. These checks verify wiring, not cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')

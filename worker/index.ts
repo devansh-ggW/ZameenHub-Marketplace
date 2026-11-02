@@ -235,7 +235,7 @@ type PropertyImageView = { id:string; url:string; fileId:string|null; sortOrder:
 function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:PropertyImageView[]=[],documents:PropertyDocumentView[]=[]) {
   const verificationStatus=p.verification_status||'unverified'
   return {
-    id:p.id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
+    id:p.id,ownerId:p.owner_id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
     propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
     bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
     image:images[0]||'',gallery:images,description:p.description,
@@ -835,6 +835,36 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const viewer=await getUser(request,env); const p=await db.prepare(`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url,u.role AS owner_role, CASE WHEN f.user_id IS NULL THEN 0 ELSE 1 END AS favorite FROM properties p JOIN users u ON u.id=p.owner_id LEFT JOIN favorites f ON f.property_id=p.id AND f.user_id=? WHERE p.slug=? AND p.status='published' AND ${publicListingRequirements}`).bind(viewer?.id||'',slug).first<PropertyRow>()
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
+    }
+    const publicProfileMatch=path.match(/^\/api\/public-profiles\/([^/]+)$/)
+    if(publicProfileMatch&&method==='GET') {
+      let ownerId=''
+      try { ownerId=decodeURIComponent(publicProfileMatch[1]) } catch { return fail('Public lister profile not found.',404) }
+      if(!/^[A-Za-z0-9_-]{8,80}$/.test(ownerId))return fail('Public lister profile not found.',404)
+      const owner=await db.prepare(`SELECT id,name,email,role,profile_image_url,created_at FROM users
+        WHERE id=? AND email_verified=1 AND EXISTS (
+          SELECT 1 FROM properties p WHERE p.owner_id=users.id AND p.status='published' AND ${publicListingRequirements}
+        )`).bind(ownerId).first<{id:string;name:string;email:string;role:string;profile_image_url:string|null;created_at:string}>()
+      if(!owner)return fail('Public lister profile not found.',404)
+      const [count,listings]=await Promise.all([
+        db.prepare(`SELECT COUNT(*) AS count FROM properties p WHERE p.owner_id=? AND p.status='published' AND ${publicListingRequirements}`).bind(ownerId).first<{count:number}>(),
+        db.prepare(`SELECT p.*,u.name AS owner_name,u.profile_image_url AS owner_profile_image_url,u.role AS owner_role,0 AS favorite
+          FROM properties p JOIN users u ON u.id=p.owner_id
+          WHERE p.owner_id=? AND p.status='published' AND ${publicListingRequirements}
+          ORDER BY p.created_at DESC LIMIT 100`).bind(ownerId).all<PropertyRow>()
+      ])
+      const publicRole=effectiveRole(owner.email,owner.role,env)
+      return ok({
+        profile:{
+          id:owner.id,
+          name:owner.name,
+          profileImageUrl:owner.profile_image_url||'',
+          isAdmin:publicRole==='admin',
+          memberSince:owner.created_at,
+          publicListingCount:Number(count?.count||0)
+        },
+        listings:await Promise.all(listings.results.map(row=>withProperty(db,{...row,owner_role:publicRole})))
+      })
     }
     const historyMatch=path.match(/^\/api\/properties\/([^/]+)\/history$/)
     if(historyMatch&&method==='GET') {

@@ -12,6 +12,7 @@ import { ReportQueuePage } from './report-queue'
 import { InquiriesPage } from './inquiries-page'
 import { MessagesPage } from './messages-page'
 import { EmiCalculatorPage } from './emi-calculator-page'
+import { PublicListerProfilePage } from './public-profile-page'
 import { SiteFooter, SiteHeader } from './site-chrome'
 import { CookieNotice } from './cookie-notice'
 
@@ -76,6 +77,7 @@ export default function App() {
       <Route path="/" element={<HomePage />} />
       <Route path="/properties" element={<PropertiesPage />} />
       <Route path="/properties/:slug" element={<PropertyDetailPage />} />
+      <Route path="/people/:id" element={<PublicListerProfilePage />} />
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/signup" element={<AuthPage mode="signup" />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
