@@ -23,7 +23,7 @@ This comparison uses the competitors' publicly reachable pages, not their privat
 | Market content | Not yet | Property news, market guides, buying guides, research | Knowledge Centre stories and real-estate content |
 | Risk screening | This branch adds text-based AI/rule-based risk triage; it is not ownership verification | Housing's public seller portal advertises free posting, buyer leads and a price calculator; separate help material describes seller self-verification, and its public terms still caution users to verify ownership/title independently | Internal fraud-prevention details not independently verified |
 | Owner identity / document verification | Optional public record reference stored privately; moderator evidence review is separately audited. No automatic legal title or government-record validation is configured | Public verification material describes additional evidence/quality review | Not fully verified from accessible public material |
-| Photo/document media | Current engineering branch uses ImageKit for up to five property photos and profile images; seller-hosted PDF/image evidence is stored as links only. No Phase 1 video upload/playback and no R2 | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
+| Photo/document media | Current engineering branch uses ImageKit for up to five property photos, profile images and uploaded PDF/image evidence; externally hosted PDF/image references remain supported. No Phase 1 video upload/playback and no R2 | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
 | Advanced map and filter experience | Basic filters; no map or locality autocomplete | Broader discovery experience | Broader project/locality discovery experience |
 | Account controls | Email authentication, optional TOTP MFA, recovery codes, delete-account flow | Mature marketplace account workflows | Mature marketplace account workflows |
 | Owner/agent workflow | My listings, edit/archive, private inquiry inbox, private buyer-owner chat and message actions; listing expiry, repost, lead feedback and promoted-placement packages remain gaps | Seller dashboard documents listing create/edit/delete/repost, filters, lead panel, chat/feedback, listing validity, profile editing, and promotional packages | Public search and builder/project pages; a complete current seller-dashboard audit was not available |
@@ -44,7 +44,7 @@ Public reference pages:
 
 ## Changes included in this branch
 
-- ImageKit-backed property/profile image uploads: supported images are validated in the Worker, ownership is checked server-side, and D1 stores file IDs/URLs/metadata rather than image bytes. Seller evidence remains on the seller's website; ZameenHub stores only a described HTTPS PDF/image link. Video is postponed.
+- ImageKit-backed property/profile image uploads: supported images are validated in the Worker, ownership is checked server-side, and D1 stores file IDs/URLs/metadata rather than image bytes. Seller-hosted evidence links remain supported, and migration 0010 adds ImageKit-backed PDF/image evidence uploads. External links are stored as metadata only and are never fetched or proxied. Video is postponed.
 - Evidence-reference review workflow: owners may submit a public record URL and evidence type; the reference is private from public APIs; moderators have a separate explicit “publish + mark evidence reviewed” action and a required audit note. The UI describes what was reviewed rather than claiming guaranteed legal title. AI/rule risk scores never make the evidence decision.
 
 - Optional authenticator-app TOTP MFA, time-limited challenge cookies, atomically capped attempts, one-time TOTP counter tracking to prevent replay, and one-time recovery codes stored as hashes.
@@ -90,7 +90,7 @@ Public reference pages:
 
 ## High-priority gaps before public launch
 
-1. **Apply and test the database migrations.** Back up production D1 and apply pending migrations through `migrations/0008_imagekit_cleanup_queue.sql` before deploying Worker code that references those columns/tables.
+1. **Apply and test the database migrations.** Back up production D1 and apply pending migrations through `migrations/0010_imagekit_property_evidence.sql` before deploying Worker code that references those columns/tables.
 2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. Workers AI calls incur usage charges under Cloudflare's current pricing and quotas; verify the current pricing and account limits before launch. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
 3. **Do not advertise automated ownership verification.** This implementation can flag scam language and exact duplicates, and lets a moderator document a check of an owner-supplied public record reference. It does not call government record APIs or establish legal title, prove identity, validate a sale mandate, or verify that photos depict the claimed property. Add evidence-backed owner/agent verification and a clear audit trail before using a “verified owner/property” badge.
 4. **Verify the ImageKit integration.** The current engineering branch uses ImageKit for ZameenHub-hosted images and keeps only metadata in D1. Live upload, restricted-key permissions, replacement/deletion, provider-failure cleanup and legacy image migration still require non-production integration tests. Seller-hosted PDF/image evidence links are not fetched or rehosted.
@@ -123,7 +123,7 @@ Public reference pages:
 
 ## Production acceptance checklist
 
-- [ ] Back up production D1 and apply pending migrations through `migrations/0008_imagekit_cleanup_queue.sql` before deploying the changed Worker.
+- [ ] Back up production D1 and apply pending migrations through `migrations/0010_imagekit_property_evidence.sql` before deploying the changed Worker.
 - [ ] Add the `MFA_ENCRYPTION_KEY` Cloudflare secret without exposing it in Git or client code.
 - [ ] Confirm the `AI` binding is active for `zameenhub-marketplace`.
 - [ ] Register, verify email, sign in, sign out, reset password, and test invalid/expired tokens.
@@ -147,7 +147,15 @@ The original review above is a historical repository snapshot. The current engin
 - Seller-hosted property evidence: up to ten HTTPS PDF/image links with descriptions and source domains. Buyers open the original seller-hosted link. The Worker does not fetch or proxy user-submitted URLs.
 - Phase 1 video controls, player and Worker video paths have been removed. The historical `property_media` video schema/trigger remains only to preserve old database data and compatibility.
 - Message reply references, sender-only edit, sender-only soft-delete for everyone, per-user delete-for-me and forwarding to a conversation the sender also participates in. Worker-side membership and sender checks are authoritative.
-- Additive D1 migrations `0006_imagekit_and_property_documents.sql`, `0007_message_actions.sql` and `0008_imagekit_cleanup_queue.sql`; queued cleanup contains provider file IDs/paths only, never ImageKit credentials.
+- Additive D1 migrations `0006_imagekit_and_property_documents.sql`, `0007_message_actions.sql`, `0008_imagekit_cleanup_queue.sql`, `0009_listing_history_persistent_sessions.sql` and `0010_imagekit_property_evidence.sql`; queued cleanup contains provider file IDs/paths only, never ImageKit credentials.
 - The conversation-summary poll interval is reduced and message polling is guarded against overlapping requests to avoid exhausting inbox rate limits.
 
 **Not yet independently verified:** live ImageKit uploads with the configured Cloudflare secret, remote D1 migration/restore, full browser journeys, actual email delivery, and external security testing. Apply migrations only after a restorable backup, and do not deploy this branch to production until CI and non-production acceptance tests pass.
+
+
+## Engineering branch update — 2 November 2026
+
+- PR #27 (merged) adds ImageKit-backed PDF/image evidence uploads while preserving existing seller-hosted HTTPS evidence links.
+- Migration `0010_imagekit_property_evidence.sql` adds provider file ID, file path, uploader and lifecycle status fields to `property_documents`; existing external evidence rows remain active and unchanged.
+- The prior migration gate through `0008` is superseded. Before deploying the current Worker, back up the intended D1 database, verify restore readiness, and apply migrations through `0010_imagekit_property_evidence.sql` in order.
+- This repository update does not apply remote D1 migrations or deploy Worker code. Those remain controlled deployment operations.
