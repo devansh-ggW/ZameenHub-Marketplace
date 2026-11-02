@@ -407,7 +407,7 @@ async function imageKitUpload(file:File,fileName:string,folder:string,env:Env,db
   const response=await fetch('https://upload.imagekit.io/api/v1/files/upload',{method:'POST',headers:{authorization},body:form})
   const result=await response.json().catch(()=>null) as {fileId?:string;url?:string;filePath?:string;size?:number;fileType?:string;mime?:string}|null
   if(!result?.fileId)return null
-  if(!response.ok||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!==expected.fileType||(expected.mime&&result.mime!==expected.mime)||Number(result.size)!==file.size) {
+  if(!response.ok||!result.url||!result.filePath||!imageKitUrlAllowed(result.url,env)||!result.filePath.startsWith(folder.replace(/\/$/,'')+'/')||result.fileType!==expected.fileType||(expected.mime&&result.mime&&result.mime!==expected.mime)||Number(result.size)!==file.size) {
     const deleted=await imageKitDelete(result.fileId,env).catch(()=>false)
     if(!deleted)await queueImageKitCleanup(db,result.fileId,result.filePath||'', 'invalid-upload-response').catch(()=>{})
     return null
