@@ -8,7 +8,7 @@
 - [ ] Confirm IMAGEKIT_PRIVATE_KEY is configured as a Worker Secret and IMAGEKIT_URL_ENDPOINT as a Worker variable. Use the restricted ImageKit private key with only the Media Management read/write permissions needed for upload and deletion.
 - [ ] Confirm APP_URL, RESEND_FROM_EMAIL and SUPPORT_EMAIL use the intended production values and the sender domain is Verified in Resend.
 - [ ] Back up the intended D1 database and verify the restore procedure before applying schema changes.
-- [ ] Apply pending D1 migrations through migrations/0009_listing_history_persistent_sessions.sql to the intended database before deploying Worker code that references the new schema. Do not apply to production without a reviewed backup and deployment authorization.
+- [ ] Apply pending D1 migrations through migrations/0010_imagekit_property_evidence.sql to the intended database before deploying Worker code that references the new schema. Do not apply to production without a reviewed backup and deployment authorization.
 - [ ] Run python3 scripts/check-migrations.py, pnpm build, pnpm test:smoke and Wrangler dry-run; review the source diff.
 - [ ] Review Privacy Policy and Terms with the actual operator identity, address, governing law, grievance process and real data-retention practices.
 - [ ] Test registration/login password hashing on the actual Cloudflare plan and inspect CPU-limit errors.
@@ -27,7 +27,7 @@
 - [ ] Confirm gallery ordering, owner editing, card thumbnails, public detail galleries and profile avatars all resolve from ImageKit URLs.
 - [ ] Inspect existing media rows. Existing external URLs are not migrated automatically; plan a one-time migration only if ImageKit credentials and a safe source-fetch process are available.
 
-## Seller-hosted property evidence
+## Property evidence (ImageKit uploads and seller-hosted links)
 
 - [ ] Seller can create, edit and remove up to ten evidence links with a declared PDF/image format and a meaningful description.
 - [ ] A listing cannot publish unless it has at least one active ImageKit property photo and at least one seller-provided PDF/image document link.
@@ -35,6 +35,8 @@
 - [ ] Existing incomplete published listings remain visible to their owners with a clear missing-photo/document status and are hidden from public discovery until repaired.
 - [ ] New-listing flow creates a private draft, uploads the selected photos, and only then publishes; no separate pre-submit review step is shown.
 - [ ] Only HTTPS URLs are accepted. javascript:, data:, file:, credential-bearing and malformed URLs are rejected.
+- [ ] For uploaded PDF/image evidence, verify Worker-side file validation and owner/property authorization; never expose the ImageKit private key to the browser.
+- [ ] Verify failed ImageKit evidence uploads are cleaned up or remain hidden in the deletion-pending queue until an administrator retries cleanup.
 - [ ] Worker does not fetch arbitrary seller-provided URLs or proxy the documents.
 - [ ] Buyer property detail shows document description, declared format and source hostname.
 - [ ] Buyer opens the original seller-hosted URL in a new tab with noopener/noreferrer protections.
