@@ -1007,3 +1007,70 @@ img { max-width: 100%; display: block; }
   .evidence-room-featured > .document-link-list,
   .evidence-room-featured > .gallery-empty { margin-left: 14px; margin-right: 14px; }
 }
+
+
+/* Signature Property Evidence Room — the trust feature is deliberately prominent. */
+.evidence-editor {
+  margin-top: 30px;
+  padding: 22px;
+  border: 1px solid rgba(37, 91, 190, .2);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f7faff 0%, #fff 58%);
+}
+.evidence-editor-banner {
+  margin: -22px -22px 18px;
+  padding: 24px 24px 20px;
+  border-radius: 13px 13px 0 0;
+  background: #eef4ff;
+  border-bottom: 1px solid rgba(37, 91, 190, .16);
+}
+.evidence-editor-banner .section-kicker { color: #1b4ea8; }
+.evidence-editor-banner h3 { margin: 8px 0 7px; color: #102d62; font-size: clamp(22px, 3vw, 28px); letter-spacing: -.045em; }
+.evidence-editor-banner p { margin: 0; color: #1746a2; font-size: clamp(12px, 1.6vw, 15px); font-weight: 850; letter-spacing: .035em; }
+.evidence-editor-banner span { display: block; margin-top: 8px; color: #526783; font-size: 12px; line-height: 1.5; }
+.evidence-privacy-warning {
+  margin: 17px 0;
+  padding: 15px 16px;
+  border: 1px solid #ead8b4;
+  border-left: 4px solid #b97812;
+  border-radius: 8px;
+  background: #fffaf0;
+}
+.evidence-privacy-warning strong { color: #684714; font-size: 13px; }
+.evidence-privacy-warning p { margin: 6px 0 0; color: #675a46; font-size: 12px; line-height: 1.65; }
+.evidence-upload-field { margin: 18px 0; padding: 16px; border: 1px dashed rgba(37, 91, 190, .4); border-radius: 10px; background: #fff; }
+.evidence-upload-field label { color: #183e83; font-weight: 800; }
+.evidence-upload-field small { display: block; margin-top: 8px; color: var(--muted); line-height: 1.55; }
+.evidence-selected-file { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(180px, 1fr) auto; align-items: end; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.evidence-selected-file-name { min-width: 0; align-self: center; }
+.evidence-selected-file-name strong { display: block; overflow-wrap: anywhere; font-size: 12px; }
+.evidence-selected-file-name small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+.evidence-privacy-ack { display: flex; align-items: flex-start; gap: 10px; margin-top: 17px; color: #35445b; font-size: 12px; line-height: 1.55; cursor: pointer; }
+.evidence-privacy-ack input { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; accent-color: var(--blue); }
+.evidence-link-fallback { margin-top: 14px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.evidence-link-fallback summary { color: #1746a2; font-size: 12px; font-weight: 800; cursor: pointer; }
+.evidence-link-fallback > p { margin: 10px 0; }
+.evidence-room-featured { margin-top: 46px; padding: 0; border: 1px solid rgba(37, 91, 190, .18); border-radius: 14px; overflow: hidden; background: #fff; }
+.evidence-room-heading { padding: 24px 26px 20px; background: #f3f7ff; border-bottom: 1px solid rgba(37, 91, 190, .14); }
+.evidence-room-heading .section-kicker { color: #1746a2; }
+.evidence-room-heading h2 { margin: 8px 0 7px; color: #102d62; font-size: clamp(26px, 3.5vw, 36px); letter-spacing: -.055em; }
+.evidence-room-manifesto { margin: 0; color: #1746a2; font-size: clamp(12px, 1.8vw, 16px); font-weight: 850; letter-spacing: .035em; }
+.evidence-room-heading > span { display: block; margin-top: 8px; color: #526783; font-size: 12px; }
+.evidence-room-featured > .muted { margin: 18px 26px; max-width: 840px; line-height: 1.7; }
+.evidence-room-featured .document-link-list { margin: 0 18px 20px; }
+.evidence-room-featured .gallery-empty { margin: 20px 26px 26px; }
+.evidence-existing-document { flex-wrap: wrap; }
+.evidence-existing-description { flex: 1 1 190px; min-width: 180px; margin: 0; }
+.evidence-existing-url { flex: 1 1 240px; min-width: 220px; margin: 0; }
+.evidence-open-link { flex: 0 0 auto; }
+@media (max-width: 760px) {
+  .evidence-selected-file { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+}
+@media (max-width: 560px) {
+  .evidence-editor { padding: 14px; }
+  .evidence-editor-banner { margin: -14px -14px 15px; padding: 19px 16px; }
+  .evidence-room-heading { padding: 20px 17px 17px; }
+  .evidence-room-featured > .muted { margin: 15px 17px; }
+  .evidence-room-featured .document-link-list { margin: 0 12px 14px; }
+  .evidence-room-featured .gallery-empty { margin: 16px 17px 20px; }
+}
