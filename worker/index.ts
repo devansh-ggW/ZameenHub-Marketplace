@@ -110,8 +110,9 @@ function requestCookie(request:Request,name:string) {
   return found?found.slice(prefix.length):''
 }
 function cookieToken(request:Request) { return requestCookie(request,'zh_session') }
-const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
-const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`
+const cookieExpiry=(maxAge:number)=>new Date(maxAge>0?Date.now()+maxAge*1000:0).toUTCString()
+const sessionCookie=(token:string,maxAge:number)=>`zh_session=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}; Expires=${cookieExpiry(maxAge)}`
+const mfaChallengeCookie=(token:string,maxAge:number)=>`zh_mfa=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}; Expires=${cookieExpiry(maxAge)}`
 async function getUser(request:Request,env:Env):Promise<UserRow|null>{
   const token=cookieToken(request);if(!token||!env.DB)return null
   const timestamp=nowIso()
@@ -134,9 +135,14 @@ async function refreshUserSession(request:Request,db:D1Database,env:Env):Promise
   if(!Number.isFinite(absolute)||absolute<=current)return null
   const expiresAt=Math.min(current+SESSION_INACTIVITY_MS,absolute)
   const renewedAt=new Date(current).toISOString(),nextExpiry=new Date(expiresAt).toISOString()
-  const renewed=await db.prepare('UPDATE sessions SET last_seen_at=?,expires_at=? WHERE id=? AND expires_at>? AND absolute_expires_at>?').bind(renewedAt,nextExpiry,row.session_id,renewedAt,renewedAt).run()
-  if(!renewed.meta.changes)return null
-  return {user:row,token,maxAge:Math.max(1,Math.floor((expiresAt-current)/1000))}
+  // Concurrent /api/auth/session calls can race and turn an UPDATE into a no-op.
+  // Re-read the still-valid row instead of treating a zero-change result as logout.
+  await db.prepare("UPDATE sessions SET last_seen_at=CASE WHEN COALESCE(last_seen_at,'')<? THEN ? ELSE last_seen_at END,expires_at=CASE WHEN expires_at<? THEN ? ELSE expires_at END WHERE id=? AND expires_at>? AND absolute_expires_at>?").bind(renewedAt,renewedAt,nextExpiry,nextExpiry,row.session_id,renewedAt,renewedAt).run()
+  const refreshed=await db.prepare('SELECT expires_at FROM sessions WHERE id=? AND expires_at>? AND absolute_expires_at>?').bind(row.session_id,nowIso(),nowIso()).first<{expires_at:string}>()
+  if(!refreshed)return null
+  const finalExpiry=Date.parse(refreshed.expires_at),refreshedAt=Date.now()
+  if(!Number.isFinite(finalExpiry)||finalExpiry<=refreshedAt)return null
+  return {user:row,token,maxAge:Math.max(1,Math.floor((finalExpiry-refreshedAt)/1000))}
 }
 async function requireUser(request:Request,env:Env){const user=await getUser(request,env);return user}
 async function sendEmail(env:Env,to:string,subject:string,html:string,text:string) {
