@@ -90,7 +90,8 @@ export function EditListingPage() {
     const hasPublicPhoto = (property?.gallery.length || 0) > 0 || imageFiles.length > 0
     const hasPublicDocument = submittedDocuments.length > 0 || evidenceFiles.length > 0
     if (evidenceFiles.some(item => item.description.trim().length < 3)) { setSaving(false); setError('Give every new evidence file a clear description of at least 3 characters.'); return }
-    if ((evidenceFiles.length > 0 || documents.some(item => !item.id)) && !privacyAcknowledged) { setSaving(false); setError('Confirm that new evidence does not expose personal IDs or private information.'); return }
+    const hasNewOrChangedEvidenceLink = documents.some(item => !item.id || property?.documents?.find(existing => existing.id === item.id)?.url !== item.url)
+    if ((evidenceFiles.length > 0 || hasNewOrChangedEvidenceLink) && !privacyAcknowledged) { setSaving(false); setError('Confirm that new evidence does not expose personal IDs or private information.'); return }
     const result = await apiRequest<{ id: string; status: 'published' | 'draft'; verified: false; message: string }>('/api/my/properties/' + encodeURIComponent(id), {
       method: 'PATCH',
       body: JSON.stringify({
