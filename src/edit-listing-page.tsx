@@ -157,7 +157,7 @@ export function EditListingPage() {
       setDocuments(refreshed.data.documents || [])
     }
     setSaving(false)
-    setUploadStatus(imageFiles.length ? 'All selected photos uploaded to ImageKit.' : '')
+    setUploadStatus(imageFiles.length || evidenceFiles.length ? 'All selected photos and evidence files uploaded to ImageKit.' : '')
   }
 
   if (loading) return <main className="page-shell"><div className="container"><p className="status-message">Loading your listing…</p></div></main>
