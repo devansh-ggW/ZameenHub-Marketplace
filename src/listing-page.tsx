@@ -115,7 +115,7 @@ export function ListingPage() {
       return
     }
     setNotice(publication.data.message)
-    setUploadStatus('All photos uploaded and listing published.')
+    setUploadStatus('All photos uploaded' + (evidenceFiles.length ? ' and evidence files stored in ImageKit' : '') + '; listing published.')
   }
 
   if (checking) return <main className="page-shell"><div className="container"><p className="status-message">Checking your account…</p></div></main>
