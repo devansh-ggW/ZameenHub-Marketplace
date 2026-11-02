@@ -274,10 +274,14 @@ export function PropertyDetailPage() {
     <div className="detail-grid" style={{ marginTop: 28 }}>
       <div>
         {property.gallery.length ? <div className="gallery">{property.gallery.map((image, index) => <ImageWithFallback key={image} src={image} alt={`${property.title} view ${index + 1}`} className="gallery-image" onClick={() => setLightbox(image)} />)}</div> : <div className="gallery-empty">No property photos supplied by the owner.</div>}
-        <section className="detail-section property-documents evidence-room" aria-labelledby="property-documents-title">
-          <SectionKicker>Seller-provided evidence</SectionKicker>
-          <h2 id="property-documents-title">Property Evidence Room</h2>
-          <p className="muted">Don't rely on a badge or a description alone. Inspect the original seller-provided source yourself. ZameenHub stores the reference, not the file, and does not legally authenticate these documents or confirm ownership.</p>
+        <section className="detail-section property-documents evidence-room evidence-room-featured" aria-labelledby="property-documents-title">
+          <div className="evidence-room-heading">
+            <SectionKicker>THE ZAMEENHUB DIFFERENCE · OUR SIGNATURE FEATURE</SectionKicker>
+            <h2 id="property-documents-title">Property Evidence Room.</h2>
+            <p className="evidence-room-manifesto">DON'T TRUST US. CHECK THE DAMN THING YOURSELF.</p>
+            <span>See the evidence. Open the source. Make your own call.</span>
+          </div>
+          <p className="muted">Every document here is supplied by the lister. New PDF and image uploads are delivered through ImageKit; older externally hosted links remain supported. ZameenHub does not legally authenticate these records, confirm ownership, or guarantee that a document is genuine. Check important details with the relevant issuing authority before paying or signing.</p>
           {property.documents?.length ? <div className="document-link-list">{property.documents.map(document => <article className="document-link-card" key={document.id}>
             <div className="evidence-preview">
               {document.documentType === 'image'
@@ -286,12 +290,12 @@ export function PropertyDetailPage() {
             </div>
             <div className="evidence-document-copy">
               <strong>{document.description}</strong>
-              <span className="evidence-seller-label">Seller-provided · Not independently authenticated</span>
-              <p className="muted">Format: {document.documentType.toUpperCase()} · Original source: {document.sourceDomain}</p>
-              <p className="muted">Added on {formatHistoryDate(document.createdAt)}{document.updatedAt && document.updatedAt !== document.createdAt ? ' · Updated on ' + formatHistoryDate(document.updatedAt) : ''}</p>
+              <span className="evidence-seller-label">{document.storageProvider === 'imagekit' ? 'Seller-provided · ImageKit-hosted' : 'Seller-provided · External source'} · Not independently authenticated</span>
+              <p className="muted">Format: {document.documentType.toUpperCase()} · {document.storageProvider === 'imagekit' ? 'Delivered by ImageKit' : 'Source: ' + document.sourceDomain}</p>
+              <p className="muted">Added on {formatHistoryDate(document.createdAt)}{document.updatedAt && document.updatedAt !== document.createdAt ? ' · Updated on ' + formatHistoryDate(document.updatedAt) : ''} </p>
             </div>
-            <a href={document.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label={`Open original source for ${document.description} on ${document.sourceDomain} in a new tab`}>Open original source ↗</a>
-          </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the seller.</p>}
+            <a href={document.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label="Open seller-provided evidence in a new tab">{document.storageProvider === 'imagekit' ? 'Open evidence file ↗' : 'Open original source ↗'}</a>
+          </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the lister.</p>}
         </section>
         <section className="detail-section listing-history" aria-labelledby="listing-history-title">
           <SectionKicker>Transparent property record</SectionKicker>
