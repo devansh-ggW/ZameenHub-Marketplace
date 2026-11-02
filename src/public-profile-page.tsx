@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, ArrowUpRight, CalendarDays, Home } from 'lucide-react'
-import { EmptyState, ErrorState, LoadingState, PropertyCard, SectionKicker } from './components'
+import { EmptyState, LoadingState, PropertyCard, SectionKicker } from './components'
 import type { Property } from './lib/data'
 import { apiRequest } from './lib/auth'
 
