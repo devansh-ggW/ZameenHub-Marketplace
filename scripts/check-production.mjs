@@ -161,12 +161,12 @@ if(!securityUi.includes('setSetup(result.data); setSetupCode(\'\')')||securityUi
 if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
 if(!read('public/_headers').includes('Strict-Transport-Security:'))errors.push('Static pages should include HSTS')
 const staticHeaders=read('public/_headers')
-const contentSecurityPolicy=staticHeaders.split('\\n').find(line=>line.trim().startsWith('Content-Security-Policy:'))||''
+const contentSecurityPolicy=staticHeaders.split(/\r?\n/).find(line=>line.trim().startsWith('Content-Security-Policy:'))||''
 if(!staticHeaders.includes('X-Permitted-Cross-Domain-Policies: none'))errors.push('Static pages must disable legacy cross-domain policy files')
 if(!staticHeaders.includes('Cross-Origin-Resource-Policy: same-origin'))errors.push('Static pages must prevent cross-origin resource embedding')
 if(!contentSecurityPolicy.includes("frame-src 'none'"))errors.push('The application must not allow unused third-party frames')
 if(!contentSecurityPolicy.includes("media-src 'self'"))errors.push('The application must not allow unneeded remote media sources')
-if(/frame-src[^\\n]*(youtube|vimeo)|media-src[^\\n]*https:/i.test(contentSecurityPolicy))errors.push('Removed video providers must not be re-enabled through the content security policy')
+if(contentSecurityPolicy.includes('youtube.com')||contentSecurityPolicy.includes('vimeo.com')||contentSecurityPolicy.includes("media-src 'self' https:"))errors.push('Removed video providers must not be re-enabled through the content security policy')
 const apiJsonStart=worker.indexOf('const json =')
 const apiJsonEnd=worker.indexOf('const ok=',apiJsonStart)
 const apiJsonHelper=apiJsonStart>=0&&apiJsonEnd>apiJsonStart?worker.slice(apiJsonStart,apiJsonEnd):''
