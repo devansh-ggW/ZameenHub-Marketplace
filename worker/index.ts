@@ -308,7 +308,7 @@ async function propertyDocumentReplacementStatements(db:D1Database,propertyId:st
     const existingId=document.id&&existingIds.has(document.id)?document.id:null
     if(existingId) {
       retainedIds.push(existingId)
-      statements.push(db.prepare('UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?'+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
+      statements.push(db.prepare('UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,imagekit_file_id=CASE WHEN url<>? THEN NULL ELSE imagekit_file_id END,file_path=CASE WHEN url<>? THEN '' ELSE file_path END,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?'+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.url,document.url,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
     } else {
       const newId=uuid()
       retainedIds.push(newId)
@@ -1103,7 +1103,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
       const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model='not-run',verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=CASE WHEN status='draft' THEN 'draft' ELSE 'published' END,updated_at=? WHERE id=? AND owner_id=? AND updated_at=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id,current.updated_at)
-      const currentDocumentsResult=await db.prepare('SELECT id,document_type,description,url,source_domain FROM property_documents WHERE property_id=? AND owner_id=?').bind(id,user.id).all<{id:string;document_type:string;description:string;url:string;source_domain:string}>()
+      const currentDocumentsResult=await db.prepare("SELECT id,document_type,description,url,source_domain,imagekit_file_id,file_path FROM property_documents WHERE property_id=? AND owner_id=? AND status='active'").bind(id,user.id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;imagekit_file_id:string|null;file_path:string}>()
       const previousDocuments=new Map(currentDocumentsResult.results.map(document=>[document.id,document]))
       const submittedExistingIds=new Set(documents.map(document=>document.id).filter((documentId):documentId is string=>!!documentId&&previousDocuments.has(documentId)))
       const historyStatements:D1PreparedStatement[]=[]
@@ -1122,6 +1122,13 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const documentStatements=await propertyDocumentReplacementStatements(db,id,user.id,documents,updateTime)
       const results=await db.batch([update,...documentStatements,...historyStatements])
       if(!results[0]?.meta?.changes)return fail('The listing could not be updated. Refresh and try again.',409)
+      for(const old of currentDocumentsResult.results) {
+        const retained=documents.find(document=>document.id===old.id)
+        if(old.imagekit_file_id&&(!retained||retained.url!==old.url)) {
+          const deleted=await imageKitDelete(old.imagekit_file_id,env).catch(()=>false)
+          if(!deleted)await queueImageKitCleanup(db,old.imagekit_file_id,old.file_path,'property-evidence-replaced-or-removed').catch(()=>{})
+        }
+      }
       const nextStatus=current.status==='draft'?'draft':'published'
       return ok({id,status:nextStatus,verified:false,message:nextStatus==='draft'?'Draft changes saved privately. Add at least one photo and one seller-provided document to publish.':'Changes saved. Verification has reset to Unverified until an administrator checks the updated details.'})
     }
