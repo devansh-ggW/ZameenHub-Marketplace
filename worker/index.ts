@@ -1059,6 +1059,14 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
           return fail('Property photos are hidden, but ImageKit could not delete every file yet. An administrator can retry cleanup before you retry listing deletion.',502)
         }
       }
+      await db.prepare("UPDATE property_documents SET status='deletion_pending' WHERE property_id=? AND imagekit_file_id IS NOT NULL AND status='active'").bind(id).run()
+      const evidenceFiles=await db.prepare("SELECT imagekit_file_id,file_path FROM property_documents WHERE property_id=? AND imagekit_file_id IS NOT NULL AND status='deletion_pending'").bind(id).all<{imagekit_file_id:string;file_path:string}>()
+      for(const evidence of evidenceFiles.results) {
+        if(!await imageKitDelete(evidence.imagekit_file_id,env)) {
+          await queueImageKitCleanup(db,evidence.imagekit_file_id,evidence.file_path,'property-delete-evidence').catch(()=>{})
+          return fail('Property evidence is hidden, but ImageKit could not delete every file yet. An administrator can retry cleanup before you retry listing deletion.',502)
+        }
+      }
       // Remove D1 ownership and dependent rows only after provider cleanup succeeds.
       const deletion=await db.batch([
         db.prepare('DELETE FROM property_messages WHERE conversation_id IN (SELECT id FROM property_conversations WHERE property_id=? AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?))').bind(id,id,user.id),
