@@ -93,3 +93,75 @@ export function uploadPropertyImage(
     request.send(form)
   })
 }
+
+export type UploadedPropertyEvidence = {
+  id: string
+  documentType: 'pdf' | 'image'
+  description: string
+  url: string
+  sourceDomain: string
+  storageProvider: 'imagekit'
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+async function findPersistedPropertyEvidence(propertyId: string, knownIds: ReadonlySet<string>, description: string): Promise<UploadedPropertyEvidence | null> {
+  try {
+    const response = await fetch('/api/my/properties/' + encodeURIComponent(propertyId), { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } })
+    if (!response.ok) return null
+    const payload = await response.json() as { ok?: boolean; data?: { documents?: UploadedPropertyEvidence[] } }
+    if (payload.ok !== true || !Array.isArray(payload.data?.documents)) return null
+    return payload.data.documents.find(document =>
+      typeof document?.id === 'string' && !knownIds.has(document.id) &&
+      document.storageProvider === 'imagekit' && document.description === description &&
+      typeof document.url === 'string' && typeof document.sourceDomain === 'string'
+    ) ?? null
+  } catch { return null }
+}
+
+export function uploadPropertyEvidence(
+  propertyId: string,
+  file: File,
+  description: string,
+  onProgress?: (percent: number) => void,
+  knownEvidenceIds: readonly string[] = [],
+): Promise<{ ok: true; data: UploadedPropertyEvidence } | { ok: false; error: string }> {
+  return new Promise(resolve => {
+    const request = new XMLHttpRequest()
+    const form = new FormData()
+    const knownIds = new Set(knownEvidenceIds)
+    let settled = false
+    const finish = (result: { ok: true; data: UploadedPropertyEvidence } | { ok: false; error: string }) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+    const reconcileOrFail = async (error: string) => {
+      const persisted = await findPersistedPropertyEvidence(propertyId, knownIds, description)
+      if (persisted) { onProgress?.(100); finish({ ok: true, data: persisted }) }
+      else finish({ ok: false, error })
+    }
+    form.append('propertyId', propertyId)
+    form.append('description', description)
+    form.append('file', file)
+    request.open('POST', '/api/media/property-evidence')
+    request.withCredentials = true
+    request.setRequestHeader('Accept', 'application/json')
+    request.upload.onprogress = event => {
+      if (event.lengthComputable && onProgress) onProgress(Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100))))
+    }
+    request.onload = () => {
+      let response: { ok?: boolean; data?: UploadedPropertyEvidence; error?: string }
+      try { response = JSON.parse(request.responseText) as typeof response }
+      catch { void reconcileOrFail('The evidence upload returned an unreadable response.'); return }
+      if (request.status >= 200 && request.status < 300 && response.ok && response.data) {
+        onProgress?.(100)
+        finish({ ok: true, data: response.data })
+      } else void reconcileOrFail(response.error || 'Evidence upload failed (' + request.status + '). Please retry.')
+    }
+    request.onerror = () => void reconcileOrFail('ZameenHub could not reach ImageKit. Check your connection and retry.')
+    request.onabort = () => void reconcileOrFail('The evidence upload was interrupted.')
+    request.send(form)
+  })
+}

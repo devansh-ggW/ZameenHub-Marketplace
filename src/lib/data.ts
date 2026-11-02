@@ -2,7 +2,7 @@ export type ListingPurpose = 'sale' | 'rent'
 export type PropertyType = 'Apartment' | 'Villa' | 'House' | 'Plot' | 'Studio'
 export type ListingStatus = 'published' | 'pending' | 'rejected' | 'draft' | 'archived'
 
-export type PropertyDocument = { id: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain: string; sortOrder: number; createdAt: string; updatedAt: string }
+export type PropertyDocument = { id: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain: string; storageProvider?: 'imagekit' | 'external'; sortOrder: number; createdAt: string; updatedAt: string }
 export type PropertyImage = { id: string; url: string; fileId: string | null; sortOrder: number }
 export type ListingHistoryEvent = { id: string; eventType: string; previousValue: string | null; newValue: string | null; metadata: Record<string, unknown>; createdAt: string }
 
