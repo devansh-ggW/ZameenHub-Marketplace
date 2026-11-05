@@ -18,7 +18,7 @@ A source review cannot prove that production secrets are configured correctly, m
 - **Authentication:** email/password authentication, verification and recovery, server-issued session cookies, optional TOTP MFA and one-time recovery codes are implemented in the repository.
 - **Session policy:** the Worker enforces a rolling 30-day inactivity window capped by a 90-day absolute lifetime. Session identifiers are opaque and token hashes are stored in D1; browser cookies are configured Secure, HttpOnly and SameSite=Lax.
 - **Scope exclusions:** Cloudflare R2 is not used. Phase 1 video upload/playback, OCR and automatic legal-document verification are not part of the current implementation.
-- **Database:** repository migrations run through `0010_imagekit_property_evidence.sql`. This does not establish the migration state of the production D1 database.
+- **Database:** repository migrations run through `migrations/0010_imagekit_property_evidence.sql`. This does not establish the migration state of the production D1 database.
 - **UI/brand:** the product uses a light visual foundation with blue accents. The exact icon assets and every responsive state still need a live browser review.
 
 ## Repository-level controls found
