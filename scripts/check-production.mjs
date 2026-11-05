@@ -5,16 +5,25 @@ const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
   'src/cookie-notice.tsx','src/public-profile-page.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/imagekit.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','migrations/0009_listing_history_persistent_sessions.sql','migrations/0010_imagekit_property_evidence.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md'
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','migrations/0009_listing_history_persistent_sessions.sql','migrations/0010_imagekit_property_evidence.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md','PRODUCTION-CHECKLIST.md','.github/workflows/codeql.yml','.github/workflows/ci.yml','.github/dependabot.yml'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
 const read=(file)=>fs.existsSync(path.join(root,file))?fs.readFileSync(path.join(root,file),'utf8'):''
-const app=read('src/App.tsx'), styles=read('src/styles.css'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), mediaMigration=read('migrations/0004_media_verification.sql'), chatMigration=read('migrations/0005_property_chat.sql'), imagekitMigration=read('migrations/0006_imagekit_and_property_documents.sql'), messageActionsMigration=read('migrations/0007_message_actions.sql'), imagekitCleanupMigration=read('migrations/0008_imagekit_cleanup_queue.sql'), propertyEvidenceMigration=read('migrations/0010_imagekit_property_evidence.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html')
+const codeqlWorkflow=read('.github/workflows/codeql.yml'), dependabotConfig=read('.github/dependabot.yml')
+const ciWorkflow=read('.github/workflows/ci.yml')
+const app=read('src/App.tsx'), styles=read('src/styles.css'), worker=read('worker/index.ts'), migration=read('migrations/0002_native_email_auth.sql'), securityMigration=read('migrations/0003_security_mfa_ai.sql'), mediaMigration=read('migrations/0004_media_verification.sql'), chatMigration=read('migrations/0005_property_chat.sql'), imagekitMigration=read('migrations/0006_imagekit_and_property_documents.sql'), messageActionsMigration=read('migrations/0007_message_actions.sql'), imagekitCleanupMigration=read('migrations/0008_imagekit_cleanup_queue.sql'), propertyEvidenceMigration=read('migrations/0010_imagekit_property_evidence.sql'), wrangler=read('wrangler.toml'), pages=read('src/pages.tsx'), vite=read('vite.config.ts'), packageJson=read('package.json'), lockfile=read('pnpm-lock.yaml'), indexHtml=read('index.html'), securityAudit=read('SECURITY-AUDIT.md'), productionChecklist=read('PRODUCTION-CHECKLIST.md')
 for(const route of ['/list-property','/privacy','/cookies','/terms','/verify-email','/reset-password','/review-queue','/report-queue','/edit-listing/:id','/inquiries','/messages','/tools/emi-calculator','/profile'])if(!app.includes(route))errors.push('App router missing route '+route)
 for(const endpoint of ['/api/auth/register','/api/auth/login','/api/auth/verify-email','/api/auth/forgot-password','/api/auth/reset-password','/api/auth/session','/api/auth/mfa/status','/api/auth/mfa/setup','/api/auth/mfa/enable','/api/auth/mfa/disable','/api/auth/mfa/verify','/api/account/delete','/api/reports','/api/admin/reports','/api/my/inquiries','/api/inquiries','/api/properties','/api/favorites','/api/conversations','/api/support'])if(!worker.includes(endpoint))errors.push('Worker missing endpoint marker '+endpoint)
 for(const marker of ['password_hash','email_verified','email_verification_tokens','password_reset_tokens','auth_rate_limits'])if(!migration.includes(marker))errors.push('Migration missing '+marker)
 if(!wrangler.includes('run_worker_first = ["/api/*"]'))errors.push('Wrangler assets must route /api/* through the Worker before SPA fallback')
+if(!codeqlWorkflow.includes('github/codeql-action/init@v4')||!codeqlWorkflow.includes('github/codeql-action/analyze@v4')||!codeqlWorkflow.includes('javascript-typescript')||!codeqlWorkflow.includes('security-events: write'))errors.push('CodeQL must scan JavaScript/TypeScript and have only the permissions needed to publish SARIF results')
+if(!dependabotConfig.includes('package-ecosystem: npm')||!dependabotConfig.includes('package-ecosystem: github-actions')||!dependabotConfig.includes('interval: weekly'))errors.push('Dependabot must monitor application and GitHub Actions dependencies weekly')
+if(!ciWorkflow.includes('permissions:')||!ciWorkflow.includes('contents: read')||!ciWorkflow.includes('actions/checkout@v7')||!ciWorkflow.includes('pnpm/action-setup@v6.1.0')||!ciWorkflow.includes('actions/setup-node@v7')||!ciWorkflow.includes('node-version: 24'))errors.push('CI must use Node 24-compatible actions and a read-only repository token')
+if(!codeqlWorkflow.includes('actions/checkout@v7'))errors.push('CodeQL must use the current Node 24-compatible checkout action')
+if(!productionChecklist.includes('migrations/0010_imagekit_property_evidence.sql'))errors.push('Production deployment checklist must require the latest ImageKit property evidence migration')
+if(productionChecklist.includes('migrations/0009_listing_history_persistent_sessions.sql to the intended database'))errors.push('Production deployment checklist contains an outdated migration ceiling')
+if(!securityAudit.includes('migrations/0010_imagekit_property_evidence.sql')||!securityAudit.includes('5 November 2026'))errors.push('Security report must document the current ImageKit property evidence schema and deployment gate')
 for(const marker of ['mfa_enabled','mfa_last_counter','mfa_secret_ciphertext','ai_risk_level','ai_risk_score','auth_mfa_challenges','mfa_recovery_codes','property_reports','property_moderation_events','owner_message'])if(!securityMigration.includes(marker))errors.push('Security migration missing '+marker)
 if(worker.includes('screenListingRisk(')||worker.includes('@cf/meta/llama-3.2-1b-instruct')||worker.includes('env.AI')||wrangler.includes('[ai]'))errors.push('AI listing screening must be removed from the runtime')
 if(!worker.includes('const ownedPropertyMatch=path.match')||!worker.includes('status=\'pending\'')||!worker.includes("status:'archived'"))errors.push('Owner edit/archive routes must be wired and edits must re-enter review')
@@ -160,8 +169,31 @@ const securityUi=read('src/account-security.tsx')
 if(!securityUi.includes('setSetup(result.data); setSetupCode(\'\')')||securityUi.includes('setSetup(result.data); setSetupPassword(\'\'); setSetupCode(\'\')')||!securityUi.includes('password: setupPassword, code: setupCode'))errors.push('MFA setup must retain the password until the authenticator code has been confirmed')
 if(!read('src/cookie-notice.tsx').includes('/cookies')||!app.includes('kind="cookies"'))errors.push('Cookie notice must link to a registered cookie policy')
 if(!read('public/_headers').includes('Strict-Transport-Security:'))errors.push('Static pages should include HSTS')
+const staticHeaders=read('public/_headers')
+const contentSecurityPolicy=staticHeaders.split(/\r?\n/).find(line=>line.trim().startsWith('Content-Security-Policy:'))||''
+if(!staticHeaders.includes('X-Permitted-Cross-Domain-Policies: none'))errors.push('Static pages must disable legacy cross-domain policy files')
+if(!staticHeaders.includes('Cross-Origin-Resource-Policy: same-origin'))errors.push('Static pages must prevent cross-origin resource embedding')
+const cspDirectives=new Map(contentSecurityPolicy.split(';').map(directive=>{
+  const [name,...sources]=directive.trim().split(/\s+/)
+  return [name,sources]
+}).filter(([name])=>name))
+const frameSources=cspDirectives.get('frame-src')||[]
+const mediaSources=cspDirectives.get('media-src')||[]
+if(frameSources.length!==1||frameSources[0]!=="'none'")errors.push('The application must not allow unused third-party frames')
+if(mediaSources.length!==1||mediaSources[0]!=="'self'")errors.push('The application must not allow unneeded remote media sources')
+const apiJsonStart=worker.indexOf('const json =')
+const apiJsonEnd=worker.indexOf('const ok=',apiJsonStart)
+const apiJsonHelper=apiJsonStart>=0&&apiJsonEnd>apiJsonStart?worker.slice(apiJsonStart,apiJsonEnd):''
+if(!apiJsonHelper.includes("headers.set('cache-control','no-store')"))errors.push('API JSON responses must never be cached')
+if(!apiJsonHelper.includes("headers.set('strict-transport-security','max-age=31536000')"))errors.push('API responses must apply the same conservative HSTS policy as static assets')
+if(!apiJsonHelper.includes("headers.set('cross-origin-resource-policy','same-origin')"))errors.push('API JSON responses must include same-origin resource isolation')
+if(!apiJsonHelper.includes("headers.set('x-permitted-cross-domain-policies','none')"))errors.push('API JSON responses must disable legacy cross-domain policy files')
 if(wrangler.includes('REPLACE_WITH_CONFIGURED_D1_DATABASE_ID'))errors.push('Wrangler still contains a placeholder D1 database ID')
 if(wrangler.includes('RESEND_API_KEY'))errors.push('Do not store RESEND_API_KEY in wrangler.toml; use a Cloudflare secret')
+const readme=read('README.md')
+if(!readme.includes('seller-uploaded PDF/image evidence')||!readme.includes('seller-hosted HTTPS PDF/image links')||!readme.includes('Migration 0010 adds ImageKit file IDs'))errors.push('README must document ImageKit evidence uploads, external HTTPS evidence links and migration 0010')
+if(!productionChecklist.includes('whether uploaded to ImageKit or linked from an external HTTPS source'))errors.push('Production checklist must cover both supported evidence storage paths')
+if(/AI risk screening|Workers AI listing|AI binding|content-risk screening|seller-hosted property evidence: up to ten HTTPS PDF\/image links/i.test(readme+'\n'+productionChecklist+'\n'+securityAudit))errors.push('Product documentation contains obsolete listing-screening or evidence-storage claims')
 if(!read('src/legal-pages.tsx').includes('dewifystores@gmail.com'))errors.push('Support email missing from legal/contact pages')
 if(!worker.includes('iterations=100000'))errors.push('Worker PBKDF2 hash iteration count must be 100000 for Cloudflare Workers compatibility')
 if(!worker.includes('iterations>100000'))errors.push('Worker PBKDF2 verification limit must not exceed 100000 on Cloudflare Workers')

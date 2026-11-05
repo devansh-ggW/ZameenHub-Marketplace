@@ -18,6 +18,8 @@ const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   headers.set('cache-control','no-store')
   headers.set('x-content-type-options','nosniff')
   headers.set('x-frame-options','DENY')
+  headers.set('x-permitted-cross-domain-policies','none')
+  headers.set('cross-origin-resource-policy','same-origin')
   headers.set('referrer-policy','strict-origin-when-cross-origin')
   headers.set('permissions-policy','camera=(), microphone=(), geolocation=()')
   headers.set('cross-origin-opener-policy','same-origin')
@@ -1203,7 +1205,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to view reports.',403)
       if(!await authLimit(request,db,'report-queue',20))return fail('Too many requests. Please wait before trying again.',429)
-      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status,p.ai_risk_level,p.ai_risk_score FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<{id:string;property_id:string;reporter_id:string|null;reason:string;details:string;status:string;created_at:string;resolved_by:string|null;resolved_at:string|null;resolution_note:string;property_title:string;property_slug:string;property_city:string;property_status:string;ai_risk_level:string|null;ai_risk_score:number}>()
+      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<{id:string;property_id:string;reporter_id:string|null;reason:string;details:string;status:string;created_at:string;resolved_by:string|null;resolved_at:string|null;resolution_note:string;property_title:string;property_slug:string;property_city:string;property_status:string}>()
       return ok(result.results)
     }
     const reportMatch=path.match(/^\/api\/admin\/reports\/([^/]+)$/)

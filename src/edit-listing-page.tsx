@@ -138,15 +138,15 @@ export function EditListingPage() {
       if (!publication.ok) {
         setSaving(false)
         setError('Draft saved, but publishing is blocked: ' + publication.error)
-        setNotice('The listing remains private until the required photo and document are saved.')
+        setNotice('The listing remains private until the required photo and PDF/image evidence item are saved.')
         return
       }
       setProperty(current => current ? { ...current, status: 'published', publicEligible: true } : current)
       setNotice(publication.data.message)
     } else if (result.data.status === 'draft') {
-      setNotice('Draft saved privately. Add at least one property photo and one seller-provided document link, then save again to publish.')
+      setNotice('Draft saved privately. Add at least one property photo and one PDF/image evidence item (upload or external HTTPS link), then save again to publish.')
     } else if (!hasPublicPhoto || !hasPublicDocument) {
-      setNotice('Changes saved. This listing is hidden from public search until it has at least one property photo and one seller-provided document link.')
+      setNotice('Changes saved. This listing stays hidden from public search until it has at least one active property photo and one active PDF/image evidence item.')
     } else {
       setNotice(result.data.message)
     }
@@ -165,7 +165,7 @@ export function EditListingPage() {
   if (error && !property) return <main className="page-shell"><div className="container"><div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Could not load this listing.</h1><p>{error}</p><Link className="btn btn-outline" to="/my-listings">Back to my listings</Link></div></div></main>
 
   return <main className="page-shell"><div className="container">
-    <div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Edit your listing.</h1><p>Save corrections to your property details. Changes go live immediately; because details changed, the listing becomes Unverified until an administrator checks it again.</p></div>
+    <div className="page-title"><SectionKicker>Listing management</SectionKicker><h1>Edit your listing.</h1><p>Save corrections to your property details. A material edit resets the evidence-review status to Unverified. Public visibility still depends on an active property photo and an active PDF/image evidence item.</p></div>
     {property && <form className="form-card edit-listing-form" onSubmit={submit}>
       <div className="edit-listing-meta"><span>Current status: <strong>{property.status}</strong></span><span>Verification status: <strong>{property.verified ? 'Verified' : 'Unverified · awaiting manual verification'}</strong></span><span>Reference: <code>{property.id}</code></span></div>
       <div className="form-grid">
