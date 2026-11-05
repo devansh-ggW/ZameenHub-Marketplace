@@ -183,7 +183,7 @@ export function PropertiesPage() {
     <div className="results-head"><span className="mono">{loading ? 'Searching...' : `${items.length} properties`}</span><span className="muted" style={{ fontSize: 12 }}>Published listings only</span></div>
     {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : items.length ? <div className="property-grid">{items.map(property => <PropertyCard property={property} key={property.id} />)}</div> : <>
       <EmptyState title="No properties match those filters." copy="Try a broader location, adjust your budget, or clear a filter. Incomplete submissions stay private until the required photo and PDF/image evidence are added." />
-      <div className="listing-visibility-help"><p><strong>Recently submitted a property?</strong> It may be saved privately in your account. Listings appear here only after a property photo and a seller-provided document have been saved.</p><Link to="/my-listings" className="btn btn-outline">Check my listings <ArrowUpRight size={15} /></Link></div>
+      <div className="listing-visibility-help"><p><strong>Recently submitted a property?</strong> It may be saved privately in your account. Listings appear here only after an active property photo and a PDF/image evidence item have been saved. Evidence may be uploaded through ImageKit or linked from an external HTTPS source.</p><Link to="/my-listings" className="btn btn-outline">Check my listings <ArrowUpRight size={15} /></Link></div>
     </>}
   </div></main>
 }
