@@ -1,25 +1,41 @@
 name = "zameenhub-marketplace"
 main = "worker/index.ts"
 compatibility_date = "2026-10-28"
+
 workers_dev = false
 preview_urls = false
 keep_vars = true
 
+# Static assets
 [assets]
 directory = "./dist"
 run_worker_first = ["/api/*"]
 not_found_handling = "single-page-application"
 
+# PRODUCTION DATABASE — DO NOT CHANGE
 [[d1_databases]]
 binding = "DB"
 database_name = "zameenhub"
 database_id = "771caa73-f1ec-4f51-b2f2-06b94fd3f5c1"
 migrations_dir = "migrations"
 
-
+# PRODUCTION ENVIRONMENT VARIABLES
 [vars]
 APP_URL = "https://zameenhub.dewify.shop"
 RESEND_FROM_EMAIL = "ZameenHub <verify@zameenhub.dewify.shop>"
 SUPPORT_EMAIL = "dewifystores@gmail.com"
 ADMIN_EMAILS = "marcovexds@gmail.com"
 
+# CLOUDFLARE PREVIEW ENVIRONMENT
+# Preview settings do not inherit production settings.
+[previews.vars]
+APP_URL = ""
+RESEND_FROM_EMAIL = ""
+SUPPORT_EMAIL = "dewifystores@gmail.com"
+ADMIN_EMAILS = "marcovexds@gmail.com"
+
+# PREVIEW DATABASE — MUST BE A SEPARATE STAGING DATABASE
+[[previews.d1_databases]]
+binding = "DB"
+database_name = "zameenhub-preview"
+database_id = "8f798aa6-b373-4de7-b9c7-06465474f999"
