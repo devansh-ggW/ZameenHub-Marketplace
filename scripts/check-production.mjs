@@ -185,7 +185,7 @@ const apiJsonStart=worker.indexOf('const json =')
 const apiJsonEnd=worker.indexOf('const ok=',apiJsonStart)
 const apiJsonHelper=apiJsonStart>=0&&apiJsonEnd>apiJsonStart?worker.slice(apiJsonStart,apiJsonEnd):''
 if(!apiJsonHelper.includes("headers.set('cache-control','no-store')"))errors.push('API JSON responses must never be cached')
-if(!apiJsonHelper.includes("headers.set('strict-transport-security','max-age=31536000; includeSubDomains')"))errors.push('API responses must apply the same HSTS subdomain policy as static assets')
+if(!apiJsonHelper.includes("headers.set('strict-transport-security','max-age=31536000')"))errors.push('API responses must apply the same conservative HSTS policy as static assets')
 if(!apiJsonHelper.includes("headers.set('cross-origin-resource-policy','same-origin')"))errors.push('API JSON responses must include same-origin resource isolation')
 if(!apiJsonHelper.includes("headers.set('x-permitted-cross-domain-policies','none')"))errors.push('API JSON responses must disable legacy cross-domain policy files')
 if(wrangler.includes('REPLACE_WITH_CONFIGURED_D1_DATABASE_ID'))errors.push('Wrangler still contains a placeholder D1 database ID')
