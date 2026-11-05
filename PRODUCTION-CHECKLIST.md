@@ -29,19 +29,19 @@
 
 ## Property evidence (ImageKit uploads and seller-hosted links)
 
-- [ ] Seller can create, edit and remove up to ten evidence links with a declared PDF/image format and a meaningful description.
-- [ ] A listing cannot publish unless it has at least one active ImageKit property photo and at least one seller-provided PDF/image document link.
+- [ ] Seller can create, edit and remove up to ten evidence items: supported ImageKit PDF/image uploads or seller-hosted HTTPS PDF/image links, each with a declared format and meaningful description.
+- [ ] A listing cannot publish unless it has at least one active ImageKit property photo and at least one active seller-provided PDF/image evidence item, whether uploaded to ImageKit or linked from an external HTTPS source.
 - [ ] Public search, direct property detail, favorites, reports, inquiries and new chats all exclude published records missing either requirement.
 - [ ] Existing incomplete published listings remain visible to their owners with a clear missing-photo/document status and are hidden from public discovery until repaired.
 - [ ] New-listing flow creates a private draft, uploads the selected photos, and only then publishes; no separate pre-submit review step is shown.
-- [ ] Only HTTPS URLs are accepted. javascript:, data:, file:, credential-bearing and malformed URLs are rejected.
+- [ ] External evidence links accept only HTTPS URLs. javascript:, data:, file:, credential-bearing and malformed URLs are rejected; uploaded ImageKit files use the authenticated Worker upload path.
 - [ ] For uploaded PDF/image evidence, verify Worker-side file validation and owner/property authorization; never expose the ImageKit private key to the browser.
 - [ ] Verify failed ImageKit evidence uploads are cleaned up or remain hidden in the deletion-pending queue until an administrator retries cleanup.
 - [ ] Worker does not fetch arbitrary seller-provided URLs or proxy the documents.
 - [ ] Buyer property detail shows document description, declared format and source hostname.
 - [ ] Buyer opens the original seller-hosted URL in a new tab with noopener/noreferrer protections.
 - [ ] Empty state appears when no seller documents have been supplied.
-- [ ] Public APIs expose only the seller-hosted evidence links intended for buyers; private review notes/reference fields remain restricted to the owner and authorized reviewers.
+- [ ] Public APIs expose only active seller-provided evidence items intended for buyers, whether ImageKit-hosted or external; private review notes/reference fields remain restricted to the owner and authorized reviewers.
 - [ ] UI copy makes clear that supplied links are not legal authentication or proof of title.
 - [ ] Buyers see an Evidence Room with seller attribution, source domain, original link, added/updated timestamps and safe image previews.
 - [ ] Confirm PDFs are opened at the seller's original HTTPS source rather than embedded from an untrusted origin.
@@ -68,7 +68,7 @@
 - [ ] Listing create/edit/delete/archive is owner-scoped and input validation is enforced by the Worker.
 - [ ] A published listing with verification_status=unverified displays Unverified, not Verified.
 - [ ] Only an authorized administrator can set verification_status=verified through the audited evidence-review action.
-- [ ] AI/content-risk screening and ordinary publication are never represented as proof of ownership.
+- [ ] Email verification, ordinary publication, moderation or administrative evidence review are never represented as proof of ownership, clear title or document authenticity.
 - [ ] Favorites persist per account and cannot be changed for unpublished/nonexistent properties.
 - [ ] Search filters alter actual API results and URL state; empty/error/no-results states render correctly.
 - [ ] Inquiry storage, owner notification and support email delivery report failures honestly.
