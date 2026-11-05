@@ -1,161 +1,90 @@
-# ZameenHub production gap analysis and security review
+# ZameenHub security and production-readiness review
 
-**Review date:** 28 October 2026  
-**Scope:** Repository-level review of the public React application, Cloudflare Worker/D1 API, Wrangler configuration, and available production smoke checks. This is not a penetration test, legal opinion, live Cloudflare deployment check, or exhaustive inspection of logged-in competitor systems.
+**Current repository review:** 5 November 2026  
+**Baseline:** repository and implementation review, not an independent penetration test or legal opinion.
 
-## Executive summary
+## Scope and limitations
 
-ZameenHub has a working foundation for email/password accounts, email verification and recovery, listing submission, published-property search, saved properties, inquiries, support, and a moderator review queue. This branch adds optional authenticator-based MFA, recovery codes, password-confirmed account deletion, a cookie notice/policy, server-side listing risk screening, and several API hardening measures.
+This review covers the repository's React/TypeScript/Vite frontend, Cloudflare Worker API, D1 migrations, ImageKit and Resend integration code, Wrangler configuration, CI workflows, static production checks and documentation.
 
-The important safety choice is deliberate: **AI risk screening does not certify ownership and does not auto-publish a listing.** New listings remain private/pending until a moderator or administrator approves them. High-risk signals appear in the review queue, but a reviewer must investigate them. This avoids turning a text classifier's guess into a false “verified owner” badge.
+A source review cannot prove that production secrets are configured correctly, migrations have been applied to the remote D1 database, provider accounts work, browser journeys succeed, or a deployed application is free of vulnerabilities. Those require controlled non-production tests and operator access. No production migration, secret change, DNS change, production deployment or data deletion is authorized by this review.
 
-## Competitor comparison
+## Current implementation snapshot
 
-This comparison uses the competitors' publicly reachable pages, not their private dashboards, internal risk systems, or every plan-specific feature.
+- **Architecture:** React, TypeScript and Vite frontend; Cloudflare Workers API; Cloudflare D1; ImageKit for property/profile images and uploaded PDF/image evidence; Resend for transactional email.
+- **Evidence:** sellers can upload supported PDF/image evidence to ImageKit or supply external HTTPS PDF/image links. D1 stores descriptive metadata and ImageKit file identifiers/paths, not file bytes. The Worker does not fetch, proxy or rehost seller-hosted files.
+- **Public listing eligibility:** a listing needs at least one active property photo and one active PDF/image evidence item to appear in public discovery. New listings remain drafts while required uploads complete. Existing incomplete listings are hidden from public discovery but remain available to their owners for repair.
+- **Publication and evidence review are separate:** an eligible listing may be public while marked Unverified. Only an authorized administrator can separately record an evidence review. That action does not prove identity, ownership, clear title, document authenticity or freedom from disputes.
+- **Authentication:** email/password authentication, verification and recovery, server-issued session cookies, optional TOTP MFA and one-time recovery codes are implemented in the repository.
+- **Session policy:** the Worker enforces a rolling 30-day inactivity window capped by a 90-day absolute lifetime. Session identifiers are opaque and token hashes are stored in D1; browser cookies are configured Secure, HttpOnly and SameSite=Lax.
+- **Scope exclusions:** Cloudflare R2 is not used. Phase 1 video upload/playback, OCR and automatic legal-document verification are not part of the current implementation.
+- **Database:** repository migrations run through `0010_imagekit_property_evidence.sql`. This does not establish the migration state of the production D1 database.
+- **UI/brand:** the product uses a light visual foundation with blue accents. The exact icon assets and every responsive state still need a live browser review.
 
-| Capability | ZameenHub in this branch | Housing.com public offering | 99acres public offering |
-|---|---|---|---|
-| Basic buy/rent search | Yes; keyword/location, purpose, type, bedrooms/bathrooms, min/max budget, minimum area, and sort | Yes; broad buy/rent and related property search paths | Yes; property search and category pages |
-| Saved properties and listing inquiries | Basic favorites and owner email inquiry | More mature lead/discovery flows | More mature lead/discovery flows |
-| Listing submission / review | User submissions are pending; review queue for authorized roles | Seller portal, free posting/promotional seller workflow, property price tool | Owner/broker/developer listings and builder/project catalogues |
-| Builder/developer/project catalogue | Not yet | Project and developer discovery | Builder/project pages with project types, possession details, and RERA labels where provided |
-| Price/finance tools | EMI calculator with transparent user-editable assumptions; no property valuation data feed yet | EMI calculator, property value calculator, rent receipt generator, home-loan and premium services | Project/property content and tools vary by page/product; a full current logged-in product audit was not available |
-| Market content | Not yet | Property news, market guides, buying guides, research | Knowledge Centre stories and real-estate content |
-| Risk screening | This branch adds text-based AI/rule-based risk triage; it is not ownership verification | Housing's public seller portal advertises free posting, buyer leads and a price calculator; separate help material describes seller self-verification, and its public terms still caution users to verify ownership/title independently | Internal fraud-prevention details not independently verified |
-| Owner identity / document verification | Optional public record reference stored privately; moderator evidence review is separately audited. No automatic legal title or government-record validation is configured | Public verification material describes additional evidence/quality review | Not fully verified from accessible public material |
-| Photo/document media | Current engineering branch uses ImageKit for up to five property photos, profile images and uploaded PDF/image evidence; externally hosted PDF/image references remain supported. No Phase 1 video upload/playback and no R2 | Property imagery is part of the listing workflow | Project/listing imagery is visible on public pages |
-| Advanced map and filter experience | Basic filters; no map or locality autocomplete | Broader discovery experience | Broader project/locality discovery experience |
-| Account controls | Email authentication, optional TOTP MFA, recovery codes, delete-account flow | Mature marketplace account workflows | Mature marketplace account workflows |
-| Owner/agent workflow | My listings, edit/archive, private inquiry inbox, private buyer-owner chat and message actions; listing expiry, repost, lead feedback and promoted-placement packages remain gaps | Seller dashboard documents listing create/edit/delete/repost, filters, lead panel, chat/feedback, listing validity, profile editing, and promotional packages | Public search and builder/project pages; a complete current seller-dashboard audit was not available |
-| Listing media and project evidence | ImageKit-backed property gallery plus seller-hosted PDF/image evidence links; optional private review reference remains separate, with no automated government record matching | Seller help documents optional photo uploads and listing self-verification | Public project pages can display configurations, amenities, RERA/possession details when supplied; this is not proof those details have been independently validated |
+## Repository-level controls found
 
-Public reference pages:
-- Housing.com main site: https://housing.com/
-- Housing.com seller portal: https://seller.housing.com/user-login?f=HOUSING.COM
-- Housing.com seller dashboard help (listing filters, lead panel, edit/delete/repost): https://housing.freshdesk.com/support/solutions/articles/4000200870-seller-dashboard-kya-hota-hai-
-- Housing.com help on posting a listing and optional photos/self-verification: https://support.housing.com/support/solutions/articles/4000200811-how-can-i-post-a-listing-on-housing-com-
-- Housing.com search workflow (cities, localities/projects/landmarks/developers, filters): https://support.housing.com/support/solutions/articles/4000200976-how-do-i-find-a-property-on-housing-com-
-- Housing.com seller portal features and listing plans: https://seller.housing.com/
-- 99acres builder/project catalogue example (RERA labels, possession dates and BHK where shown): https://builders.99acres.com/dream-developers-builders-bid-4990
-- Housing.com verification help article: https://support.housing.com/support/solutions/articles/4000200805-mere-listing-ko-kaise-verify-kiya-ja-sakta-hai-
-- Housing.com public terms/disclaimer: https://careers.housing.com/terms-of-use/
-- 99acres builder/project catalogue: https://builders.99acres.com/om-group-builders-and-developers-bid-110049
-- 99acres Knowledge Centre: https://webstories.99acres.com/
+| Area | Current implementation observed | Remaining verification |
+|---|---|---|
+| Authentication | Email/password flows, email verification and password recovery routes, server-issued sessions | Exercise registration, login, reset, expiry and concurrent sessions on a non-production environment |
+| Session security | Secure, HttpOnly, SameSite=Lax cookies; hashed session tokens; rolling/absolute expiry; logout-all route | Verify browser behavior, cookie expiration and revocation with multiple browsers/devices |
+| MFA | TOTP, encrypted secrets, replay counter handling and hashed one-time recovery codes | Verify authenticator interoperability, encryption-secret setup and recovery behavior in non-production |
+| Authorization | Worker-side user/role and object ownership checks are used for sensitive operations | Run cross-account IDOR/BOLA tests across every property, media, evidence, profile, conversation, message and admin route |
+| Request controls | Request body caps, Origin validation on state-changing requests, rate limiting and bounded inputs are present | Test malformed payloads, concurrency, rate limits and actual production-origin behavior |
+| ImageKit | Worker-side upload/delete integration, file signature checks, listing ownership checks, file limits and D1 metadata | Test restricted-key permissions, provider outages, upload reconciliation, replacements, cleanup and wrong-owner rejection |
+| External evidence links | HTTPS URL validation; original seller-hosted resources are not fetched or proxied | Test unsafe schemes, credentials, malformed input and browser link behavior |
+| D1 integrity | Ordered additive migrations, ownership columns, media/evidence metadata and cleanup tracking | Apply 0001–0010 to a non-production database, run foreign-key checks and test backup restoration |
+| Resend | Server-side provider call and plain-text/HTML email construction | Verify sender-domain authentication, real delivery, token expiry and failure reporting |
+| Browser security | Static and Worker response policies include no-store for API JSON, HSTS, nosniff, frame protection, referrer and permissions policies, plus same-origin resource policy | Inspect deployed headers and confirm the CSP works with all legitimate assets and routes |
+| CI and supply chain | Frozen pnpm lockfile install, dependency audit, migrations/tests/build/smoke/dry-run, CodeQL and Dependabot workflows | Re-run checks on the final PR head and inspect any Cloudflare preview build failure |
 
-## Changes included in this branch
+## Current security and release risks
 
-- ImageKit-backed property/profile image uploads: supported images are validated in the Worker, ownership is checked server-side, and D1 stores file IDs/URLs/metadata rather than image bytes. Seller-hosted evidence links remain supported, and migration 0010 adds ImageKit-backed PDF/image evidence uploads. External links are stored as metadata only and are never fetched or proxied. Video is postponed.
-- Evidence-reference review workflow: owners may submit a public record URL and evidence type; the reference is private from public APIs; moderators have a separate explicit “publish + mark evidence reviewed” action and a required audit note. The UI describes what was reviewed rather than claiming guaranteed legal title. AI/rule risk scores never make the evidence decision.
+### P0 — no confirmed source-level critical issue established by this review
 
-- Optional authenticator-app TOTP MFA, time-limited challenge cookies, atomically capped attempts, one-time TOTP counter tracking to prevent replay, and one-time recovery codes stored as hashes.
-- MFA secrets encrypted at rest with AES-GCM using a Cloudflare secret named `MFA_ENCRYPTION_KEY`. Do not put that secret into GitHub, Wrangler vars, or chat.
-- MFA setup/disable requires the current password; disabling also requires the existing authenticator or an unused recovery code. Email alerts are attempted for MFA changes.
-- Account deletion requires the current password, typing `DELETE`, and a valid MFA/recovery code when MFA is enabled. Owned listings are removed as part of this action. The last administrator is protected from deleting their own account.
-- Cloudflare Workers AI listing risk triage plus deterministic red-flag and duplicate-title/location checks. Risk reasons and model metadata are saved in D1 and shown only in the authorized moderation review queue.
-- A property-report form, an admin/moderator report queue, resolution notes, and a moderation-decision audit record. Reports do not automatically ban users or remove listings.
-- Owner-scoped listing editing and archiving. Material edits reset the listing's separate evidence-review status; the actual publication state must be read from the current Worker/database, not inferred from this historical report.
-- A private owner inquiry inbox with read/archive status controls; inbox queries only return inquiries for listings owned by the signed-in account.
-- Budget, bathroom, and minimum-area filters on property search, all encoded in the URL for shareable searches.
-- A home-loan EMI calculator using the standard reducing-balance formula, with known-value tests, validation, and an explicit estimate-not-quote disclaimer.
-- A crawler-friendly sitemap and robots rules that list public pages but not private account/moderation routes.
-- Listing submission rate limits, login limits by IP and normalized email, a streaming 32 KiB request-body cap, strict Origin validation for state-changing requests, and additional security headers.
-- Valid registration attempts use a generic response and status to reduce account enumeration; existing accounts receive neutral sign-in guidance rather than an account-state response.
-- Email verification, legacy activation, and password-reset tokens are atomically consumed before use, reducing replay under concurrent requests.
-- Listing submission and owner-edit responses do not reveal internal AI risk scores or detailed trigger reasons; these remain restricted to the authorized review queue.
-- The AI classifier accepts only actual JSON integer scores from 0–100. Malformed values such as `null`, strings or booleans are ignored instead of being coerced to a misleading low-risk score.
-- A clear cookie notice and dedicated cookie policy. The current implementation does not intentionally set analytics or advertising cookies; the notice preference uses browser local storage.
-- UI language now makes clear that “published” means approved for public display, not independently verified property ownership.
-- Static production smoke checks now verify the new wiring. CI also runs a SQLite migration test, owner-isolation query checks, RFC TOTP vectors, a full dependency audit, and the TypeScript/Vite build.
+This is not a claim that no critical vulnerability exists. Full adversarial testing has not been performed.
 
-## Security review: addressed in this branch
+### P1 — release gates that remain open
 
-| Risk | Change |
-|---|---|
-| Missing second authentication factor | Optional TOTP MFA and one-time recovery codes |
-| MFA recovery/guessing risk | Short challenge lifetime, attempt caps, and rate limiting |
-| Sensitive account actions trusted only to a session | Password and (if enabled) second-factor confirmation for MFA changes and deletion |
-| Account-deletion route absent | Password-confirmed deletion; owned listings removed explicitly |
-| State-changing request accepted when Origin was absent | Worker requires the exact request origin for non-GET mutations |
-| Unbounded JSON body reads | Worker rejects bodies over 32 KiB |
-| Request-body buffering before the size check | The Worker reads streamed chunks and cancels once the 32 KiB cap is exceeded |
-| Registration response account enumeration | Valid registration branches use a generic status/message and perform password-hash work before checking the email address |
-| Verification/reset token reuse races | Email verification, activation and reset tokens are claimed atomically with `DELETE ... RETURNING` before use |
-| Risk-score leakage to listing submitters or owners editing a listing | Submission and edit responses reveal pending status/message only; detailed risk evidence stays in the moderator queue |
-| Malformed AI classifier output | Only an actual integer JSON score from 0–100 is accepted; other value types are ignored |
-| Password input silently truncated/trimmed before verification | Password values are kept byte-for-byte as provided; passwords outside 8–128 characters are rejected |
-| “Published” presented like proof of ownership | Backend no longer maps publication status to a verified-owner boolean; public copy warns users to verify independently |
-| Listing text may attempt prompt injection | AI instruction treats fields as untrusted data; returned risk is parsed as data and never has authority to publish |
-| Repeated bulk listing requests | IP- and account-based submission limits |
-| Basic security-header coverage | HSTS on static assets and extra API response headers |
+1. **Remote D1 state and recovery:** verify the actual production migration state through 0010, take a restorable backup, and prove restoration on a safe non-production copy before a production release.
+2. **Provider configuration:** verify `RESEND_API_KEY`, `MFA_ENCRYPTION_KEY` and `IMAGEKIT_PRIVATE_KEY` as Worker secrets, and `IMAGEKIT_URL_ENDPOINT` as a Worker variable. Never paste secret values into chat or commit them. Confirm ImageKit's restricted key has only the permissions needed for upload and deletion.
+3. **ImageKit acceptance:** use a non-production account to test accepted and rejected file types, invalid signatures, size limits, wrong-owner attempts, D1 failures after provider upload, deletion retries and provider outages.
+4. **Cross-account authorization:** test every sensitive Worker route using at least two normal users and an administrator. Verify that changing IDs or submitting forged roles/owner IDs cannot read or mutate another account's records.
+5. **Authentication and MFA acceptance:** test email delivery, verification/recovery token replay and expiry, MFA enrollment/disablement, invalid and replayed TOTP codes, recovery-code single use, session renewal and logout-all.
+6. **Cloudflare preview build:** PR #28's Cloudflare bot reported a preview build failure for commit `84af995`. The GitHub workflow summaries show CI and CodeQL succeeded, but the detailed Cloudflare build log was not available through the connected repository tools. Inspect the linked Cloudflare build before release.
+7. **Legal/operator disclosure:** complete the actual operator identity, address, jurisdiction, grievance/contact process and retention disclosures with the responsible operator and qualified Indian counsel. These facts must not be invented in repository copy.
+8. **External security review:** obtain an independent review before making strong security or trust claims to the public.
 
-## High-priority gaps before public launch
+### P2 — remaining quality work
 
-1. **Apply and test the database migrations.** Back up production D1 and apply pending migrations through `migrations/0010_imagekit_property_evidence.sql` before deploying Worker code that references those columns/tables.
-2. **Configure secrets and bindings.** Set `MFA_ENCRYPTION_KEY` as a Cloudflare Worker secret; deploy the `AI` binding in `wrangler.toml`; check Worker logs and AI usage after deployment. Workers AI calls incur usage charges under Cloudflare's current pricing and quotas; verify the current pricing and account limits before launch. If the AI call is unavailable or quota-exhausted, rule-based checks still run and listings stay pending, but AI review is not available.
-3. **Do not advertise automated ownership verification.** This implementation can flag scam language and exact duplicates, and lets a moderator document a check of an owner-supplied public record reference. It does not call government record APIs or establish legal title, prove identity, validate a sale mandate, or verify that photos depict the claimed property. Add evidence-backed owner/agent verification and a clear audit trail before using a “verified owner/property” badge.
-4. **Verify the ImageKit integration.** The current engineering branch uses ImageKit for ZameenHub-hosted images and keeps only metadata in D1. Live upload, restricted-key permissions, replacement/deletion, provider-failure cleanup and legacy image migration still require non-production integration tests. Seller-hosted PDF/image evidence links are not fetched or rehosted.
-5. **Exercise reporting, moderation audit, owner lifecycle and inbox isolation.** The report form/queue, resolution notes, moderation-event table, owner edit/archive controls, and private lead inbox are included. Test duplicate reports, role restrictions, concurrent status changes, owner isolation, and retention after account deletion.
-6. **Expand listing management gradually.** Safe edit and archive/unpublish are now implemented and edits re-enter moderation. Remaining workflow improvements include draft autosave, photo management once uploads are enabled, and clear owner-facing reasons when reviewers reject a submission.
-7. **Improve discovery parity gradually.** Basic budget, bathroom, and minimum-area filters, the owner inbox and an EMI calculator are now included. Remaining gaps are locality autocomplete/map, amenities/furnishing/possession filters, market-price research, listing/project/builder profiles, dynamic listing sitemaps and saved-search alerts; add them only as reliable data and providers become available.
-8. **Add practical property tools.** EMI calculator, property-value research, rent receipt tools, and editorial guides are useful competitor gaps but need tested calculations and clear disclaimers; do not publish fabricated price estimates or market statistics.
-9. **Legal review is still a launch blocker.** The operator's legal identity, contact address, governing law/jurisdiction, data-retention periods, and complaint/grievance process must be completed and reviewed for the actual business and applicable Indian requirements. The policy text in the repo cannot invent these facts.
-10. **Run live end-to-end tests.** A static smoke check does not prove email delivery, MFA interoperability with common authenticator apps, D1 migration success, AI quota availability, multi-cookie handling, production deployment, or account-deletion behavior. Test with non-production accounts and a D1 backup first.
+- Exercise reporting, moderation audit, owner listing lifecycle, buyer/seller messaging and message actions with separate user accounts.
+- Verify responsive layouts, keyboard interaction, accessible labels, focus handling and reduced-motion behavior across all major pages.
+- Review query limits, pagination, request amplification, logs, cache behavior, provider timeouts and media cleanup under realistic non-production failure conditions.
+- Improve listing workflow clarity and owner-facing rejection explanations without implying legal verification.
+- Continue product discovery improvements only when supported by reliable property data and providers.
 
-## Prioritized product roadmap: add, change, or keep out
+## Data protection and trust requirements
 
-### P0 — required before public launch
-- Apply and verify the production D1 migrations, configure Cloudflare secrets/bindings, verify the Resend sender domain, restore-test a backup, and complete end-to-end account/listing/moderation checks.
-- Complete real operator identity, address, governing jurisdiction, grievance/contact process, and retention disclosures with the responsible operator or a qualified local professional.
-- Make listing review evidence-based. Never describe a text-risk score or moderation approval as independent title/ownership verification.
+- Never expose ImageKit private keys, Resend keys, MFA encryption keys, session tokens, recovery codes or password hashes to browser code, public APIs or logs.
+- Keep ownership and role checks in the Worker. A hidden button or client-side role flag is not authorization.
+- Public APIs must not expose private emails, MFA state, internal moderation notes or private verification references.
+- Keep externally hosted seller evidence on its original host. Do not fetch arbitrary seller URLs from the Worker.
+- Do not represent a seller upload, email verification, publication, administrator review or any platform status as proof of property ownership or clear title.
+- Preserve legacy database columns and records unless an additive, reviewed migration proves that a change is necessary. Do not remove legacy AI-named schema fields merely because they are no longer used by the current runtime.
+- Keep R2, video upload/playback, OCR and automatic legal-document verification out of Phase 1.
 
-### P1 — next practical marketplace upgrades
-- Complete non-production ImageKit end-to-end tests and reconcile any legacy image URLs; retain seller-hosted PDF/image evidence links and do not build a document proxy.
-- Add owner/agent evidence review and clearly labelled RERA/project fields backed by records that can actually be checked; record what was checked and when.
-- Add locality autocomplete/map only with a suitable provider, permitted usage, privacy review and rate limits. Expand property-type filters (such as commercial or PG/co-living) only if those categories are genuinely supported by the listing schema and moderation workflow.
+## CI and static verification
 
-### P2 — after inventory and operations justify them
-- Saved-search alerts, listing expiry/repost, lead feedback, project/developer profiles, verified market guides, and optional promotional listings. Buyer/owner chat and message actions are now present in the engineering branch but still need real multi-account browser tests.
-- Price/rent trends or property valuation only when there is a traceable, licensed and current data source with transparent methodology and limitations.
+The repository's CI workflow is configured to run a frozen-lockfile dependency installation, dependency audit, migration checks, TOTP and EMI tests, TypeScript/Vite production build, production smoke checks and Wrangler dry-run. CodeQL and Dependabot workflows are present on the current hardening branch.
 
-### Keep out of the product
-- Fake demo inventory presented as real, fabricated marketplace counts or lead promises, invented price estimates, placeholder “verified owner” badges, unsupported photo-upload claims, or decorative controls that do not perform the action they advertise.
-- Automated bans or automatic publication based only on AI scores, user reports, or duplicate-title signals.
+The production smoke test is a static wiring and policy check. Passing it does not prove provider delivery, remote D1 migration state, browser behavior, real MFA security, production deployment or penetration-test coverage.
 
-## Production acceptance checklist
+The hardening work in this branch also changes the CSP smoke assertions to parse the actual `frame-src` and `media-src` directives instead of searching the complete policy string for host substrings. This keeps the assertion focused on CSP directives and avoids treating an arbitrary substring in a URL-like token as a meaningful host match.
 
-- [ ] Back up production D1 and apply pending migrations through `migrations/0010_imagekit_property_evidence.sql` before deploying the changed Worker.
-- [ ] Add the `MFA_ENCRYPTION_KEY` Cloudflare secret without exposing it in Git or client code.
-- [ ] Confirm the `AI` binding is active for `zameenhub-marketplace`.
-- [ ] Register, verify email, sign in, sign out, reset password, and test invalid/expired tokens.
-- [ ] Enrol TOTP with at least two common authenticator apps; test invalid/expired codes, one-time recovery-code consumption, disable, and account deletion.
-- [ ] Confirm login from a second browser never bypasses MFA and that logout/deletion clear server sessions.
-- [ ] Submit clean and deliberately suspicious test listings; confirm both remain private until authorized review, and the queue shows evidence-based risk reasons.
-- [ ] Confirm a high-risk listing cannot be accidentally represented publicly as ownership-verified.
-- [ ] Confirm malformed and oversized bodies, wrong/missing Origin headers, repeated logins, and burst listing requests are rejected.
-- [ ] Verify mobile navigation, keyboard use, screen-reader labels, cookie-policy link, reduced-motion behavior, and smaller screens.
-- [ ] Confirm Resend service emails are delivered and MFA security-notification failures do not expose secrets.
-- [ ] Complete the legal/operator details and test the actual production deployment before publicly claiming “production ready”.
+## Release controls
 
-**No source-code review can guarantee a website is “perfect.”** This report records concrete changes and the remaining checks instead of claiming a complete penetration test.
-
-
-## Engineering branch update — 31 October 2026
-
-The original review above is a historical repository snapshot. The current engineering branch adds the following implementation work and must be reviewed alongside the original report:
-
-- ImageKit upload/delete integration for property and profile images. The Worker uses the restricted private key server-side; the frontend never receives it. D1 stores metadata, not image bytes.
-- Seller-hosted property evidence: up to ten HTTPS PDF/image links with descriptions and source domains. Buyers open the original seller-hosted link. The Worker does not fetch or proxy user-submitted URLs.
-- Phase 1 video controls, player and Worker video paths have been removed. The historical `property_media` video schema/trigger remains only to preserve old database data and compatibility.
-- Message reply references, sender-only edit, sender-only soft-delete for everyone, per-user delete-for-me and forwarding to a conversation the sender also participates in. Worker-side membership and sender checks are authoritative.
-- Additive D1 migrations `0006_imagekit_and_property_documents.sql`, `0007_message_actions.sql`, `0008_imagekit_cleanup_queue.sql`, `0009_listing_history_persistent_sessions.sql` and `0010_imagekit_property_evidence.sql`; queued cleanup contains provider file IDs/paths only, never ImageKit credentials.
-- The conversation-summary poll interval is reduced and message polling is guarded against overlapping requests to avoid exhausting inbox rate limits.
-
-**Not yet independently verified:** live ImageKit uploads with the configured Cloudflare secret, remote D1 migration/restore, full browser journeys, actual email delivery, and external security testing. Apply migrations only after a restorable backup, and do not deploy this branch to production until CI and non-production acceptance tests pass.
-
-
-## Engineering branch update — 2 November 2026
-
-- PR #27 (merged) adds ImageKit-backed PDF/image evidence uploads while preserving existing seller-hosted HTTPS evidence links.
-- Migration `0010_imagekit_property_evidence.sql` adds provider file ID, file path, uploader and lifecycle status fields to `property_documents`; existing external evidence rows remain active and unchanged.
-- The prior migration gate through `0008` is superseded. Before deploying the current Worker, back up the intended D1 database, verify restore readiness, and apply migrations through `0010_imagekit_property_evidence.sql` in order.
-- This repository update does not apply remote D1 migrations or deploy Worker code. Those remain controlled deployment operations.
+- Keep implementation on a dedicated branch and submit a reviewable pull request.
+- Do not merge or deploy as part of this task; Cloudflare auto-deploy is configured for the deployment branch.
+- Do not apply migrations to production, change live secrets, rotate credentials, change DNS, delete production data or alter billing.
+- Run all available CI checks on the final PR head and inspect the Cloudflare preview result.
+- Complete non-production ImageKit, Resend, D1 restore and browser security acceptance before production release.
+- A green build or static audit is not a declaration that the marketplace is bug-free, legally compliant or penetration-tested.
