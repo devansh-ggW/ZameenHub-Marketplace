@@ -190,7 +190,7 @@ if(!apiJsonHelper.includes("headers.set('cross-origin-resource-policy','same-ori
 if(!apiJsonHelper.includes("headers.set('x-permitted-cross-domain-policies','none')"))errors.push('API JSON responses must disable legacy cross-domain policy files')
 if(wrangler.includes('REPLACE_WITH_CONFIGURED_D1_DATABASE_ID'))errors.push('Wrangler still contains a placeholder D1 database ID')
 if(wrangler.includes('RESEND_API_KEY'))errors.push('Do not store RESEND_API_KEY in wrangler.toml; use a Cloudflare secret')
-const readme=read('README.md'),securityAudit=read('SECURITY-AUDIT.md')
+const readme=read('README.md')
 if(!readme.includes('seller-uploaded PDF/image evidence')||!readme.includes('seller-hosted HTTPS PDF/image links')||!readme.includes('Migration 0010 adds ImageKit file IDs'))errors.push('README must document ImageKit evidence uploads, external HTTPS evidence links and migration 0010')
 if(!productionChecklist.includes('whether uploaded to ImageKit or linked from an external HTTPS source'))errors.push('Production checklist must cover both supported evidence storage paths')
 if(/AI risk screening|Workers AI listing|AI binding|content-risk screening|seller-hosted property evidence: up to ten HTTPS PDF\/image links/i.test(readme+'\n'+productionChecklist+'\n'+securityAudit))errors.push('Product documentation contains obsolete listing-screening or evidence-storage claims')
