@@ -23,7 +23,7 @@ const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   headers.set('referrer-policy','strict-origin-when-cross-origin')
   headers.set('permissions-policy','camera=(), microphone=(), geolocation=()')
   headers.set('cross-origin-opener-policy','same-origin')
-  headers.set('strict-transport-security','max-age=31536000; includeSubDomains')
+  headers.set('strict-transport-security','max-age=31536000')
   return new Response(JSON.stringify(body),{status,headers})
 }
 const ok=(data:unknown,status=200,extra:HeadersInit={})=>json({ok:true,data},status,extra)
