@@ -9,9 +9,9 @@ The product's trust principle is: **Don't trust us. Check the damn thing yoursel
 - **Frontend:** Vite + React + TypeScript.
 - **API:** Cloudflare Workers (worker/index.ts).
 - **Structured data:** Cloudflare D1 (DB binding).
-- **ZameenHub-hosted photography:** ImageKit. D1 stores file IDs, URLs, paths, uploader ownership and display order; it never stores image bytes.
-- **Property evidence:** seller-hosted HTTPS links to PDF or image documents. The originals remain on the seller's website; ZameenHub stores only descriptions, types, source domains and URLs.
-- **Phase 1 media scope:** property images and seller-hosted PDF/image evidence. Video upload and playback are postponed. Legacy video schema/data is retained for backward compatibility and is not exposed by the current Worker/UI.
+- **ZameenHub-hosted media:** ImageKit stores property/profile images and seller-uploaded PDF/image evidence. D1 stores file IDs, URLs, paths, uploader ownership and display metadata; it never stores file bytes.
+- **External property evidence:** seller-hosted HTTPS PDF/image links remain supported. ZameenHub stores the URL and descriptive metadata but does not fetch, proxy, or rehost the external file.
+- **Phase 1 media scope:** property/profile images and PDF/image evidence uploads or external links. Video upload and playback are postponed. Legacy video schema/data is retained only for backward compatibility and is not exposed by the current Worker/UI.
 - **Not used:** Cloudflare R2.
 
 ## ImageKit configuration
@@ -29,9 +29,11 @@ Before treating uploads as production-verified, test with a non-production accou
 
 ## Seller-hosted property evidence
 
-Owners can add up to ten described HTTPS links, each identified as PDF or image. At least one seller-provided document link and at least one active property photo are required before a listing appears publicly. New listings are saved as private drafts while photos upload, then published only after the Worker confirms both requirements. Existing published listings missing either requirement are excluded from public search and property-detail APIs until the owner restores them; their records remain available in the owner's account for editing. ZameenHub does not download, proxy, scan, or rehost the original documents. The property page displays the seller's description, declared format, source domain and a link that opens the original source safely in a new tab.
+Owners can add up to ten evidence items. Each item can be a supported PDF/image uploaded through the Worker to ImageKit, or a seller-hosted HTTPS PDF/image link. D1 stores evidence descriptions, declared formats, source domains and ImageKit file metadata; it does not store file bytes. External files remain on their original hosts and are never fetched, proxied or rehosted by ZameenHub.
 
-A document link, accessible PDF/image, AI result, content review or ordinary publication does **not** establish legal ownership. The UI must not imply that ZameenHub has authenticated the seller's title.
+At least one active property photo and one active PDF/image evidence item are required before a listing appears publicly. New listings remain drafts while uploads complete and can be published only after the Worker confirms those requirements. Existing published listings missing either requirement are excluded from public discovery until repaired, while remaining available to their owners for editing. The Property Evidence Room identifies seller-provided items, their storage source, description, format and source domain; external links open the original source safely in a new tab.
+
+A seller-submitted document, an ImageKit upload, email verification, publication or administrative evidence review does **not** establish legal ownership, clear title, document authenticity or freedom from disputes. Buyers should independently inspect the evidence and obtain appropriate professional advice.
 
 ## Account and marketplace capabilities
 
@@ -39,11 +41,11 @@ The existing application includes email/password accounts, email verification an
 
 Authenticated sessions use Secure, HttpOnly, host-scoped cookies and hashed server-side session records. Active sessions renew with a 30-day inactivity window, capped by a 90-day absolute lifetime. The account security page can end the current session or revoke all devices. Temporary session-check/network failures do not automatically clear the authenticated UI state.
 
-Public property detail pages include a **Property Evidence Room** for seller-hosted PDF/image links and a **Listing History** timeline. The timeline begins at rollout for pre-existing listings; it does not claim to know events that occurred before tracking was enabled.
+Public property detail pages include a **Property Evidence Room** for ImageKit-uploaded and seller-hosted PDF/image evidence, plus a **Listing History** timeline. The timeline begins at rollout for pre-existing listings; it does not claim to know events that occurred before tracking was enabled.
 
 Message actions include reply, sender-only edit, forwarding to another conversation the user participates in, delete-for-everyone (soft deletion), and delete-for-me (per-user hiding). The Worker performs the authorization checks; the frontend is not trusted for access control.
 
-Property verification status is separate from listing publication and content-risk screening. A listing may be publicly visible while still Unverified. Only the separate authorized evidence-review action may mark it Verified; that is a recorded human review, not a government title API or a legal guarantee.
+Property verification status is separate from listing publication. A listing may be publicly visible while still Unverified. Only an authorized administrator can manually mark seller-provided evidence as reviewed; that records a platform review, not a government title check or a legal guarantee.
 
 ## Cloudflare setup and migrations
 
@@ -59,7 +61,7 @@ Property verification status is separate from listing publication and content-ri
 
 6. Test the complete flows on a non-production environment before production rollout.
 
-Migrations 0006–0008 add ImageKit metadata, seller-hosted document records, message edit/reply/forward metadata, per-user message hiding, and a retryable ImageKit cleanup queue. Migration 0009 adds rolling/absolute session-expiry metadata, seller-document update timestamps and the append-only property listing-history table. The admin review queue includes a protected cleanup-retry control. These migrations are additive. Do not apply them to production without a verified backup and a deliberate deployment window.
+Migrations 0006–0008 establish ImageKit property/profile media, external evidence-link metadata, message edit/reply/forward metadata, per-user message hiding and a retryable ImageKit cleanup queue. Migration 0009 adds rolling/absolute session-expiry metadata, evidence update timestamps and the append-only property listing-history table. Migration 0010 adds ImageKit file IDs, paths, uploader ownership and lifecycle status for uploaded property evidence while preserving existing external HTTPS evidence rows. These migrations are additive. Do not apply pending migrations to production without a verified backup and a deliberate deployment window.
 
 ## Local checks
 
