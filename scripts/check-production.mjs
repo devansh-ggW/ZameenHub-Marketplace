@@ -173,9 +173,14 @@ const staticHeaders=read('public/_headers')
 const contentSecurityPolicy=staticHeaders.split(/\r?\n/).find(line=>line.trim().startsWith('Content-Security-Policy:'))||''
 if(!staticHeaders.includes('X-Permitted-Cross-Domain-Policies: none'))errors.push('Static pages must disable legacy cross-domain policy files')
 if(!staticHeaders.includes('Cross-Origin-Resource-Policy: same-origin'))errors.push('Static pages must prevent cross-origin resource embedding')
-if(!contentSecurityPolicy.includes("frame-src 'none'"))errors.push('The application must not allow unused third-party frames')
-if(!contentSecurityPolicy.includes("media-src 'self'"))errors.push('The application must not allow unneeded remote media sources')
-if(contentSecurityPolicy.includes('youtube.com')||contentSecurityPolicy.includes('vimeo.com')||contentSecurityPolicy.includes("media-src 'self' https:"))errors.push('Removed video providers must not be re-enabled through the content security policy')
+const cspDirectives=new Map(contentSecurityPolicy.split(';').map(directive=>{
+  const [name,...sources]=directive.trim().split(/\s+/)
+  return [name,sources]
+}).filter(([name])=>name))
+const frameSources=cspDirectives.get('frame-src')||[]
+const mediaSources=cspDirectives.get('media-src')||[]
+if(frameSources.length!==1||frameSources[0]!=="'none'")errors.push('The application must not allow unused third-party frames')
+if(mediaSources.length!==1||mediaSources[0]!=="'self'")errors.push('The application must not allow unneeded remote media sources')
 const apiJsonStart=worker.indexOf('const json =')
 const apiJsonEnd=worker.indexOf('const ok=',apiJsonStart)
 const apiJsonHelper=apiJsonStart>=0&&apiJsonEnd>apiJsonStart?worker.slice(apiJsonStart,apiJsonEnd):''
@@ -185,6 +190,10 @@ if(!apiJsonHelper.includes("headers.set('cross-origin-resource-policy','same-ori
 if(!apiJsonHelper.includes("headers.set('x-permitted-cross-domain-policies','none')"))errors.push('API JSON responses must disable legacy cross-domain policy files')
 if(wrangler.includes('REPLACE_WITH_CONFIGURED_D1_DATABASE_ID'))errors.push('Wrangler still contains a placeholder D1 database ID')
 if(wrangler.includes('RESEND_API_KEY'))errors.push('Do not store RESEND_API_KEY in wrangler.toml; use a Cloudflare secret')
+const readme=read('README.md'),productionChecklist=read('PRODUCTION-CHECKLIST.md'),securityAudit=read('SECURITY-AUDIT.md')
+if(!readme.includes('seller-uploaded PDF/image evidence')||!readme.includes('seller-hosted HTTPS PDF/image links')||!readme.includes('Migration 0010 adds ImageKit file IDs'))errors.push('README must document ImageKit evidence uploads, external HTTPS evidence links and migration 0010')
+if(!productionChecklist.includes('whether uploaded to ImageKit or linked from an external HTTPS source'))errors.push('Production checklist must cover both supported evidence storage paths')
+if(/AI risk screening|Workers AI listing|AI binding|content-risk screening|seller-hosted property evidence: up to ten HTTPS PDF\/image links/i.test(readme+'\n'+productionChecklist+'\n'+securityAudit))errors.push('Product documentation contains obsolete listing-screening or evidence-storage claims')
 if(!read('src/legal-pages.tsx').includes('dewifystores@gmail.com'))errors.push('Support email missing from legal/contact pages')
 if(!worker.includes('iterations=100000'))errors.push('Worker PBKDF2 hash iteration count must be 100000 for Cloudflare Workers compatibility')
 if(!worker.includes('iterations>100000'))errors.push('Worker PBKDF2 verification limit must not exceed 100000 on Cloudflare Workers')
