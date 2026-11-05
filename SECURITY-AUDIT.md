@@ -69,7 +69,7 @@ This is not a claim that no critical vulnerability exists. Full adversarial test
 - Public APIs must not expose private emails, MFA state, internal moderation notes or private verification references.
 - Keep externally hosted seller evidence on its original host. Do not fetch arbitrary seller URLs from the Worker.
 - Do not represent a seller upload, email verification, publication, administrator review or any platform status as proof of property ownership or clear title.
-- Preserve legacy database columns and records unless an additive, reviewed migration proves that a change is necessary. Do not remove legacy AI-named schema fields merely because they are no longer used by the current runtime.
+- Preserve legacy database columns and records unless an additive, reviewed migration proves that a change is necessary. Do not remove compatibility fields merely because the current application no longer uses them.
 - Keep R2, video upload/playback, OCR and automatic legal-document verification out of Phase 1.
 
 ## CI and static verification
