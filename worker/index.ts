@@ -1,4 +1,5 @@
 import { base32Encode, matchedTotpCounter } from './totp'
+import { calculateCommunityTrustIndicator } from './community-trust'
 export type Env = {
   DB?: D1Database
   IMAGEKIT_PRIVATE_KEY?: string
@@ -437,6 +438,77 @@ async function propertyDocuments(db:D1Database,id:string):Promise<PropertyDocume
 async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
   const [media,documents]=await Promise.all([propertyMedia(db,p.id,includePrivateVerification),propertyDocuments(db,p.id)])
   return propertyView(p,media.images,includePrivateVerification,media.imageMedia,documents)
+}
+
+const publicReviewTypes=new Set(['inquiry','viewing','transaction','other'])
+const communityReportReasons=new Set(['abuse','spam','fake_or_misleading','privacy','other'])
+async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
+  const stats=await db.prepare(`SELECT
+    (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.status='active') AS document_count,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1) AS eligible_reports,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status IN ('submitted','under_review')) AS open_reports,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status='substantiated') AS substantiated_reports,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.status='dismissed') AS dismissed_reports,
+    (SELECT COUNT(*) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS review_count,
+    (SELECT COUNT(DISTINCT r.reviewer_id) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS distinct_reviewers,
+    (SELECT AVG(r.rating) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS average_rating,
+    (SELECT COUNT(*) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL AND r.rating>=4) AS positive_reviews,
+    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published') AS comment_count,
+    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NOT NULL) +
+      (SELECT COUNT(*) FROM property_review_responses rr JOIN property_reviews rv ON rv.id=rr.review_id WHERE rv.property_id=p.id AND rv.status='published') AS reply_count
+    FROM properties p WHERE p.id=?`).bind(propertyId).first<Record<string,number|null>>()
+  if(!stats) return null
+  const calculation=calculateCommunityTrustIndicator({
+    requiredDocumentCount:Number(stats.document_count||0),
+    eligibleReportCount:Number(stats.eligible_reports||0),
+    eligibleReviewCount:Number(stats.review_count||0),
+    distinctReviewers:Number(stats.distinct_reviewers||0),
+    averageRating:Number(stats.average_rating||0),
+    positiveReviewCount:Number(stats.positive_reviews||0),
+    publicCommentCount:Number(stats.comment_count||0),
+    publicReplyCount:Number(stats.reply_count||0),
+  })
+  return {
+    ...calculation,
+    totalReports:Number(stats.eligible_reports||0),
+    openReports:Number(stats.open_reports||0),
+    substantiatedReports:Number(stats.substantiated_reports||0),
+    dismissedReports:Number(stats.dismissed_reports||0),
+    documentationSubmitted:Number(stats.document_count||0),
+    explanation:'This indicator summarizes seller-submitted evidence and public community activity. Reports are allegations unless separately substantiated. It is not legal verification.',
+  }
+}
+async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:string|null) {
+  const [reviews,comments]=await Promise.all([
+    db.prepare(`SELECT r.id,r.reviewer_id,r.rating,r.body,r.interaction_type,r.created_at,r.updated_at,
+      u.name AS reviewer_name,rr.body AS owner_response,rr.created_at AS response_created_at
+      FROM property_reviews r
+      LEFT JOIN users u ON u.id=r.reviewer_id
+      LEFT JOIN property_review_responses rr ON rr.review_id=r.id
+      WHERE r.property_id=? AND r.status='published'
+      ORDER BY r.created_at DESC LIMIT 50`).bind(propertyId).all<Record<string,unknown>>(),
+    db.prepare(`SELECT c.id,c.author_id,c.parent_comment_id,c.body,c.created_at,c.updated_at,
+      u.name AS author_name,u.role AS author_role
+      FROM property_comments c LEFT JOIN users u ON u.id=c.author_id
+      WHERE c.property_id=? AND c.status='published'
+      ORDER BY c.created_at ASC LIMIT 100`).bind(propertyId).all<Record<string,unknown>>()
+  ])
+  return {
+    reviews:reviews.results.map(row=>({
+      id:String(row.id),reviewerName:String(row.reviewer_name||'ZameenHub member'),
+      rating:Number(row.rating),body:String(row.body),interactionType:String(row.interaction_type),
+      createdAt:String(row.created_at),updatedAt:String(row.updated_at),
+      isMine:!!viewerId&&row.reviewer_id===viewerId,
+      response:row.owner_response?{body:String(row.owner_response),createdAt:String(row.response_created_at||'')}:null
+    })),
+    comments:comments.results.map(row=>({
+      id:String(row.id),parentCommentId:row.parent_comment_id?String(row.parent_comment_id):null,
+      authorName:String(row.author_name||'ZameenHub member'),
+      authorRole:String(row.author_role||'user'),body:String(row.body),
+      createdAt:String(row.created_at),updatedAt:String(row.updated_at),
+      isMine:!!viewerId&&row.author_id===viewerId
+    }))
+  }
 }
 const verificationEvidenceTypes=new Set(['none','official_record','property_tax_record','registry_reference','other_public_record'])
 function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string;url:string;status:'unverified'|'submitted';submittedAt:string|null}|null {
