@@ -28,8 +28,13 @@ export function EditListingPage() {
   const [imageFiles, setImageFiles] = useState<File[]>([])
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
-  const [documents, setDocuments] = useState<Array<{ id?: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain?: string; storageProvider?: 'imagekit' | 'external'; sortOrder?: number; createdAt?: string; updatedAt?: string }>>([])
-  const [evidenceFiles, setEvidenceFiles] = useState<Array<{ file: File; description: string }>>([])
+  const [ownershipType,setOwnershipType]=useState<'self_owned'|'inherited'|'jointly_owned'|'other'|'authorized_representative'>('self_owned')
+  const [ownershipDeclaration,setOwnershipDeclaration]=useState('')
+  const [knownDisputes,setKnownDisputes]=useState(false)
+  const [disputeDisclosure,setDisputeDisclosure]=useState('')
+  const [authorityToListConfirmed,setAuthorityToListConfirmed]=useState(false)
+  const [documents,setDocuments]=useState<Array<{id?:string;documentType:'pdf'|'image';description:string;url:string;sourceDomain?:string;storageProvider?:'imagekit'|'external';sortOrder?:number;createdAt?:string;updatedAt?:string;category:'ownership'|'inheritance'|'legal_status'|'supporting'|'other';sourceDate?:string;issuingAuthority?:string;jurisdiction?:string}>>([])
+  const [evidenceFiles,setEvidenceFiles]=useState<Array<{file:File;description:string;category:'ownership'|'inheritance'|'legal_status'|'supporting'|'other';sourceDate:string;issuingAuthority:string;jurisdiction:string}>>([])
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false)
 
   useEffect(() => {
@@ -65,6 +70,11 @@ export function EditListingPage() {
       setBathrooms(String(item.bathrooms))
       setArea(String(item.area))
       setDescription(item.description)
+      setOwnershipType(item.ownershipType||'self_owned')
+      setOwnershipDeclaration(item.ownershipDeclaration||'')
+      setKnownDisputes(!!item.knownDisputes)
+      setDisputeDisclosure(item.disputeDisclosure||'')
+      setAuthorityToListConfirmed(!!item.authorityToListConfirmed)
       setAmenities(item.amenities.filter(amenity => (PROPERTY_AMENITIES as readonly string[]).includes(amenity)))
       setDocuments(item.documents || [])
       setLoading(false)
@@ -85,8 +95,10 @@ export function EditListingPage() {
       setError('Check the title, location, city, positive price, room counts, area, and description before saving.')
       return
     }
+    if(ownershipDeclaration.trim().length<10||!authorityToListConfirmed){setError('Add the ownership declaration and confirm that you own the property or are legally authorized to list it.');return}
+    if(knownDisputes&&disputeDisclosure.trim().length<10){setError('Describe the known dispute or encumbrance in at least 10 characters.');return}
     setSaving(true)
-    const submittedDocuments = documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ ...(item.id ? { id: item.id } : {}), documentType: item.documentType, description: item.description.trim(), url: item.url.trim() }))
+    const submittedDocuments=documents.filter(item=>item.url.trim()&&item.description.trim()).map(item=>({...item,documentType:item.documentType,description:item.description.trim(),url:item.url.trim(),category:item.category||'other',sourceDate:item.sourceDate||'',issuingAuthority:item.issuingAuthority||'',jurisdiction:item.jurisdiction||'',sellerAuthorized:true}))
     const hasPublicPhoto = (property?.gallery.length || 0) > 0 || imageFiles.length > 0
     const hasPublicDocument = submittedDocuments.length > 0 || evidenceFiles.length > 0
     if (evidenceFiles.some(item => item.description.trim().length < 3)) { setSaving(false); setError('Give every new evidence file a clear description of at least 3 characters.'); return }
@@ -97,13 +109,13 @@ export function EditListingPage() {
       body: JSON.stringify({
         title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType,
         price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea,
-        description: description.trim(), amenities,
-        documents: submittedDocuments,
+        description:description.trim(),amenities,ownershipType,ownershipDeclaration:ownershipDeclaration.trim(),knownDisputes,disputeDisclosure:knownDisputes?disputeDisclosure.trim():'',authorityToListConfirmed,
+        documents:submittedDocuments,
         verificationEvidenceType: property?.verificationEvidenceType || 'none', verificationEvidenceUrl: property?.verificationEvidenceUrl || '',
       }),
     })
     if (!result.ok) { setSaving(false); setError(result.error); return }
-    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description: description.trim(), amenities, status: result.data.status, publicEligible: hasPublicPhoto && hasPublicDocument, verificationEvidenceType: property?.verificationEvidenceType || 'none', verificationEvidenceUrl: property?.verificationEvidenceUrl || '', verificationStatus: 'unverified', verified: false } : current)
+    setProperty(current => current ? { ...current, title: title.trim(), location: location.trim(), city: city.trim(), purpose, propertyType, price: numericPrice, bedrooms: numericBeds, bathrooms: numericBaths, area: numericArea, description:description.trim(),amenities,ownershipType,ownershipDeclaration:ownershipDeclaration.trim(),knownDisputes,disputeDisclosure,authorityToListConfirmed:true,status:result.data.status,publicEligible: hasPublicPhoto && hasPublicDocument, verificationEvidenceType: property?.verificationEvidenceType || 'none', verificationEvidenceUrl: property?.verificationEvidenceUrl || '', verificationStatus: 'unverified', verified: false } : current)
 
     const knownMediaIds = new Set((property?.imageMedia || []).map(media => media.id))
     for (let index = 0; index < imageFiles.length; index++) {
@@ -123,7 +135,7 @@ export function EditListingPage() {
     for (let index = 0; index < evidenceFiles.length; index++) {
       const evidence = evidenceFiles[index]
       setUploadStatus('Uploading evidence ' + (index + 1) + ' of ' + evidenceFiles.length)
-      const uploaded = await uploadPropertyEvidence(id, evidence.file, evidence.description.trim(), setUploadProgress, [...knownEvidenceIds])
+      const uploaded=await uploadPropertyEvidence(id,evidence.file,evidence.description.trim(),setUploadProgress,[...knownEvidenceIds],{category:evidence.category,sourceDate:evidence.sourceDate,issuingAuthority:evidence.issuingAuthority,jurisdiction:evidence.jurisdiction})
       if (!uploaded.ok) {
         setSaving(false)
         setError('Your listing changes were saved, but evidence file ' + (index + 1) + ' could not be confirmed: ' + uploaded.error)
@@ -179,6 +191,17 @@ export function EditListingPage() {
         <div className="form-field"><label htmlFor="edit-baths">Bathrooms</label><input className="form-control" id="edit-baths" type="number" min="0" max="100" step="1" value={bathrooms} onChange={e => setBathrooms(e.target.value)} /></div>
         <div className="form-field"><label htmlFor="edit-area">Area (sq ft)</label><input className="form-control" id="edit-area" type="number" min="0" max="100000000" step="1" value={area} onChange={e => setArea(e.target.value)} /></div>
         <div className="form-field full"><label htmlFor="edit-description">Description</label><textarea className="form-control" id="edit-description" required minLength={20} maxLength={8000} value={description} onChange={e => setDescription(e.target.value)} /><small>Keep the description accurate and do not include passwords, identity documents, or another person's private data.</small></div>
+        <section className="ownership-declaration-panel full" aria-labelledby="edit-ownership-title">
+          <h3 id="edit-ownership-title">Ownership and legal status</h3>
+          <p className="muted">Update the ownership arrangement and disclosures. ZameenHub does not determine legal ownership or sale authority.</p>
+          <div className="form-field"><label htmlFor="edit-ownership-type">Ownership arrangement</label><select className="form-control" id="edit-ownership-type" value={ownershipType} onChange={e=>setOwnershipType(e.target.value as typeof ownershipType)}><option value="self_owned">Self-owned</option><option value="inherited">Inherited</option><option value="jointly_owned">Jointly owned</option><option value="authorized_representative">Authorized representative</option><option value="other">Other legally recognized arrangement</option></select></div>
+          {ownershipType==='inherited'&&<div className="evidence-privacy-warning"><strong>Inherited property — no universal checklist.</strong><p>Depending on personal law, title history and jurisdiction, relevant records can include legal heir, probate, succession, administration, death, release/relinquishment, family settlement or court documents. Not all apply. Disclose co-heirs, competing claims and relevant consent. Uploading one record does not establish sole ownership or authority to sell.</p></div>}
+          {ownershipType==='jointly_owned'&&<p className="muted">Disclose known co-owners and whether their participation or consent is required.</p>}
+          <div className="form-field"><label htmlFor="edit-ownership-declaration">Ownership / authority declaration</label><textarea className="form-control" id="edit-ownership-declaration" required minLength={10} maxLength={1800} value={ownershipDeclaration} onChange={e=>setOwnershipDeclaration(e.target.value)} /></div>
+          <label className="evidence-privacy-ack"><input type="checkbox" checked={knownDisputes} onChange={e=>setKnownDisputes(e.target.checked)} /><span>There are known disputes, litigation, competing claims or encumbrances to disclose.</span></label>
+          {knownDisputes&&<div className="form-field"><label htmlFor="edit-dispute-disclosure">Known dispute / encumbrance disclosure</label><textarea className="form-control" id="edit-dispute-disclosure" required minLength={10} maxLength={1800} value={disputeDisclosure} onChange={e=>setDisputeDisclosure(e.target.value)} /></div>}
+          <label className="evidence-privacy-ack"><input type="checkbox" checked={authorityToListConfirmed} onChange={e=>setAuthorityToListConfirmed(e.target.checked)} /><span>I confirm that I own this property or am legally authorized to list it, and that these declarations are accurate to the best of my knowledge. I will disclose relevant co-owners/heirs and update material changes.</span></label>
+        </section>
         <div className="form-field full"><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset></div>
         <section className="media-editor full" aria-labelledby="edit-property-media-heading">
           <h3 id="edit-property-media-heading">Property photos</h3>
@@ -245,7 +268,7 @@ export function EditListingPage() {
               const selected = Array.from(event.target.files || [])
               if (selected.some(file => file.size > 10 * 1024 * 1024)) { setError('Each evidence file must be 10 MB or smaller.'); event.target.value = ''; return }
               if (selected.some(file => !['application/pdf','image/jpeg','image/png','image/webp'].includes(file.type.toLowerCase()))) { setError('Evidence files must be PDF, JPEG, PNG or WebP.'); event.target.value = ''; return }
-              setEvidenceFiles(current => [...current, ...selected.slice(0, remaining).map(file => ({ file, description: file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').slice(0, 180) }))])
+              setEvidenceFiles(current=>[...current,...selected.slice(0,remaining).map(file=>({file,description:file.name.replace(/\.[^.]+$/,'').replace(/[-_]/g,' ').slice(0,180),category:ownershipType==='inherited'?'inheritance' as 'inheritance':'ownership' as 'ownership',sourceDate:'',issuingAuthority:'',jurisdiction:''}))])
               setError('')
               event.target.value = ''
             }} />
@@ -256,7 +279,7 @@ export function EditListingPage() {
             <div className="form-field"><label htmlFor={'edit-new-evidence-description-' + index}>What does this document prove?</label><input className="form-control" id={'edit-new-evidence-description-' + index} value={item.description} maxLength={180} onChange={event => setEvidenceFiles(current => current.map((entry, itemIndex) => itemIndex === index ? { ...entry, description: event.target.value } : entry))} placeholder="e.g. Property tax receipt" /></div>
             <button className="btn btn-outline media-remove" type="button" onClick={() => setEvidenceFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove file</button>
           </div>)}
-          {documents.length + evidenceFiles.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length + evidenceFiles.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add existing HTTPS evidence link</button>}
+          {documents.length + evidenceFiles.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length + evidenceFiles.length < 10 ? [...current, {documentType:'pdf',description:'',url:'',category:ownershipType==='inherited'?'inheritance':'ownership',sourceDate:'',issuingAuthority:'',jurisdiction:''}] : current)}>Add existing HTTPS evidence link</button>}
           <label className="evidence-privacy-ack"><input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} /> <span>I confirm new evidence files and links do not expose personal ID numbers or private information.</span></label>
           {uploadStatus && <p className="status-message" role="status">{uploadStatus}{saving ? ' · ' + uploadProgress + '%' : ''}</p>}
         </section>
