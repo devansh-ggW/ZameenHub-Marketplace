@@ -338,14 +338,18 @@ def main() -> int:
                   VALUES('snapshot-test','other-owner','snapshot-test-home','Snapshot test home','sale','Apartment','North','Nashik',1500000,'A detailed description of the snapshot test property','pending')""")
 
     db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
-                  VALUES('report-1','published','reporter','suspected_fraud','Specific evidence for the report','open',?)""", (now,))
+                  VALUES('report-1','published','reporter','suspected_fraud','Specific evidence for the report','submitted',?)""", (now,))
+    db.execute("""INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at)
+                  VALUES('published','reporter','report-1',?)""", (now,))
+    db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
+                  VALUES('report-duplicate','published','reporter','suspected_fraud','Another report for the same property','submitted',?)""", (now,))
     try:
-        db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
-                      VALUES('report-duplicate','published','reporter','suspected_fraud','Another report for the same property','open',?)""", (now,))
+        db.execute("""INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at)
+                      VALUES('published','reporter','report-duplicate',?)""", (now,))
     except sqlite3.IntegrityError:
         pass
     else:
-        raise AssertionError("The unique open-report constraint did not prevent duplicate reports")
+        raise AssertionError("The unique eligible report contribution constraint did not prevent duplicate counting")
 
     # Test the actual owner-inbox query and owner-only status update used by the Worker.
     db.execute("""INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)
