@@ -3,18 +3,26 @@ import { Link } from 'react-router-dom'
 import { apiRequest } from './lib/auth'
 
 const reasonOptions = [
-  ['suspected_fraud', 'Suspected scam or fraud'],
-  ['incorrect_price', 'Incorrect price'],
-  ['duplicate', 'Duplicate listing'],
-  ['unavailable', 'Property is unavailable'],
-  ['misleading_details', 'Misleading property details'],
-  ['other', 'Other concern'],
+  ['suspected_fraud','Suspected fraud or scam'],
+  ['ownership_fraud','Suspected ownership fraud'],
+  ['forged_documents','Potentially forged or misleading documents'],
+  ['known_dispute','Known dispute or litigation'],
+  ['incorrect_price','Incorrect price'],
+  ['incorrect_property_info','Incorrect property information'],
+  ['misleading_photos','Misleading property photographs'],
+  ['duplicate','Duplicate listing'],
+  ['unavailable','Property unavailable'],
+  ['unauthorized_listing','Unauthorized listing'],
+  ['misleading_details','Misleading details'],
+  ['suspected_scam','Suspected scam'],
+  ['other','Other concern'],
 ] as const
 
 export function ReportProperty({ propertyId, slug }: { propertyId: string; slug: string }) {
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState<string>('suspected_fraud')
   const [details, setDetails] = useState('')
+  const [evidenceUrl,setEvidenceUrl]=useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -23,7 +31,7 @@ export function ReportProperty({ propertyId, slug }: { propertyId: string; slug:
     event.preventDefault(); setBusy(true); setError(''); setNotice('')
     const result = await apiRequest<{ id: string; status: string; message: string }>('/api/reports', {
       method: 'POST',
-      body: JSON.stringify({ propertyId, reason, details: details.trim() }),
+      body: JSON.stringify({propertyId,reason,details:details.trim(),evidenceUrl:evidenceUrl.trim()}),
     })
     setBusy(false)
     if (!result.ok) {
@@ -33,7 +41,7 @@ export function ReportProperty({ propertyId, slug }: { propertyId: string; slug:
       return
     }
     setNotice(result.data.message)
-    setDetails('')
+    setDetails('');setEvidenceUrl('')
     setOpen(false)
   }
 
@@ -46,6 +54,7 @@ export function ReportProperty({ propertyId, slug }: { propertyId: string; slug:
       <form onSubmit={submit}>
         <div className="form-field"><label htmlFor={'report-reason-' + propertyId}>Reason</label><select className="form-control" id={'report-reason-' + propertyId} value={reason} onChange={e => setReason(e.target.value)}>{reasonOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
         <div className="form-field"><label htmlFor={'report-details-' + propertyId}>Details or evidence</label><textarea className="form-control" id={'report-details-' + propertyId} required minLength={10} maxLength={1200} value={details} onChange={e => setDetails(e.target.value)} placeholder="Explain the specific issue. Do not include passwords or one-time codes." /></div>
+        <div className="form-field"><label htmlFor={'report-evidence-' + propertyId}>Optional public HTTPS evidence link</label><input className="form-control" id={'report-evidence-' + propertyId} type="url" maxLength={2000} value={evidenceUrl} onChange={e=>setEvidenceUrl(e.target.value)} placeholder="https://example.com/public-record" /><small>Do not include private documents, identity numbers or confidential report material.</small></div>
         {error && <p className="status-message error" role="alert">{error} {error.includes('Sign in') && <Link to={'/login?next=' + encodeURIComponent('/properties/' + slug)}>Sign in</Link>}</p>}
         <button className="btn btn-primary" disabled={busy}>{busy ? 'Submitting…' : 'Submit report'}</button>
       </form>
