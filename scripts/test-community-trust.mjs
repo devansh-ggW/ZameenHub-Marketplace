@@ -30,5 +30,5 @@ assert.equal(color({ publicCommentCount: 0 }), 'YELLOW', 'A review-only listing 
 assert.equal(color({ publicReplyCount: 0 }), 'YELLOW', 'A discussion without replies is insufficient')
 assert.equal(color(), 'GREEN', 'All GREEN criteria satisfied')
 assert.equal(calculate(base).reason, 'positive_community_activity')
-assert.equal(calculate(base).calculatedAt, '2026-11-11T12:00:00.000Z')
+assert.equal(calculate(base, '2026-11-11T12:00:00.000Z').calculatedAt, '2026-11-11T12:00:00.000Z')
 console.log('Community Trust Indicator policy tests passed.')
