@@ -12,7 +12,7 @@ export type Env = {
   ADMIN_EMAILS?: string
 }
 type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; profile_image_file_id?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
-type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; owner_role?:string; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
+type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; owner_role?:string; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string; ownership_type?:string; ownership_declaration?:string; known_disputes?:number; dispute_disclosure?:string; authority_to_list_confirmed?:number }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
   headers.set('content-type','application/json; charset=utf-8')
@@ -233,12 +233,12 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; storageProvider:'imagekit'|'external'; sortOrder:number; createdAt:string; updatedAt:string }
+type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; storageProvider:'imagekit'|'external'; sortOrder:number; createdAt:string; updatedAt:string; category:string; sourceDate:string; issuingAuthority:string; jurisdiction:string }
 type PropertyImageView = { id:string; url:string; fileId:string|null; sortOrder:number }
 function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:PropertyImageView[]=[],documents:PropertyDocumentView[]=[]) {
   const verificationStatus=p.verification_status||'unverified'
   return {
-    id:p.id,ownerId:p.owner_id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
+    id:p.id,ownerId:p.owner_id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,ownershipType:p.ownership_type||'self_owned',ownershipDeclaration:p.ownership_declaration||'',knownDisputes:!!p.known_disputes,disputeDisclosure:p.dispute_disclosure||'',authorityToListConfirmed:!!p.authority_to_list_confirmed,
     propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
     bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
     image:images[0]||'',gallery:images,description:p.description,
@@ -277,7 +277,8 @@ function normalizeHttpsUrl(value:unknown,max=1500):string|null {
   } catch { return null }
 }
 const allowedDocumentTypes=new Set(['pdf','image'])
-type SanitizedPropertyDocument = { id:string|null; type:'pdf'|'image'; description:string; url:string; sourceDomain:string }
+type SanitizedPropertyDocument = { id:string|null; type:'pdf'|'image'; description:string; url:string; sourceDomain:string; category:string; sourceDate:string; issuingAuthority:string; jurisdiction:string }
+const allowedDocumentCategories=new Set(['ownership','inheritance','legal_status','supporting','other'])
 function sanitizePropertyDocuments(value:unknown):SanitizedPropertyDocument[]|null {
   if(value===undefined||value===null)return []
   if(!Array.isArray(value)||value.length>10)return null
@@ -286,36 +287,35 @@ function sanitizePropertyDocuments(value:unknown):SanitizedPropertyDocument[]|nu
   for(const item of value) {
     if(!item||typeof item!=='object'||Array.isArray(item))return null
     const record=item as Record<string,unknown>
-    const type=clean(record.documentType,12)
-    const description=clean(record.description,180)
-    const url=normalizeHttpsUrl(record.url,2000)
-    const id=clean(record.id,80)||null
-    if(!allowedDocumentTypes.has(type)||description.length<3||!url)return null
+    const type=clean(record.documentType,12),description=clean(record.description,180),url=normalizeHttpsUrl(record.url,2000)
+    const id=clean(record.id,80)||null,category=clean(record.category,24)||'other'
+    const sourceDate=clean(record.sourceDate,10),issuingAuthority=clean(record.issuingAuthority,160),jurisdiction=clean(record.jurisdiction,120)
+    if(!allowedDocumentTypes.has(type)||!allowedDocumentCategories.has(category)||description.length<3||!url)return null
+    if(sourceDate&&(!/^\\d{4}-\\d{2}-\\d{2}$/.test(sourceDate)||Number.isNaN(Date.parse(sourceDate+'T00:00:00Z'))))return null
+    if(record.sellerAuthorized===false)return null
     if(seenUrls.has(url)||(id&&seenIds.has(id)))return null
     seenUrls.add(url);if(id)seenIds.add(id)
-    const sourceDomain=new URL(url).hostname.toLowerCase()
-    documents.push({id,type:type as 'pdf'|'image',description,url,sourceDomain})
+    documents.push({id,type:type as 'pdf'|'image',description,url,sourceDomain:new URL(url).hostname.toLowerCase(),category,sourceDate,issuingAuthority,jurisdiction})
   }
   return documents
 }
 function propertyDocumentInsertStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[]):D1PreparedStatement[] {
   const timestamp=nowIso()
-  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp))
+  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,category,source_date,issuing_authority,jurisdiction,seller_authorized) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction))
 }
 async function propertyDocumentReplacementStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[],guardUpdatedAt:string):Promise<D1PreparedStatement[]> {
   const current=await db.prepare('SELECT id FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId).all<{id:string}>()
   const existingIds=new Set(current.results.map(row=>row.id)),retainedIds:string[]=[],statements:D1PreparedStatement[]=[],timestamp=nowIso()
   const propertyGuard=' AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)'
   for(let index=0;index<documents.length;index++) {
-    const document=documents[index]
-    const existingId=document.id&&existingIds.has(document.id)?document.id:null
+    const document=documents[index],existingId=document.id&&existingIds.has(document.id)?document.id:null
     if(existingId) {
       retainedIds.push(existingId)
-      statements.push(db.prepare("UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,imagekit_file_id=CASE WHEN url<>? THEN NULL ELSE imagekit_file_id END,file_path=CASE WHEN url<>? THEN '' ELSE file_path END,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?"+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.url,document.url,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
+      statements.push(db.prepare("UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,category=?,source_date=?,issuing_authority=?,jurisdiction=?,seller_authorized=1,imagekit_file_id=CASE WHEN url<>? THEN NULL ELSE imagekit_file_id END,file_path=CASE WHEN url<>? THEN '' ELSE file_path END,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? OR category<>? OR source_date<>? OR issuing_authority<>? OR jurisdiction<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?"+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction,document.url,document.url,document.type,document.description,document.url,document.sourceDomain,index,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
     } else {
       const newId=uuid()
       retainedIds.push(newId)
-      statements.push(db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)').bind(newId,propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,propertyId,ownerId,guardUpdatedAt))
+      statements.push(db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,category,source_date,issuing_authority,jurisdiction,seller_authorized) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)').bind(newId,propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction,propertyId,ownerId,guardUpdatedAt))
     }
   }
   if(retainedIds.length) {
@@ -432,8 +432,8 @@ async function propertyMedia(db:D1Database,id:string,includeMetadata=false) {
   }
 }
 async function propertyDocuments(db:D1Database,id:string):Promise<PropertyDocumentView[]> {
-  const result=await db.prepare("SELECT id,document_type,description,url,source_domain,imagekit_file_id,sort_order,created_at,updated_at FROM property_documents WHERE property_id=? AND status='active' ORDER BY sort_order ASC").bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;imagekit_file_id:string|null;sort_order:number;created_at:string;updated_at:string}>()
-  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,storageProvider:row.imagekit_file_id?'imagekit':'external',sortOrder:row.sort_order,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at}))
+  const result=await db.prepare("SELECT id,document_type,description,url,source_domain,imagekit_file_id,sort_order,created_at,updated_at,category,source_date,issuing_authority,jurisdiction FROM property_documents WHERE property_id=? AND status='active' AND seller_authorized=1 ORDER BY sort_order ASC").bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;imagekit_file_id:string|null;sort_order:number;created_at:string;updated_at:string;category:string;source_date:string;issuing_authority:string;jurisdiction:string}>()
+  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,storageProvider:row.imagekit_file_id?'imagekit':'external',sortOrder:row.sort_order,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at,category:row.category||'other',sourceDate:row.source_date||'',issuingAuthority:row.issuing_authority||'',jurisdiction:row.jurisdiction||''}))
 }
 async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
   const [media,documents]=await Promise.all([propertyMedia(db,p.id,includePrivateVerification),propertyDocuments(db,p.id)])
