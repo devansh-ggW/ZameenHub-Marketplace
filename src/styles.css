@@ -1139,3 +1139,23 @@ img { max-width: 100%; display: block; }
   .community-inline-form { grid-template-columns:1fr; }
   .community-inline-form textarea { grid-column:auto; }
 }
+
+
+.community-rating-distribution { grid-column:1/-1; display:grid; gap:7px; padding:12px; border:1px solid var(--line); border-radius:5px; }
+.community-rating-distribution>strong { font-size:12px; }
+.community-rating-row { display:grid; grid-template-columns:28px minmax(0,1fr) 22px; gap:8px; align-items:center; font-size:11px; color:var(--muted); }
+.community-rating-track { height:7px; overflow:hidden; background:var(--soft); border-radius:10px; }
+.community-rating-track>span { display:block; height:100%; background:var(--blue); border-radius:10px; }
+.community-moderation-queue { margin:34px 0 10px; padding-top:24px; border-top:1px solid var(--line); }
+.community-moderation-queue .page-title { margin-bottom:18px; }
+.community-reported-content { margin:12px 0; padding:14px 16px; border-left:3px solid var(--blue); background:var(--soft); line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.ownership-declaration-panel { display:grid; gap:14px; margin:18px 0; padding:18px; border:1px solid var(--line); border-radius:6px; background:#fcfdff; }
+.ownership-declaration-panel h3,.ownership-declaration-panel p { margin:0; }
+.ownership-declaration-panel .muted { font-size:12px; line-height:1.6; }
+.ownership-declaration-panel .evidence-privacy-warning p { margin-top:6px; }
+.ownership-public-disclosure { padding:18px; border:1px solid var(--line); border-radius:6px; }
+.ownership-public-disclosure>p { line-height:1.65; overflow-wrap:anywhere; }
+@media (max-width:700px) {
+  .community-moderation-queue .report-card-head { flex-direction:column; }
+  .community-moderation-queue .report-actions { flex-wrap:wrap; }
+}
