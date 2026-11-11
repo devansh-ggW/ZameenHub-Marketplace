@@ -28,6 +28,26 @@ def main() -> int:
     for migration in MIGRATIONS:
         # Seed a realistic pre-upgrade installation immediately before the
         # additive session/history migration so its backfills are exercised.
+        if migration.name == "0011_community_trust_and_legal_evidence.sql":
+            # Exercise the legacy report status and deduplication backfill.
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-reporter", "rollout-reporter@example.test", "Rollout Reporter", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-reviewer", "rollout-reviewer@example.test", "Rollout Reviewer", "user", "test-hash"))
+            legacy_reports = [
+                ("legacy-report-1", "rollout-reporter", "open"),
+                ("legacy-report-2", "rollout-reporter", "open"),
+                ("legacy-report-3", "rollout-reviewer", "reviewing"),
+                ("legacy-report-dismissed", "rollout-reviewer", "dismissed"),
+                ("legacy-report-resolved", "rollout-reviewer", "resolved"),
+            ]
+            for report_id, reporter_id, status in legacy_reports:
+                db.execute("""INSERT INTO property_reports
+                    (id,property_id,reporter_id,reason,details,status,created_at)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    (report_id, "rollout-property", reporter_id, "other",
+                     "Legacy report retained during community migration.", status, rollout_iso))
+            db.commit()
         if migration.name == "0009_listing_history_persistent_sessions.sql":
             db.execute("INSERT INTO users(id,email,name) VALUES(?,?,?)",
                        ("rollout-owner", "rollout-owner@example.test", "Rollout Owner"))
@@ -56,6 +76,8 @@ def main() -> int:
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
         "property_moderation_events", "property_media", "property_documents", "property_conversations", "property_messages", "property_message_hidden", "imagekit_cleanup_queue", "property_listing_history",
+        "property_report_contributions", "property_report_events", "property_reviews", "property_comments",
+        "property_review_responses", "community_content_reports", "community_moderation_events", "user_policy_acceptances",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
@@ -66,6 +88,69 @@ def main() -> int:
     session_columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
     expect({"last_seen_at", "absolute_expires_at"} <= session_columns,
            "Persistent sessions must include rolling activity and absolute-expiry columns")
+    # Community trust / legal evidence schema and legacy report backfill.
+    ownership_columns = {row["name"] for row in db.execute("PRAGMA table_info(properties)")}
+    expect({"ownership_type", "ownership_declaration", "known_disputes", "dispute_disclosure", "authority_to_list_confirmed"} <= ownership_columns,
+           "Property ownership and seller-declaration columns are incomplete")
+    evidence_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
+    expect({"category", "source_date", "issuing_authority", "jurisdiction", "seller_authorized"} <= evidence_columns,
+           "Classified property evidence metadata columns are incomplete")
+    legacy_doc = db.execute("SELECT category,seller_authorized,status FROM property_documents WHERE id='rollout-document'").fetchone()
+    expect(legacy_doc is not None and legacy_doc["category"] == "other" and legacy_doc["seller_authorized"] == 1 and legacy_doc["status"] == "active",
+           "Legacy seller evidence must remain active and receive safe metadata defaults")
+    legacy = {row["id"]: row for row in db.execute("SELECT id,status,threshold_eligible FROM property_reports WHERE id LIKE 'legacy-report-%'")}
+    expect(len(legacy) == 5, "The community migration must preserve every existing property report")
+    expect(legacy["legacy-report-1"]["status"] == "submitted" and legacy["legacy-report-3"]["status"] == "under_review",
+           "Legacy open/reviewing reports must map to submitted/under_review")
+    expect(legacy["legacy-report-dismissed"]["status"] == "dismissed" and legacy["legacy-report-dismissed"]["threshold_eligible"] == 0,
+           "Dismissed legacy reports must remain auditable but not count toward the indicator")
+    expect(legacy["legacy-report-resolved"]["status"] == "resolved", "Resolved reports must retain their status")
+    expect(legacy["legacy-report-1"]["threshold_eligible"] == 1 and legacy["legacy-report-2"]["threshold_eligible"] == 0,
+           "Only one legacy report per account/property may count")
+    expect(db.execute("SELECT COUNT(*) FROM property_report_contributions").fetchone()[0] == 2,
+           "Legacy distinct reporter/property contributions must be backfilled")
+    expect(db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id LIKE 'legacy-report-%'").fetchone()[0] == 5,
+           "Every migrated report must receive an audit-history event")
+    for operation, sql in (
+        ("update", "UPDATE property_report_events SET note='tampered' WHERE report_id='legacy-report-1'"),
+        ("delete", "DELETE FROM property_report_events WHERE report_id='legacy-report-1'"),
+    ):
+        try:
+            db.execute(sql)
+            raise AssertionError(f"Property report audit history must reject {operation}")
+        except sqlite3.IntegrityError:
+            pass
+    review_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_reviews)")}
+    expect({"rating", "interaction_type", "reviewer_id", "status", "created_at", "updated_at"} <= review_columns,
+           "Community review fields are incomplete")
+    comment_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_comments)")}
+    expect({"author_id", "parent_comment_id", "body", "status"} <= comment_columns,
+           "Property discussion fields are incomplete")
+    db.execute("""INSERT INTO property_reviews
+        (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,'published',?,?)""",
+        ("community-review-1", "rollout-property", "rollout-reviewer", 5,
+         "A detailed customer experience review with enough characters.", "viewing", rollout_iso, rollout_iso))
+    try:
+        db.execute("""INSERT INTO property_reviews
+            (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,'published',?,?)""",
+            ("community-review-2", "rollout-property", "rollout-reviewer", 4,
+             "Another detailed customer experience review with enough characters.", "inquiry", rollout_iso, rollout_iso))
+        raise AssertionError("A user must not have multiple active property reviews")
+    except sqlite3.IntegrityError:
+        pass
+    try:
+        db.execute("""INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at)
+            VALUES(?,?,?,?)""",
+            ("rollout-property", "rollout-reporter", "legacy-report-2", rollout_iso))
+        raise AssertionError("Duplicate account/property report contribution must be rejected")
+    except sqlite3.IntegrityError:
+        pass
+    policy_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_policy_acceptances)")}
+    expect({"user_id", "policy_key", "policy_version", "accepted_at"} <= policy_columns,
+           "Versioned policy acceptance fields are incomplete")
+
     document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
     expect("updated_at" in document_columns, "Property documents must track their latest metadata update")
     expect({"imagekit_file_id", "file_path", "uploader_id", "status"} <= document_columns,
