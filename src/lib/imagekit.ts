@@ -94,7 +94,28 @@ export function uploadPropertyImage(
   })
 }
 
-export type PropertyEvidenceMetadata = { category: 'ownership' | 'inheritance' | 'legal_status' | 'supporting' | 'other'; sourceDate?: string; issuingAuthority?: string; jurisdiction?: string }\n\nexport type UploadedPropertyEvidence = {\n  id: string\n  documentType: 'pdf' | 'image'\n  description: string\n  url: string\n  sourceDomain: string\n  storageProvider: 'imagekit'\n  sortOrder: number\n  createdAt: string\n  updatedAt: string\n  category: PropertyEvidenceMetadata['category']\n  sourceDate: string\n  issuingAuthority: string\n  jurisdiction: string\n}
+export type PropertyEvidenceMetadata = {
+  category: 'ownership' | 'inheritance' | 'legal_status' | 'supporting' | 'other'
+  sourceDate?: string
+  issuingAuthority?: string
+  jurisdiction?: string
+}
+
+export type UploadedPropertyEvidence = {
+  id: string
+  documentType: 'pdf' | 'image'
+  description: string
+  url: string
+  sourceDomain: string
+  storageProvider: 'imagekit'
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+  category: PropertyEvidenceMetadata['category']
+  sourceDate: string
+  issuingAuthority: string
+  jurisdiction: string
+}
 
 async function findPersistedPropertyEvidence(propertyId: string, knownIds: ReadonlySet<string>, description: string): Promise<UploadedPropertyEvidence | null> {
   try {
@@ -110,7 +131,13 @@ async function findPersistedPropertyEvidence(propertyId: string, knownIds: Reado
   } catch { return null }
 }
 
-export function uploadPropertyEvidence(\n  propertyId: string,\n  file: File,\n  description: string,\n  onProgress?: (percent: number) => void,\n  knownEvidenceIds: readonly string[] = [],\n  metadata: PropertyEvidenceMetadata = { category: 'other' },
+export function uploadPropertyEvidence(
+  propertyId: string,
+  file: File,
+  description: string,
+  onProgress?: (percent: number) => void,
+  knownEvidenceIds: readonly string[] = [],
+  metadata: PropertyEvidenceMetadata = { category: 'other' },
 ): Promise<{ ok: true; data: UploadedPropertyEvidence } | { ok: false; error: string }> {
   return new Promise(resolve => {
     const request = new XMLHttpRequest()
@@ -128,7 +155,13 @@ export function uploadPropertyEvidence(\n  propertyId: string,\n  file: File,\n 
       else finish({ ok: false, error })
     }
     form.append('propertyId', propertyId)
-    form.append('description', description)\n    form.append('category', metadata.category)\n    form.append('sourceDate', metadata.sourceDate || '')\n    form.append('issuingAuthority', metadata.issuingAuthority || '')\n    form.append('jurisdiction', metadata.jurisdiction || '')\n    form.append('sellerAuthorized', 'true')\n    form.append('file', file)
+    form.append('description', description)
+    form.append('category', metadata.category)
+    form.append('sourceDate', metadata.sourceDate || '')
+    form.append('issuingAuthority', metadata.issuingAuthority || '')
+    form.append('jurisdiction', metadata.jurisdiction || '')
+    form.append('sellerAuthorized', 'true')
+    form.append('file', file)
     request.open('POST', '/api/media/property-evidence')
     request.withCredentials = true
     request.setRequestHeader('Accept', 'application/json')
