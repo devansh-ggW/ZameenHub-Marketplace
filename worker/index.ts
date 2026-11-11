@@ -610,8 +610,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         return ok({message:registrationMessage})
       }
 
-      const id=uuid()
-      await db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,nowIso()).run()
+      const id=uuid(),acceptedAt=nowIso()
+      await db.batch([
+        db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms','2026-11-11',?)").bind(uuid(),id,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy','2026-11-11',?)").bind(uuid(),id,acceptedAt)
+      ])
       const token=await issueToken(db,id,'verify',30)
       const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
       await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'),emailText('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
@@ -636,8 +640,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const record=await db.prepare("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='activate' AND expires_at>? RETURNING user_id").bind(await digest(token),nowIso()).first<{user_id:string}>()
       if(!record)return fail('This activation link is invalid or expired. Request a new one.',400)
       const hash=await passwordHash(password)
+      const acceptedAt=nowIso()
       await db.batch([
-        db.prepare('UPDATE users SET password_hash=?,email_verified=1,email_verified_at=?,terms_accepted_at=?,updated_at=? WHERE id=? AND password_hash IS NULL').bind(hash,nowIso(),nowIso(),nowIso(),record.user_id),
+        db.prepare('UPDATE users SET password_hash=?,email_verified=1,email_verified_at=?,terms_accepted_at=?,updated_at=? WHERE id=? AND password_hash IS NULL').bind(hash,acceptedAt,acceptedAt,acceptedAt,record.user_id),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms','2026-11-11',?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy','2026-11-11',?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,acceptedAt),
         db.prepare("DELETE FROM email_verification_tokens WHERE user_id=? AND purpose='activate'").bind(record.user_id)
       ])
       return ok({message:'Your account is activated. Sign in to continue.'})
