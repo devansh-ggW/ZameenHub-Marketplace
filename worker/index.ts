@@ -291,7 +291,7 @@ function sanitizePropertyDocuments(value:unknown):SanitizedPropertyDocument[]|nu
     const id=clean(record.id,80)||null,category=clean(record.category,24)||'other'
     const sourceDate=clean(record.sourceDate,10),issuingAuthority=clean(record.issuingAuthority,160),jurisdiction=clean(record.jurisdiction,120)
     if(!allowedDocumentTypes.has(type)||!allowedDocumentCategories.has(category)||description.length<3||!url)return null
-    if(sourceDate&&(!/^\\d{4}-\\d{2}-\\d{2}$/.test(sourceDate)||Number.isNaN(Date.parse(sourceDate+'T00:00:00Z'))))return null
+    if(sourceDate){const parsedDate=new Date(sourceDate+'T00:00:00Z');if(Number.isNaN(parsedDate.getTime())||parsedDate.toISOString().slice(0,10)!==sourceDate)return null}
     if(record.sellerAuthorized===false)return null
     if(seenUrls.has(url)||(id&&seenIds.has(id)))return null
     seenUrls.add(url);if(id)seenIds.add(id)
@@ -1138,9 +1138,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for property evidence in this environment.',503)
       const parsed=await readLimitedMultipart(request)
       if(parsed.tooLarge)return fail('Property evidence files must be 10 MB or smaller.',413)
-      const file=parsed.formData?.get('file'),propertyId=clean(parsed.formData?.get('propertyId'),80),description=clean(parsed.formData?.get('description'),180)
+      const file=parsed.formData?.get('file'),propertyId=clean(parsed.formData?.get('propertyId'),80),description=clean(parsed.formData?.get('description'),180),category=clean(parsed.formData?.get('category'),24)||'other',sourceDate=clean(parsed.formData?.get('sourceDate'),10),issuingAuthority=clean(parsed.formData?.get('issuingAuthority'),160),jurisdiction=clean(parsed.formData?.get('jurisdiction'),120),sellerAuthorized=clean(parsed.formData?.get('sellerAuthorized'),5)==='true'
       if(!(typeof File!=='undefined'&&file instanceof File)||!propertyId)return fail('Choose a PDF/image evidence file and listing.')
       if(description.length<3)return fail('Add a short description for this property record.')
+      if(!allowedDocumentCategories.has(category)||!sellerAuthorized)return fail('Choose a valid evidence category and confirm that you are authorized to share this redacted material.')
+      if(sourceDate){const parsedDate=new Date(sourceDate+'T00:00:00Z');if(Number.isNaN(parsedDate.getTime())||parsedDate.toISOString().slice(0,10)!==sourceDate)return fail('Enter a valid document date in YYYY-MM-DD format.')}
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
       if(!owned)return fail('This property is not available in your account.',404)
       const existing=await db.prepare('SELECT sort_order FROM property_documents WHERE property_id=?').bind(propertyId).all<{sort_order:number}>()
@@ -1159,7 +1161,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const documentId=uuid(),timestamp=nowIso(),sourceDomain=new URL(uploaded.url).hostname.toLowerCase()
       try {
         const saved=await db.batch([
-          db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,imagekit_file_id,file_path,uploader_id,status) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,'active' WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(documentId,propertyId,user.id,sniffed.documentType,description,uploaded.url,sourceDomain,sortOrder,timestamp,timestamp,uploaded.fileId,uploaded.filePath,user.id,propertyId,user.id),
+          db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,imagekit_file_id,file_path,uploader_id,status,category,source_date,issuing_authority,jurisdiction,seller_authorized) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?,1 WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(documentId,propertyId,user.id,sniffed.documentType,description,uploaded.url,sourceDomain,sortOrder,timestamp,timestamp,uploaded.fileId,uploaded.filePath,user.id,category,sourceDate,issuingAuthority,jurisdiction,propertyId,user.id),
           db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(timestamp,propertyId,user.id),
           listingHistoryStatement(db,propertyId,user.id,'document_added',null,null,{description,sourceDomain,storageProvider:'imagekit'},timestamp,timestamp)
         ])
@@ -1169,7 +1171,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'evidence-d1-insert-failed').catch(()=>{})
         return fail('The evidence upload could not be saved to this listing. Please retry.',500)
       }
-      return ok({id:documentId,documentType:sniffed.documentType,description,url:uploaded.url,sourceDomain,storageProvider:'imagekit',sortOrder,createdAt:timestamp,updatedAt:timestamp},201)
+      return ok({id:documentId,documentType:sniffed.documentType,description,url:uploaded.url,sourceDomain,storageProvider:'imagekit',sortOrder,createdAt:timestamp,updatedAt:timestamp,category,sourceDate,issuingAuthority,jurisdiction},201)
     }
     if(path==='/api/properties'&&method==='POST') {
       const user=await requireUser(request,env)
