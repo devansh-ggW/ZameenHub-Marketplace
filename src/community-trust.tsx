@@ -21,6 +21,7 @@ type TrustSummary = {
   publicCommentCount: number
   publicReplyCount: number
   documentationSubmitted: number
+  eligibleDocumentationSubmitted: number
   explanation: string
   policy: {
     minimumEligibleReviews: number
@@ -190,6 +191,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
       <summary>See the full indicator breakdown</summary>
       <div className="community-breakdown-grid">
         <p><strong>Why this colour?</strong><span>{reasonCopy[trust.reason]||'The policy thresholds are applied in a fixed priority order.'}</span></p>
+        <p><strong>Qualifying ownership/legal evidence</strong><span>{trust.eligibleDocumentationSubmitted} submitted items in ownership, inheritance or legal-status categories</span></p>
         <p><strong>Distinct reviewers</strong><span>{trust.distinctReviewers} customer accounts</span></p>
         <div className="community-rating-distribution"><strong>Rating distribution</strong>{trust.ratingDistribution.map(item=><div className="community-rating-row" key={item.rating}><span>{item.rating}★</span><div className="community-rating-track"><span style={{width:(trust.eligibleReviewCount?item.count/trust.eligibleReviewCount*100:0)+'%'}}/></div><span>{item.count}</span></div>)}</div>
         <p><strong>Positive reviews</strong><span>{trust.positiveReviewCount} of {trust.eligibleReviewCount} ({Math.round(trust.positiveReviewShare*100)}%)</span></p>
