@@ -98,12 +98,12 @@ export function EditListingPage() {
     if(ownershipDeclaration.trim().length<10||!authorityToListConfirmed){setError('Add the ownership declaration and confirm that you own the property or are legally authorized to list it.');return}
     if(knownDisputes&&disputeDisclosure.trim().length<10){setError('Describe the known dispute or encumbrance in at least 10 characters.');return}
     setSaving(true)
-    const submittedDocuments=documents.filter(item=>item.url.trim()&&item.description.trim()).map(item=>({...item,documentType:item.documentType,description:item.description.trim(),url:item.url.trim(),category:item.category||'other',sourceDate:item.sourceDate||'',issuingAuthority:item.issuingAuthority||'',jurisdiction:item.jurisdiction||'',sellerAuthorized:true}))
+    const submittedDocuments=documents.filter(item=>item.url.trim()&&item.description.trim()).map(item=>({...item,documentType:item.documentType,description:item.description.trim(),url:item.url.trim(),category:item.category||'other',sourceDate:item.sourceDate||'',issuingAuthority:item.issuingAuthority||'',jurisdiction:item.jurisdiction||'',sellerAuthorized:privacyAcknowledged}))
     const hasPublicPhoto = (property?.gallery.length || 0) > 0 || imageFiles.length > 0
     const hasPublicDocument = submittedDocuments.length > 0 || evidenceFiles.length > 0
     if (evidenceFiles.some(item => item.description.trim().length < 3)) { setSaving(false); setError('Give every new evidence file a clear description of at least 3 characters.'); return }
     const hasNewOrChangedEvidenceLink = documents.some(item => !item.id || property?.documents?.find(existing => existing.id === item.id)?.url !== item.url)
-    if ((evidenceFiles.length > 0 || hasNewOrChangedEvidenceLink) && !privacyAcknowledged) { setSaving(false); setError('Confirm that new evidence does not expose personal IDs or private information.'); return }
+    if ((documents.length > 0 || evidenceFiles.length > 0) && !privacyAcknowledged) { setSaving(false); setError('Confirm that new evidence does not expose personal IDs or private information.'); return }
     const result = await apiRequest<{ id: string; status: 'published' | 'draft'; verified: false; message: string }>('/api/my/properties/' + encodeURIComponent(id), {
       method: 'PATCH',
       body: JSON.stringify({
