@@ -6,6 +6,7 @@ import { categories, formatPrice, images, type ListingHistoryEvent, type Propert
 import { getProperties, getProperty, submitInquiry } from './lib/api'
 import { apiRequest, getSession } from './lib/auth'
 import { ReportProperty } from './report-property'
+import { CommunityTrustSection } from './community-trust'
 import { PROPERTY_AMENITIES } from './lib/property-options'
 
 function formatHistoryDate(value: string) {
@@ -297,6 +298,7 @@ export function PropertyDetailPage() {
             <a href={document.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label="Open seller-provided evidence in a new tab">{document.storageProvider === 'imagekit' ? 'Open evidence file ↗' : 'Open original source ↗'}</a>
           </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the lister.</p>}
         </section>
+        <CommunityTrustSection propertyId={property.id} ownerId={property.ownerId} />
         <section className="detail-section listing-history" aria-labelledby="listing-history-title">
           <SectionKicker>Transparent property record</SectionKicker>
           <h2 id="listing-history-title">Listing History</h2>
