@@ -12,6 +12,7 @@ type TrustSummary = {
   openReports: number
   substantiatedReports: number
   dismissedReports: number
+  ratingDistribution: Array<{rating:number;count:number}>
   eligibleReviewCount: number
   distinctReviewers: number
   averageRating: number
@@ -190,6 +191,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
       <div className="community-breakdown-grid">
         <p><strong>Why this colour?</strong><span>{reasonCopy[trust.reason]||'The policy thresholds are applied in a fixed priority order.'}</span></p>
         <p><strong>Distinct reviewers</strong><span>{trust.distinctReviewers} customer accounts</span></p>
+        <div className="community-rating-distribution"><strong>Rating distribution</strong>{trust.ratingDistribution.map(item=><div className="community-rating-row" key={item.rating}><span>{item.rating}★</span><div className="community-rating-track"><span style={{width:(trust.eligibleReviewCount?item.count/trust.eligibleReviewCount*100:0)+'%'}}/></div><span>{item.count}</span></div>)}</div>
         <p><strong>Positive reviews</strong><span>{trust.positiveReviewCount} of {trust.eligibleReviewCount} ({Math.round(trust.positiveReviewShare*100)}%)</span></p>
         <p><strong>Eligible reports</strong><span>{trust.totalReports} total · {trust.openReports} submitted/under review</span></p>
         <p><strong>Substantiated reports</strong><span>{trust.substantiatedReports}</span></p>
