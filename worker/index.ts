@@ -1382,27 +1382,34 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       if(method==='DELETE') {await db.prepare('DELETE FROM favorites WHERE user_id=? AND property_id=?').bind(user.id,id).run();return ok({saved:false})}
     }
+
     if(path==='/api/reports'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before reporting a property.',401)
       if(!await authLimit(request,db,'property-report',6)||!await limited(db,'property-report-user:'+user.id,5,60))return fail('Too many reports. Please wait before submitting another.',429)
       const input=await body(request);if(!input)return fail('Invalid report request.')
       const propertyId=clean(input.propertyId,80),reason=clean(input.reason,40),details=clean(input.details,1200)
-      const reasons=['suspected_fraud','incorrect_price','duplicate','unavailable','misleading_details','other']
-      if(!propertyId||!reasons.includes(reason)||details.trim().length<10||details.length>1200)return fail('Choose a report reason and provide at least 10 characters of specific detail.')
+      const evidenceUrl=input.evidenceUrl?normalizeHttpsUrl(input.evidenceUrl,2000):''
+      const reasons=['suspected_fraud','ownership_fraud','forged_documents','known_dispute','incorrect_price','incorrect_property_info','misleading_photos','duplicate','unavailable','misleading_details','unauthorized_listing','suspected_scam','other']
+      if(!propertyId||!reasons.includes(reason)||details.trim().length<10||details.length>1200||(input.evidenceUrl&&!evidenceUrl))return fail('Choose a report reason, provide at least 10 characters of specific detail, and use an optional public HTTPS evidence link.')
       const property=await db.prepare(`SELECT p.id,p.owner_id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string}>()
       if(!property)return fail('This property is not currently available to report.',404)
       if(property.owner_id===user.id)return fail('You cannot report your own listing.',403)
-      const existing=await db.prepare("SELECT id FROM property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')").bind(propertyId,user.id).first<{id:string}>()
-      if(existing)return fail('You already have an open report for this listing. The moderation team can review it.',409)
-      const id=uuid()
-      await db.prepare("INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,'open',?)").bind(id,propertyId,user.id,reason,details,nowIso()).run()
-      return ok({id,status:'open',message:'Report received. It will be reviewed by the moderation team.'},201)
+      const existing=await db.prepare('SELECT report_id FROM property_report_contributions WHERE property_id=? AND reporter_id=?').bind(propertyId,user.id).first<{report_id:string}>()
+      if(existing)return fail('This account has already submitted a report contribution for this property. Moderators can review the existing report.',409)
+      const id=uuid(),timestamp=nowIso()
+      const results=await db.batch([
+        db.prepare("INSERT INTO property_reports(id,property_id,reporter_id,reason,details,evidence_url,status,threshold_eligible,created_at) VALUES(?,?,?,?,?,?,'submitted',1,?)").bind(id,propertyId,user.id,reason,details,evidenceUrl||'',timestamp),
+        db.prepare("INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at) VALUES(?,?,?,?)").bind(propertyId,user.id,id,timestamp),
+        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) VALUES(?,?,?,?,NULL,'submitted',1,'Initial user report submission',?)").bind(uuid(),id,propertyId,user.id,timestamp)
+      ])
+      if(!results[0]?.meta?.changes||!results[1]?.meta?.changes)return fail('The report could not be recorded. Refresh and try again.',409)
+      return ok({id,status:'submitted',message:'Report received. It is an allegation, not a finding; the moderation team will review it.'},201)
     }
     if(path==='/api/admin/reports'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to view reports.',403)
       if(!await authLimit(request,db,'report-queue',20))return fail('Too many requests. Please wait before trying again.',429)
-      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<{id:string;property_id:string;reporter_id:string|null;reason:string;details:string;status:string;created_at:string;resolved_by:string|null;resolved_at:string|null;resolution_note:string;property_title:string;property_slug:string;property_city:string;property_status:string}>()
+      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.evidence_url,r.threshold_eligible,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('submitted','under_review') ORDER BY r.created_at ASC LIMIT 100").all<Record<string,unknown>>()
       return ok(result.results)
     }
     const reportMatch=path.match(/^\/api\/admin\/reports\/([^/]+)$/)
@@ -1412,13 +1419,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'report-review',30)||!await limited(db,'report-review-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid report update.')
       const status=clean(input.status,20),note=clean(input.resolutionNote,1200),reportId=decodeURIComponent(reportMatch[1])
-      if(!['reviewing','resolved','dismissed'].includes(status))return fail('Unsupported report status.')
-      if(['resolved','dismissed'].includes(status)&&note.trim().length<8)return fail('Add a resolution note of at least 8 characters before closing a report.')
-      const old=await db.prepare("SELECT id FROM property_reports WHERE id=? AND status IN ('open','reviewing')").bind(reportId).first<{id:string}>()
+      if(!['under_review','substantiated','resolved','dismissed'].includes(status))return fail('Unsupported report status.')
+      if(status!=='under_review'&&note.trim().length<8)return fail('Add a resolution note of at least 8 characters before closing a report.')
+      const old=await db.prepare("SELECT id,property_id,status,threshold_eligible FROM property_reports WHERE id=? AND status IN ('submitted','under_review')").bind(reportId).first<{id:string;property_id:string;status:string;threshold_eligible:number}>()
       if(!old)return fail('Report was already handled or could not be found.',404)
-      const result=await db.prepare("UPDATE property_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:nowIso(),note,reportId).run()
-      if(!result.meta.changes)return fail('Report was already handled or could not be found.',409)
-      return ok({id:reportId,status})
+      const timestamp=nowIso(),eligible=status==='dismissed'?0:Number(old.threshold_eligible)
+      const results=await db.batch([
+        db.prepare("UPDATE property_reports SET status=?,threshold_eligible=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review')").bind(status,eligible,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId),
+        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid(),reportId,old.property_id,user.id,old.status,status,eligible,note,timestamp)
+      ])
+      if(!results[0]?.meta?.changes)return fail('Report was already handled or could not be found.',409)
+      return ok({id:reportId,status,thresholdEligible:eligible===1})
     }
     if(path==='/api/admin/imagekit-cleanup'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
