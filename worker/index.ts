@@ -1031,7 +1031,16 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
     if(path==='/api/admin/community-reports'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review community reports.',403)
-      const result=await db.prepare("SELECT id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at FROM community_content_reports WHERE status IN ('submitted','under_review') ORDER BY created_at ASC LIMIT 100").all<Record<string,unknown>>()
+      const result=await db.prepare(`SELECT r.id,r.property_id,r.target_type,r.target_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,
+        COALESCE(rv.body,cm.body) AS reported_content,
+        COALESCE(ru.name,cu.name,'Former member') AS content_author
+        FROM community_content_reports r
+        LEFT JOIN property_reviews rv ON r.target_type='review' AND rv.id=r.target_id AND rv.property_id=r.property_id
+        LEFT JOIN property_comments cm ON r.target_type='comment' AND cm.id=r.target_id AND cm.property_id=r.property_id
+        LEFT JOIN users ru ON ru.id=rv.reviewer_id
+        LEFT JOIN users cu ON cu.id=cm.author_id
+        WHERE r.status IN ('submitted','under_review')
+        ORDER BY r.created_at ASC LIMIT 100`).all<Record<string,unknown>>()
       return ok(result.results)
     }
     const communityReportMatch=path.match(new RegExp('^/api/admin/community-reports/([^/]+)$'))
