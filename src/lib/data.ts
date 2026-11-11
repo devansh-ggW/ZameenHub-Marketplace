@@ -33,7 +33,12 @@ export type Property = {
   verificationSubmittedAt?: string
   verificationReviewedAt?: string
   verificationNote?: string
-  ownershipType?: 'self_owned' | 'inherited' | 'jointly_owned' | 'other' | 'authorized_representative'\n  ownershipDeclaration?: string\n  knownDisputes?: boolean\n  disputeDisclosure?: string\n  authorityToListConfirmed?: boolean\n  documents?: PropertyDocument[]
+  ownershipType?: 'self_owned' | 'inherited' | 'jointly_owned' | 'other' | 'authorized_representative'
+  ownershipDeclaration?: string
+  knownDisputes?: boolean
+  disputeDisclosure?: string
+  authorityToListConfirmed?: boolean
+  documents?: PropertyDocument[]
   imageMedia?: PropertyImage[]
   publicEligible?: boolean
   status: ListingStatus
