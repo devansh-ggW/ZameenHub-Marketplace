@@ -46,6 +46,7 @@ type Comment = {
   parentCommentId: string | null
   authorName: string
   authorRole: string
+  isOwner: boolean
   body: string
   createdAt: string
   updatedAt: string
@@ -215,24 +216,24 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
         {ownerResponseId===review.id&&<form className="community-inline-form" onSubmit={saveOwnerResponse}><textarea className="form-control" minLength={3} maxLength={1200} required value={ownerResponseBody} onChange={e=>setOwnerResponseBody(e.target.value)} placeholder="Write a public response as the listing owner."/><button className="btn btn-primary" disabled={busy}>Publish response</button><button type="button" className="btn btn-outline" onClick={()=>setOwnerResponseId('')}>Cancel</button></form>}
         <button className="community-report-link" onClick={()=>void report('review',review.id)}>Report review</button>
       </article>):<p className="gallery-empty">No customer reviews have been submitted yet.</p>}
-      <form className="community-form" onSubmit={submitReview}>
+      {!data.reviews.some(review=>review.isMine)&&<form className="community-form" onSubmit={submitReview}>
         <h4>Share an experience</h4><p className="muted">Choose the interaction type honestly. This is not a “verified buyer” badge.</p>
         <div className="community-form-row"><div className="form-field"><label>Rating</label><select className="form-control" value={rating} onChange={e=>setRating(e.target.value)}>{[5,4,3,2,1].map(n=><option key={n} value={n}>{n} stars</option>)}</select></div><div className="form-field"><label>Experience</label><select className="form-control" value={interactionType} onChange={e=>setInteractionType(e.target.value)}><option value="inquiry">Inquiry</option><option value="viewing">Viewing</option><option value="transaction">Transaction</option><option value="other">Other interaction</option></select></div></div>
         <div className="form-field"><label>Review</label><textarea className="form-control" minLength={20} maxLength={2000} required value={reviewBody} onChange={e=>setReviewBody(e.target.value)} placeholder="Describe the actual interaction with this property or listing."/><small>One review per account per property. Do not include private contact or identity information.</small></div>
         <button className="btn btn-primary" disabled={busy}>Submit review</button>
-      </form>
+      </form>}
     </div>
 
     <div className="community-content-section">
       <div className="community-section-head"><div><h3>Property discussion</h3><p className="muted">Ask questions, add context, and reply to other customers. Seller replies are clearly identified.</p></div></div>
       {commentsByParent.length?commentsByParent.map(({root,replies})=><article className="community-comment-thread" key={root.id}>
-        <div className="community-comment"><strong>{root.authorName}{root.authorRole==='admin'?' · Admin':''}{ownerId&&root.authorRole==='owner'?' · Seller':''}</strong><time>{dateLabel(root.createdAt)}</time><p>{root.body}</p>
+        <div className="community-comment"><strong>{root.authorName}{root.isOwner?' · Seller':root.authorRole==='admin'?' · Admin':''}</strong><time>{dateLabel(root.createdAt)}</time><p>{root.body}</p>
           {root.isMine&&<div className="community-actions"><button className="btn btn-outline" onClick={()=>{const next=window.prompt('Edit your comment:',root.body);if(next===null||next.trim().length<3)return;void apiRequest('/api/comments/'+encodeURIComponent(root.id),{method:'PATCH',body:JSON.stringify({body:next.trim()})}).then(result=>{if(result.ok){setNotice('Comment updated.');void load()}else setError(result.error)})}}>Edit</button><button className="btn btn-outline" onClick={()=>void deleteComment(root.id)}>Delete</button></div>}
           <button className="community-report-link" onClick={()=>void report('comment',root.id)}>Report comment</button>
           <button className="community-reply-link" onClick={()=>setReplyTo(replyTo===root.id?'':root.id)}>Reply</button>
           {replyTo===root.id&&<form className="community-inline-form" onSubmit={submitReply}><textarea className="form-control" required minLength={3} maxLength={1200} value={replyBody} onChange={e=>setReplyBody(e.target.value)} placeholder="Write a helpful reply."/><button className="btn btn-primary" disabled={busy}>Post reply</button></form>}
         </div>
-        {replies.map(reply=><div className="community-comment community-comment-reply" key={reply.id}><strong>{reply.authorName}{reply.isMine?' · You':''}</strong><time>{dateLabel(reply.createdAt)}</time><p>{reply.body}</p>{reply.isMine&&<div className="community-actions"><button className="btn btn-outline" onClick={()=>{const next=window.prompt('Edit your reply:',reply.body);if(next===null||next.trim().length<3)return;void apiRequest('/api/comments/'+encodeURIComponent(reply.id),{method:'PATCH',body:JSON.stringify({body:next.trim()})}).then(result=>{if(result.ok){setNotice('Reply updated.');void load()}else setError(result.error)})}}>Edit</button><button className="btn btn-outline" onClick={()=>void deleteComment(reply.id)}>Delete</button></div>}<button className="community-report-link" onClick={()=>void report('comment',reply.id)}>Report reply</button></div>)}
+        {replies.map(reply=><div className="community-comment community-comment-reply" key={reply.id}><strong>{reply.authorName}{reply.isOwner?' · Seller':reply.authorRole==='admin'?' · Admin':reply.isMine?' · You':''}</strong><time>{dateLabel(reply.createdAt)}</time><p>{reply.body}</p>{reply.isMine&&<div className="community-actions"><button className="btn btn-outline" onClick={()=>{const next=window.prompt('Edit your reply:',reply.body);if(next===null||next.trim().length<3)return;void apiRequest('/api/comments/'+encodeURIComponent(reply.id),{method:'PATCH',body:JSON.stringify({body:next.trim()})}).then(result=>{if(result.ok){setNotice('Reply updated.');void load()}else setError(result.error)})}}>Edit</button><button className="btn btn-outline" onClick={()=>void deleteComment(reply.id)}>Delete</button></div>}<button className="community-report-link" onClick={()=>void report('comment',reply.id)}>Report reply</button></div>)}
       </article>):<p className="gallery-empty">No discussion yet. Start with a useful question or observation.</p>}
       <form className="community-form" onSubmit={submitComment}><h4>Start a discussion</h4><div className="form-field"><label>Comment</label><textarea className="form-control" required minLength={3} maxLength={1200} value={commentBody} onChange={e=>setCommentBody(e.target.value)} placeholder="Ask a question or share helpful context." /></div><button className="btn btn-primary" disabled={busy}>Post comment</button></form>
     </div>
