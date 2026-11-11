@@ -2,7 +2,7 @@ export type ListingPurpose = 'sale' | 'rent'
 export type PropertyType = 'Apartment' | 'Villa' | 'House' | 'Plot' | 'Studio'
 export type ListingStatus = 'published' | 'pending' | 'rejected' | 'draft' | 'archived'
 
-export type PropertyDocument = { id: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain: string; storageProvider?: 'imagekit' | 'external'; sortOrder: number; createdAt: string; updatedAt: string }
+export type PropertyDocument = { id: string; documentType: 'pdf' | 'image'; description: string; url: string; sourceDomain: string; storageProvider?: 'imagekit' | 'external'; sortOrder: number; createdAt: string; updatedAt: string; category: 'ownership' | 'inheritance' | 'legal_status' | 'supporting' | 'other'; sourceDate?: string; issuingAuthority?: string; jurisdiction?: string }
 export type PropertyImage = { id: string; url: string; fileId: string | null; sortOrder: number }
 export type ListingHistoryEvent = { id: string; eventType: string; previousValue: string | null; newValue: string | null; metadata: Record<string, unknown>; createdAt: string }
 
@@ -33,7 +33,7 @@ export type Property = {
   verificationSubmittedAt?: string
   verificationReviewedAt?: string
   verificationNote?: string
-  documents?: PropertyDocument[]
+  ownershipType?: 'self_owned' | 'inherited' | 'jointly_owned' | 'other' | 'authorized_representative'\n  ownershipDeclaration?: string\n  knownDisputes?: boolean\n  disputeDisclosure?: string\n  authorityToListConfirmed?: boolean\n  documents?: PropertyDocument[]
   imageMedia?: PropertyImage[]
   publicEligible?: boolean
   status: ListingStatus
