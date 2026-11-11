@@ -5,7 +5,7 @@ const root=process.cwd()
 const required=[
   'src/App.tsx','src/auth-pages.tsx','src/account-pages.tsx','src/account-security.tsx','src/legal-pages.tsx',
   'src/cookie-notice.tsx','src/public-profile-page.tsx','src/report-property.tsx','src/report-queue.tsx','src/edit-listing-page.tsx','src/inquiries-page.tsx','src/messages-page.tsx','src/emi-calculator-page.tsx','src/lib/emi.ts','scripts/test-emi.mjs','public/robots.txt','public/sitemap.xml','src/listing-page.tsx','src/site-chrome.tsx','src/lib/auth.ts','src/lib/imagekit.ts','src/lib/property-options.ts','worker/index.ts',
-  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','migrations/0009_listing_history_persistent_sessions.sql','migrations/0010_imagekit_property_evidence.sql','scripts/check-migrations.py','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md','PRODUCTION-CHECKLIST.md','.github/workflows/codeql.yml','.github/workflows/ci.yml','.github/dependabot.yml'
+  'migrations/0002_native_email_auth.sql','migrations/0003_security_mfa_ai.sql','migrations/0004_media_verification.sql','migrations/0005_property_chat.sql','migrations/0006_imagekit_and_property_documents.sql','migrations/0007_message_actions.sql','migrations/0008_imagekit_cleanup_queue.sql','migrations/0009_listing_history_persistent_sessions.sql','migrations/0010_imagekit_property_evidence.sql','migrations/0011_community_trust_and_legal_evidence.sql','scripts/check-migrations.py','worker/community-trust.ts','src/community-trust.tsx','scripts/test-community-trust.mjs','LEGAL-RESEARCH.md','BUG-LEDGER-COMMUNITY-UPGRADE.md','worker/totp.ts','scripts/test-totp.mjs','public/_headers','wrangler.toml','SECURITY-AUDIT.md','PRODUCTION-CHECKLIST.md','.github/workflows/codeql.yml','.github/workflows/ci.yml','.github/dependabot.yml'
 ]
 const errors=[]
 for(const file of required)if(!fs.existsSync(path.join(root,file)))errors.push('Missing required file: '+file)
@@ -244,5 +244,18 @@ if(!worker.includes('ownerId:p.owner_id'))errors.push('Public property responses
 if(!app.includes('PublicListerProfilePage')||!app.includes('path="/people/:id"')||!read('src/pages.tsx').includes('View lister profile'))errors.push('Property details must link to a working public lister profile page')
 const publicProfilePage=read('src/public-profile-page.tsx')
 if(!publicProfilePage.includes('/api/public-profiles/')||!publicProfilePage.includes('PropertyCard')||!publicProfilePage.includes('Public listings'))errors.push('Public lister profile page must fetch its public profile and render that lister’s live listings')
+// Community trust and legal evidence upgrade.
+const community = read('src/community-trust.tsx')
+const trustPolicy = read('worker/community-trust.ts')
+const trustMigration = read('migrations/0011_community_trust_and_legal_evidence.sql')
+if(!community.includes('Community Trust Indicator') || !community.includes('GREEN DOES NOT MEAN VERIFIED') || !community.includes('Eligible reports')) errors.push('Buyer community interface must explain the colour and legal limitations')
+if(!trustPolicy.includes('calculateCommunityTrustIndicator') || !trustPolicy.includes('redReportThreshold: 5') || !trustPolicy.includes('yellowReportThreshold: 3')) errors.push('A single authoritative Community Trust Indicator policy must exist')
+if(!worker.includes("/api/properties/([^/]+)/community") || !worker.includes("/api/properties/([^/]+)/reviews") || !worker.includes("/api/community/reports") || !worker.includes("/api/admin/community-reports")) errors.push('Community feed, review, report and moderator APIs must be wired')
+if(!worker.includes('property_report_events') || !worker.includes('community_moderation_events') || !worker.includes('threshold_eligible')) errors.push('Report lifecycle and eligibility audit trails must be enforced by the Worker')
+if(!trustMigration.includes('property_reviews') || !trustMigration.includes('property_comments') || !trustMigration.includes('user_policy_acceptances')) errors.push('Community, discussion and policy-version schema is incomplete')
+if(!read('src/listing-page.tsx').includes('ownershipDeclaration') || !read('src/edit-listing-page.tsx').includes('ownershipDeclaration')) errors.push('Sellers must provide ownership declarations in create and edit workflows')
+if(!pages.includes('ownership-public-disclosure') || !pages.includes('document.issuingAuthority') || !pages.includes('document.jurisdiction')) errors.push('Buyer pages must distinguish seller declarations and evidence provenance')
+if(!read('src/report-queue.tsx').includes('Substantiate') || !read('src/report-queue.tsx').includes('under_review')) errors.push('Moderation queue must support the upgraded report lifecycle')
+if(!read('scripts/check-migrations.py').includes('Legacy open/reviewing reports must map to submitted/under_review')) errors.push('Migration tests must exercise report status backfill and deduplication')
 if(errors.length){console.error('Production smoke checks failed:\n- '+errors.join('\n- '));process.exit(1)}
 console.log('Static production smoke checks passed. These checks verify wiring, not cookie behavior, MFA crypto, email delivery, D1 migration execution, or end-to-end deployment.')
