@@ -66,7 +66,7 @@ export function ListingPage() {
       setError('Enter a clear title, location, city, a valid positive price, and a description of at least 20 characters.')
       setStep(2); return
     }
-    const publicDocuments=documents.filter(item=>item.url.trim()&&item.description.trim()).map(item=>({...item,url:item.url.trim(),description:item.description.trim(),sellerAuthorized:true}))
+    const publicDocuments=documents.filter(item=>item.url.trim()&&item.description.trim()).map(item=>({...item,url:item.url.trim(),description:item.description.trim(),sellerAuthorized:privacyAcknowledged}))
     if (imageFiles.length === 0) { setError('Upload at least one property photo before submitting.'); return }
     if (publicDocuments.length === 0 && evidenceFiles.length === 0) { setError('Upload at least one PDF/image evidence file or add an existing public HTTPS document link.'); return }
     if ([...publicDocuments].some(item => item.description.length < 3) || evidenceFiles.some(item => item.description.trim().length < 3)) { setError('Give every evidence file or link a clear description of at least 3 characters.'); return }
@@ -198,7 +198,7 @@ export function ListingPage() {
           </div>
           <button className="btn btn-outline media-remove" type="button" onClick={() => setEvidenceFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove file</button>
         </div>)}
-        <label className="evidence-privacy-ack"><input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} /> <span>I confirm these files and links do not expose personal ID numbers or private information.</span></label>
+        <label className="evidence-privacy-ack"><input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} /> <span>I confirm that I own or am authorized to share these files and links publicly, and that the material is accurate and redacted to remove unnecessary personal or confidential information.</span></label>
         <details className="evidence-link-fallback">
           <summary>Already have a public HTTPS evidence link?</summary>
           <p className="muted">You can keep using an existing public PDF/image URL. New file uploads above are stored on ImageKit.</p>
