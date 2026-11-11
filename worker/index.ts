@@ -479,6 +479,8 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
   }
 }
 async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:string|null) {
+  const propertyOwner=await db.prepare('SELECT owner_id FROM properties WHERE id=?').bind(propertyId).first<{owner_id:string}>()
+  const ownerId=propertyOwner?.owner_id||''
   const [reviews,comments]=await Promise.all([
     db.prepare(`SELECT r.id,r.reviewer_id,r.rating,r.body,r.interaction_type,r.created_at,r.updated_at,
       u.name AS reviewer_name,rr.body AS owner_response,rr.created_at AS response_created_at
@@ -506,7 +508,8 @@ async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:stri
       authorName:String(row.author_name||'ZameenHub member'),
       authorRole:String(row.author_role||'user'),body:String(row.body),
       createdAt:String(row.created_at),updatedAt:String(row.updated_at),
-      isMine:!!viewerId&&row.author_id===viewerId
+      isMine:!!viewerId&&row.author_id===viewerId,
+      isOwner:!!ownerId&&row.author_id===ownerId
     }))
   }
 }
