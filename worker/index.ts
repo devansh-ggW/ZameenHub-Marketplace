@@ -292,7 +292,7 @@ function sanitizePropertyDocuments(value:unknown):SanitizedPropertyDocument[]|nu
     const sourceDate=clean(record.sourceDate,10),issuingAuthority=clean(record.issuingAuthority,160),jurisdiction=clean(record.jurisdiction,120)
     if(!allowedDocumentTypes.has(type)||!allowedDocumentCategories.has(category)||description.length<3||!url)return null
     if(sourceDate){const parsedDate=new Date(sourceDate+'T00:00:00Z');if(Number.isNaN(parsedDate.getTime())||parsedDate.toISOString().slice(0,10)!==sourceDate)return null}
-    if(record.sellerAuthorized===false)return null
+    if(record.sellerAuthorized!==true)return null
     if(seenUrls.has(url)||(id&&seenIds.has(id)))return null
     seenUrls.add(url);if(id)seenIds.add(id)
     documents.push({id,type:type as 'pdf'|'image',description,url,sourceDomain:new URL(url).hostname.toLowerCase(),category,sourceDate,issuingAuthority,jurisdiction})
