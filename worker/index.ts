@@ -458,6 +458,8 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
       (SELECT COUNT(*) FROM property_review_responses rr JOIN property_reviews rv ON rv.id=rr.review_id WHERE rv.property_id=p.id AND rv.status='published') AS reply_count
     FROM properties p WHERE p.id=?`).bind(propertyId).first<Record<string,number|null>>()
   if(!stats) return null
+  const distribution=await db.prepare("SELECT rating,COUNT(*) AS count FROM property_reviews WHERE property_id=? AND status='published' AND reviewer_id IS NOT NULL GROUP BY rating").bind(propertyId).all<{rating:number;count:number}>()
+  const ratingDistribution=[1,2,3,4,5].map(rating=>({rating,count:Number(distribution.results.find(row=>row.rating===rating)?.count||0)}))
   const calculation=calculateCommunityTrustIndicator({
     requiredDocumentCount:Number(stats.document_count||0),
     eligibleReportCount:Number(stats.eligible_reports||0),
@@ -470,6 +472,7 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
   })
   return {
     ...calculation,
+    ratingDistribution,
     totalReports:Number(stats.eligible_reports||0),
     openReports:Number(stats.open_reports||0),
     substantiatedReports:Number(stats.substantiated_reports||0),
