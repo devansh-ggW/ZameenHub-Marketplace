@@ -18,13 +18,13 @@ type Report = {
   property_city: string
   property_status: 'pending' | 'published' | 'rejected' | 'archived'
 }
-const reasonLabel: Record<string, string> = {
-  suspected_fraud: 'Suspected scam or fraud',
-  incorrect_price: 'Incorrect price',
-  duplicate: 'Duplicate listing',
-  unavailable: 'Property unavailable',
-  misleading_details: 'Misleading details',
-  other: 'Other concern',
+const reasonLabel: Record<string,string> = {
+  suspected_fraud:'Suspected fraud or scam', ownership_fraud:'Suspected ownership fraud',
+  forged_documents:'Potentially forged documents', known_dispute:'Known dispute or litigation',
+  incorrect_price:'Incorrect price', incorrect_property_info:'Incorrect property information',
+  misleading_photos:'Misleading photographs', duplicate:'Duplicate listing',
+  unavailable:'Property unavailable', unauthorized_listing:'Unauthorized listing',
+  misleading_details:'Misleading details', suspected_scam:'Suspected scam', other:'Other concern',
 }
 
 export function ReportQueuePage() {
@@ -62,7 +62,7 @@ export function ReportQueuePage() {
 
   async function updateReport(report: Report, status: 'under_review' | 'substantiated' | 'resolved' | 'dismissed') {
     let resolutionNote = ''
-    if (status !== 'reviewing') {
+    if (status !== 'under_review') {
       const note = window.prompt(status === 'substantiated' ? 'Explain the evidence supporting this report (at least 8 characters):' : status === 'resolved' ? 'Summarize the action or decision taken (at least 8 characters):' : 'Explain why this report is being dismissed (at least 8 characters):')
       if (note === null) return
       if (note.trim().length < 8) { setError('Please record a resolution note with at least 8 characters.'); return }
