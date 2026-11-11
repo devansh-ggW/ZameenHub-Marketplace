@@ -295,7 +295,7 @@ export function PropertyDetailPage() {
               <p className="muted">Format: {document.documentType.toUpperCase()} · {document.storageProvider === 'imagekit' ? 'Delivered by ImageKit' : 'Source: ' + document.sourceDomain}</p>
               <p className="muted">Added on {formatHistoryDate(document.createdAt)}{document.updatedAt && document.updatedAt !== document.createdAt ? ' · Updated on ' + formatHistoryDate(document.updatedAt) : ''} </p>
               <p className="muted">Category: {({ownership:'Ownership',inheritance:'Inheritance',legal_status:'Legal status / dispute',supporting:'Supporting record',other:'Other evidence'} as Record<string,string>)[document.category]||'Other evidence'}{document.sourceDate?' · Document date: '+document.sourceDate:''}</p>
-              {(document.issuingAuthority||document.jurisdiction)&&<p className="muted">{document.issuingAuthority?'Issuing authority: '+document.issuingAuthority:''}{document.issuingAuthority&&document.jurisdiction?' · ':''}{document.jurisdiction?'Jurisdiction: '+document.jurisdiction:''}</p>
+              {(document.issuingAuthority||document.jurisdiction)&&<p className="muted">{document.issuingAuthority?'Issuing authority: '+document.issuingAuthority:''}{document.issuingAuthority&&document.jurisdiction?' · ':''}{document.jurisdiction?'Jurisdiction: '+document.jurisdiction:''}</p>}
             </div>
             <a href={document.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label="Open seller-provided evidence in a new tab">{document.storageProvider === 'imagekit' ? 'Open evidence file ↗' : 'Open original source ↗'}</a>
           </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the lister.</p>}
