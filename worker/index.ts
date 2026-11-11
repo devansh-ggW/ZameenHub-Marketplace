@@ -444,7 +444,8 @@ const publicReviewTypes=new Set(['inquiry','viewing','transaction','other'])
 const communityReportReasons=new Set(['abuse','spam','fake_or_misleading','privacy','other'])
 async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
   const stats=await db.prepare(`SELECT
-    (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.status='active') AS document_count,
+    (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.status='active' AND d.seller_authorized=1) AS document_count,
+    (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.status='active' AND d.seller_authorized=1 AND d.category IN ('ownership','inheritance','legal_status')) AS eligible_document_count,
     (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1) AS eligible_reports,
     (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status IN ('submitted','under_review')) AS open_reports,
     (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status='substantiated') AS substantiated_reports,
@@ -453,15 +454,14 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
     (SELECT COUNT(DISTINCT r.reviewer_id) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS distinct_reviewers,
     (SELECT AVG(r.rating) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS average_rating,
     (SELECT COUNT(*) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL AND r.rating>=4) AS positive_reviews,
-    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published') AS comment_count,
-    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NOT NULL) +
-      (SELECT COUNT(*) FROM property_review_responses rr JOIN property_reviews rv ON rv.id=rr.review_id WHERE rv.property_id=p.id AND rv.status='published') AS reply_count
+    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NULL AND (c.author_id IS NULL OR c.author_id<>p.owner_id)) AS comment_count,
+    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NOT NULL AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id) AS reply_count
     FROM properties p WHERE p.id=?`).bind(propertyId).first<Record<string,number|null>>()
   if(!stats) return null
   const distribution=await db.prepare("SELECT rating,COUNT(*) AS count FROM property_reviews WHERE property_id=? AND status='published' AND reviewer_id IS NOT NULL GROUP BY rating").bind(propertyId).all<{rating:number;count:number}>()
   const ratingDistribution=[1,2,3,4,5].map(rating=>({rating,count:Number(distribution.results.find(row=>row.rating===rating)?.count||0)}))
   const calculation=calculateCommunityTrustIndicator({
-    requiredDocumentCount:Number(stats.document_count||0),
+    requiredDocumentCount:Number(stats.eligible_document_count||0),
     eligibleReportCount:Number(stats.eligible_reports||0),
     eligibleReviewCount:Number(stats.review_count||0),
     distinctReviewers:Number(stats.distinct_reviewers||0),
@@ -478,6 +478,7 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
     substantiatedReports:Number(stats.substantiated_reports||0),
     dismissedReports:Number(stats.dismissed_reports||0),
     documentationSubmitted:Number(stats.document_count||0),
+    eligibleDocumentationSubmitted:Number(stats.eligible_document_count||0),
     explanation:'This indicator summarizes seller-submitted evidence and public community activity. Reports are allegations unless separately substantiated. It is not legal verification.',
   }
 }
