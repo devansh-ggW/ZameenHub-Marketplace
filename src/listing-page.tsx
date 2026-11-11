@@ -28,10 +28,15 @@ export function ListingPage() {
   const [imageFiles, setImageFiles] = useState<File[]>([])
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadStatus, setUploadStatus] = useState('')
-  const [documents, setDocuments] = useState<Array<{ documentType: 'pdf' | 'image'; description: string; url: string }>>([])
-  const [evidenceFiles, setEvidenceFiles] = useState<Array<{ file: File; description: string }>>([])
+  const [ownershipType, setOwnershipType] = useState<'self_owned'|'inherited'|'jointly_owned'|'other'|'authorized_representative'>('self_owned')
+  const [ownershipDeclaration, setOwnershipDeclaration] = useState('')
+  const [knownDisputes, setKnownDisputes] = useState(false)
+  const [disputeDisclosure, setDisputeDisclosure] = useState('')
+  const [authorityToListConfirmed, setAuthorityToListConfirmed] = useState(false)
+  const [documents, setDocuments] = useState<Array<{documentType:'pdf'|'image';description:string;url:string;category:'ownership'|'inheritance'|'legal_status'|'supporting'|'other';sourceDate:string;issuingAuthority:string;jurisdiction:string}>>([])
+  const [evidenceFiles, setEvidenceFiles] = useState<Array<{file:File;description:string;category:'ownership'|'inheritance'|'legal_status'|'supporting'|'other';sourceDate:string;issuingAuthority:string;jurisdiction:string}>>([])
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false)
-  const steps = ['Purpose', 'Details', 'Photos & documents']
+  const steps = ['Purpose', 'Details & ownership', 'Photos & evidence']
 
   useEffect(() => {
     let current = true
@@ -50,13 +55,18 @@ export function ListingPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setError(''); setNotice('')
-    if (step < 3) { setStep(step + 1); return }
+    if (step < 3) {
+      if(step===2&&!authorityToListConfirmed){setError('Confirm that you own the property or are legally authorized to list it, and disclose known co-owners or heirs.');return}
+      if(step===2&&ownershipDeclaration.trim().length<10){setError('Add an ownership declaration of at least 10 characters.');return}
+      if(step===2&&knownDisputes&&disputeDisclosure.trim().length<10){setError('Describe the known dispute or encumbrance in at least 10 characters.');return}
+      setStep(step+1);return
+    }
     const numericPrice = Number(price)
     if (!title.trim() || title.trim().length < 6 || !locationText.trim() || !city.trim() || description.trim().length < 20 || !Number.isSafeInteger(numericPrice) || numericPrice < 1) {
       setError('Enter a clear title, location, city, a valid positive price, and a description of at least 20 characters.')
       setStep(2); return
     }
-    const publicDocuments = documents.filter(item => item.url.trim() && item.description.trim()).map(item => ({ ...item, url: item.url.trim(), description: item.description.trim() }))
+    const publicDocuments=documents.filter(item=>item.url.trim()&&item.description.trim()).map(item=>({...item,url:item.url.trim(),description:item.description.trim(),sellerAuthorized:true}))
     if (imageFiles.length === 0) { setError('Upload at least one property photo before submitting.'); return }
     if (publicDocuments.length === 0 && evidenceFiles.length === 0) { setError('Upload at least one PDF/image evidence file or add an existing public HTTPS document link.'); return }
     if ([...publicDocuments].some(item => item.description.length < 3) || evidenceFiles.some(item => item.description.trim().length < 3)) { setError('Give every evidence file or link a clear description of at least 3 characters.'); return }
@@ -69,8 +79,7 @@ export function ListingPage() {
       body: JSON.stringify({
         title: title.trim(), location: locationText.trim(), city: city.trim(), purpose, propertyType,
         price: numericPrice, bedrooms: Number(bedrooms), bathrooms: Number(bathrooms), area: Number(area || 0),
-        description: description.trim(), amenities,
-        documents: publicDocuments,
+        description:description.trim(),amenities,documents:publicDocuments,ownershipType,ownershipDeclaration:ownershipDeclaration.trim(),knownDisputes,disputeDisclosure:knownDisputes?disputeDisclosure.trim():'',authorityToListConfirmed,
       }),
     })
     if (!result.ok) {
@@ -97,7 +106,7 @@ export function ListingPage() {
     for (let index = 0; index < evidenceFiles.length; index++) {
       const evidence = evidenceFiles[index]
       setUploadStatus('Uploading evidence ' + (index + 1) + ' of ' + evidenceFiles.length)
-      const uploaded = await uploadPropertyEvidence(result.data.id, evidence.file, evidence.description.trim(), setUploadProgress, [...knownEvidenceIds])
+      const uploaded=await uploadPropertyEvidence(result.data.id,evidence.file,evidence.description.trim(),setUploadProgress,[...knownEvidenceIds],{category:evidence.category,sourceDate:evidence.sourceDate,issuingAuthority:evidence.issuingAuthority,jurisdiction:evidence.jurisdiction})
       if (!uploaded.ok) {
         setBusy(false)
         setError('Your listing draft is saved, but evidence file ' + (index + 1) + ' could not be confirmed: ' + uploaded.error + ' You can retry from Edit listing.')
@@ -126,7 +135,18 @@ export function ListingPage() {
     <div className="stepper">{steps.map((label, index) => <div className={'step ' + (step === index + 1 ? 'active' : '')} key={label}><span className="mono">0{index + 1}</span> {label}</div>)}</div>
     <form className="form-card" style={{ maxWidth: 820 }} onSubmit={submit}>
       {step === 1 && <><h2>What are you listing?</h2><div className="form-grid"><div className="form-field"><label htmlFor="listing-purpose">Purpose</label><select className="form-control" id="listing-purpose" value={purpose} onChange={e => setPurpose(e.target.value as 'sale' | 'rent')}><option value="sale">For sale</option><option value="rent">For rent</option></select></div><div className="form-field"><label htmlFor="listing-type">Property type</label><select className="form-control" id="listing-type" value={propertyType} onChange={e => setPropertyType(e.target.value)}>{['Apartment', 'House', 'Villa', 'Studio', 'Plot'].map(type => <option key={type}>{type}</option>)}</select></div></div></>}
-      {step === 2 && <><h2>Start with the essentials.</h2><div className="form-grid"><div className="form-field"><label htmlFor="listing-title">Listing title</label><input className="form-control" id="listing-title" required minLength={6} maxLength={120} value={title} onChange={e => setTitle(e.target.value)} placeholder="A clear description of the property" /></div><div className="form-field"><label htmlFor="listing-location">Address / neighbourhood</label><input className="form-control" id="listing-location" required maxLength={240} value={locationText} onChange={e => setLocationText(e.target.value)} placeholder="Neighbourhood, city" /></div><div className="form-field"><label htmlFor="listing-city">City</label><input className="form-control" id="listing-city" required maxLength={100} value={city} onChange={e => setCity(e.target.value)} placeholder="City" /></div><div className="form-field"><label htmlFor="listing-price">Price (₹)</label><input className="form-control" id="listing-price" required type="number" min="1" step="1" value={price} onChange={e => setPrice(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-beds">Bedrooms</label><input className="form-control" id="listing-beds" type="number" min="0" max="100" value={bedrooms} onChange={e => setBedrooms(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-baths">Bathrooms</label><input className="form-control" id="listing-baths" type="number" min="0" max="100" value={bathrooms} onChange={e => setBathrooms(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-area">Area (sq ft)</label><input className="form-control" id="listing-area" type="number" min="0" max="100000000" value={area} onChange={e => setArea(e.target.value)} /></div></div></>}
+      {step === 2 && <><h2>Start with the essentials.</h2><div className="form-grid"><div className="form-field"><label htmlFor="listing-title">Listing title</label><input className="form-control" id="listing-title" required minLength={6} maxLength={120} value={title} onChange={e => setTitle(e.target.value)} placeholder="A clear description of the property" /></div><div className="form-field"><label htmlFor="listing-location">Address / neighbourhood</label><input className="form-control" id="listing-location" required maxLength={240} value={locationText} onChange={e => setLocationText(e.target.value)} placeholder="Neighbourhood, city" /></div><div className="form-field"><label htmlFor="listing-city">City</label><input className="form-control" id="listing-city" required maxLength={100} value={city} onChange={e => setCity(e.target.value)} placeholder="City" /></div><div className="form-field"><label htmlFor="listing-price">Price (₹)</label><input className="form-control" id="listing-price" required type="number" min="1" step="1" value={price} onChange={e => setPrice(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-beds">Bedrooms</label><input className="form-control" id="listing-beds" type="number" min="0" max="100" value={bedrooms} onChange={e => setBedrooms(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-baths">Bathrooms</label><input className="form-control" id="listing-baths" type="number" min="0" max="100" value={bathrooms} onChange={e => setBathrooms(e.target.value)} /></div><div className="form-field"><label htmlFor="listing-area">Area (sq ft)</label><input className="form-control" id="listing-area" type="number" min="0" max="100000000" value={area} onChange={e => setArea(e.target.value)} /></div></div>
+      <section className="ownership-declaration-panel" aria-labelledby="ownership-declaration-title">
+        <h3 id="ownership-declaration-title">Ownership and legal status</h3>
+        <p className="muted">Tell buyers how this property is owned. ZameenHub does not decide legal ownership or sale authority.</p>
+        <div className="form-field"><label htmlFor="ownership-type">Ownership arrangement</label><select className="form-control" id="ownership-type" value={ownershipType} onChange={e=>setOwnershipType(e.target.value as typeof ownershipType)}><option value="self_owned">Self-owned</option><option value="inherited">Inherited</option><option value="jointly_owned">Jointly owned</option><option value="authorized_representative">Authorized representative</option><option value="other">Other legally recognized arrangement</option></select></div>
+        {ownershipType==='inherited'&&<div className="evidence-privacy-warning"><strong>Inherited property — no universal checklist.</strong><p>Depending on personal law, title history and jurisdiction, relevant material may include a legal heir certificate, probate, succession certificate, letters of administration, previous owner's death certificate, release/relinquishment deed, family settlement or court order. Not every item applies. Disclose relevant co-heirs, competing claims and consent requirements. Uploading a document does not establish sole ownership or sale authority.</p></div>}
+        {ownershipType==='jointly_owned'&&<p className="muted">Disclose known co-owners and whether their participation or consent is required.</p>}
+        <div className="form-field"><label htmlFor="ownership-declaration">Ownership / authority declaration</label><textarea className="form-control" id="ownership-declaration" minLength={10} maxLength={1800} required value={ownershipDeclaration} onChange={e=>setOwnershipDeclaration(e.target.value)} placeholder="Describe the ownership arrangement, who is authorized to list, and any known co-owners or heirs." /></div>
+        <label className="evidence-privacy-ack"><input type="checkbox" checked={knownDisputes} onChange={e=>setKnownDisputes(e.target.checked)} /><span>There are known disputes, litigation, competing claims or encumbrances to disclose.</span></label>
+        {knownDisputes&&<div className="form-field"><label htmlFor="known-disputes">Known dispute / encumbrance disclosure</label><textarea className="form-control" id="known-disputes" minLength={10} maxLength={1800} required value={disputeDisclosure} onChange={e=>setDisputeDisclosure(e.target.value)} placeholder="Describe the known matter and current status, without exposing private family or identity details." /></div>}
+        <label className="evidence-privacy-ack"><input type="checkbox" checked={authorityToListConfirmed} onChange={e=>setAuthorityToListConfirmed(e.target.checked)} /><span>I confirm that I own this property or am legally authorized to list it, and that the information above is accurate to the best of my knowledge. I will disclose relevant co-owners/heirs and update material changes.</span></label>
+      </section></>}
       {step === 3 && <><h2>Add the details that help someone decide.</h2><div className="form-field"><label htmlFor="listing-description">Description</label><textarea className="form-control" id="listing-description" maxLength={8000} value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe the layout, condition, nearby conveniences and important details." /><small>Do not include personal documents or sensitive information.</small></div><fieldset className="amenity-picker"><legend>Property amenities</legend><p className="muted">Select only features that are genuinely available at this property.</p><div className="amenity-options">{PROPERTY_AMENITIES.map(amenity => <label className="amenity-option" key={amenity}><input type="checkbox" checked={amenities.includes(amenity)} onChange={event => setAmenities(current => event.target.checked ? [...current, amenity] : current.filter(item => item !== amenity))} /> <span>{amenity}</span></label>)}</div></fieldset>
       <section className="media-editor" aria-labelledby="property-media-heading">
         <h3 id="property-media-heading">Property photos</h3>
@@ -161,7 +181,7 @@ export function ListingPage() {
             const selected = Array.from(event.target.files || [])
             if (selected.some(file => file.size > 10 * 1024 * 1024)) { setError('Each evidence file must be 10 MB or smaller.'); event.target.value = ''; return }
             if (selected.some(file => !['application/pdf','image/jpeg','image/png','image/webp'].includes(file.type.toLowerCase()))) { setError('Evidence files must be PDF, JPEG, PNG or WebP.'); event.target.value = ''; return }
-            setEvidenceFiles(current => [...current, ...selected.slice(0, remaining).map(file => ({ file, description: file.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' ').slice(0, 180) }))])
+            setEvidenceFiles(current=>[...current,...selected.slice(0,remaining).map(file=>({file,description:file.name.replace(/\.[^.]+$/,'').replace(/[-_]/g,' ').slice(0,180),category:ownershipType==='inherited'?'inheritance':'ownership' as 'ownership'|'inheritance',sourceDate:'',issuingAuthority:'',jurisdiction:''}))])
             setError('')
             event.target.value = ''
           }} />
@@ -182,7 +202,7 @@ export function ListingPage() {
             <div className="form-field"><label htmlFor={'property-document-url-' + index}>Original HTTPS link</label><input className="form-control" id={'property-document-url-' + index} type="url" maxLength={2000} value={document.url} onChange={event => setDocuments(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, url: event.target.value } : item))} placeholder="https://example.com/record.pdf" /></div>
             <button className="btn btn-outline media-remove" type="button" onClick={() => setDocuments(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove link</button>
           </div>)}
-          {documents.length + evidenceFiles.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length + evidenceFiles.length < 10 ? [...current, { documentType: 'pdf', description: '', url: '' }] : current)}>Add existing link</button>}
+          {documents.length + evidenceFiles.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length + evidenceFiles.length < 10 ? [...current, {documentType:'pdf',description:'',url:'',category:ownershipType==='inherited'?'inheritance':'ownership',sourceDate:'',issuingAuthority:'',jurisdiction:''}] : current)}>Add existing link</button>}
         </details>
         {uploadStatus && <p className="status-message" role="status">{uploadStatus}{busy ? ' · ' + uploadProgress + '%' : ''}</p>}
       </section>
