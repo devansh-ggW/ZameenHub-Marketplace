@@ -34,12 +34,15 @@ def main() -> int:
                        ("rollout-reporter", "rollout-reporter@example.test", "Rollout Reporter", "user", "test-hash"))
             db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                        ("rollout-reviewer", "rollout-reviewer@example.test", "Rollout Reviewer", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-dismissed", "rollout-dismissed@example.test", "Rollout Dismissed", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-resolved", "rollout-resolved@example.test", "Rollout Resolved", "user", "test-hash"))
             legacy_reports = [
                 ("legacy-report-1", "rollout-reporter", "open"),
-                ("legacy-report-2", "rollout-reporter", "open"),
                 ("legacy-report-3", "rollout-reviewer", "reviewing"),
-                ("legacy-report-dismissed", "rollout-reviewer", "dismissed"),
-                ("legacy-report-resolved", "rollout-reviewer", "resolved"),
+                ("legacy-report-dismissed", "rollout-dismissed", "dismissed"),
+                ("legacy-report-resolved", "rollout-resolved", "resolved"),
             ]
             for report_id, reporter_id, status in legacy_reports:
                 db.execute("""INSERT INTO property_reports
@@ -99,17 +102,17 @@ def main() -> int:
     expect(legacy_doc is not None and legacy_doc["category"] == "other" and legacy_doc["seller_authorized"] == 1 and legacy_doc["status"] == "active",
            "Legacy seller evidence must remain active and receive safe metadata defaults")
     legacy = {row["id"]: row for row in db.execute("SELECT id,status,threshold_eligible FROM property_reports WHERE id LIKE 'legacy-report-%'")}
-    expect(len(legacy) == 5, "The community migration must preserve every existing property report")
+    expect(len(legacy) == 4, "The community migration must preserve every existing property report")
     expect(legacy["legacy-report-1"]["status"] == "submitted" and legacy["legacy-report-3"]["status"] == "under_review",
            "Legacy open/reviewing reports must map to submitted/under_review")
     expect(legacy["legacy-report-dismissed"]["status"] == "dismissed" and legacy["legacy-report-dismissed"]["threshold_eligible"] == 0,
            "Dismissed legacy reports must remain auditable but not count toward the indicator")
     expect(legacy["legacy-report-resolved"]["status"] == "resolved", "Resolved reports must retain their status")
-    expect(legacy["legacy-report-1"]["threshold_eligible"] == 1 and legacy["legacy-report-2"]["threshold_eligible"] == 0,
-           "Only one legacy report per account/property may count")
-    expect(db.execute("SELECT COUNT(*) FROM property_report_contributions").fetchone()[0] == 2,
+    expect(legacy["legacy-report-1"]["threshold_eligible"] == 1,
+           "An eligible legacy report must remain eligible after migration")
+    expect(db.execute("SELECT COUNT(*) FROM property_report_contributions").fetchone()[0] == 3,
            "Legacy distinct reporter/property contributions must be backfilled")
-    expect(db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id LIKE 'legacy-report-%'").fetchone()[0] == 5,
+    expect(db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id LIKE 'legacy-report-%'").fetchone()[0] == 4,
            "Every migrated report must receive an audit-history event")
     for operation, sql in (
         ("update", "UPDATE property_report_events SET note='tampered' WHERE report_id='legacy-report-1'"),
@@ -140,10 +143,15 @@ def main() -> int:
         raise AssertionError("A user must not have multiple active property reviews")
     except sqlite3.IntegrityError:
         pass
+    db.execute("""INSERT INTO property_reports
+        (id,property_id,reporter_id,reason,details,status,threshold_eligible,created_at)
+        VALUES(?,?,?,?,?,'submitted',1,?)""",
+        ("community-report-duplicate", "rollout-property", "rollout-reporter", "other",
+         "Second report from same account in the upgraded schema.", rollout_iso))
     try:
         db.execute("""INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at)
             VALUES(?,?,?,?)""",
-            ("rollout-property", "rollout-reporter", "legacy-report-2", rollout_iso))
+            ("rollout-property", "rollout-reporter", "community-report-duplicate", rollout_iso))
         raise AssertionError("Duplicate account/property report contribution must be rejected")
     except sqlite3.IntegrityError:
         pass
