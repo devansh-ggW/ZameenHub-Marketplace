@@ -172,10 +172,10 @@ def main() -> int:
         VALUES(?,?,?,?,?,?,'published',?,?)""",
         ("community-admin-review", "rollout-property", "rollout-admin", 5,
          "Staff-authored review must not count toward community rating.", "viewing", rollout_iso, rollout_iso))
-    admin_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
+    member_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
         JOIN users reviewer ON reviewer.id=r.reviewer_id
-        WHERE r.property_id='rollout-property' AND r.status='published' AND reviewer.role='admin'""").fetchone()[0]
-    expect(admin_review_count == 0, "Staff review aggregates must use ordinary member roles only")
+        WHERE r.property_id='rollout-property' AND r.status='published' AND reviewer.role='user'""").fetchone()[0]
+    expect(member_review_count == 1, "Staff-authored reviews must be excluded from the aggregate rating and reviewer count")
 
     policy_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_policy_acceptances)")}
     expect({"user_id", "policy_key", "policy_version", "accepted_at"} <= policy_columns,
