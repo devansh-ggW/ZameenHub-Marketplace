@@ -131,7 +131,7 @@ type CommunityContentReport = {
   reporter_id:string|null
   reason:string
   details:string
-  status:'submitted'|'under_review'
+  status:'submitted'|'under_review'|'substantiated'
   created_at:string
   reported_content:string|null
   content_author:string
@@ -150,40 +150,44 @@ function CommunityContentReportQueue() {
     setLoading(false)
   },[])
   useEffect(()=>{void load()},[load])
-  async function moderate(report:CommunityContentReport,status:'under_review'|'substantiated'|'dismissed'|'resolved'){
+  async function moderate(report:CommunityContentReport,status:'under_review'|'substantiated'|'dismissed'|'resolved'|'overturned'){
     let resolutionNote=''
     if(status!=='under_review'){
-      const note=window.prompt(status==='substantiated'?'Explain the evidence supporting this moderation finding (at least 8 characters):':'Explain why this report is being closed (at least 8 characters):')
+      const note=window.prompt(status==='substantiated'?'Explain the evidence supporting this moderation finding (at least 8 characters):':status==='overturned'?'Explain why the earlier substantiated finding is being overturned (at least 8 characters):':status==='resolved'?'Summarize why this report is resolved (at least 8 characters):':'Explain why this report is being dismissed (at least 8 characters):')
       if(note===null)return
       if(note.trim().length<8){setError('Add an evidence-based moderation note of at least 8 characters.');return}
       resolutionNote=note.trim()
     }
     setBusy(report.id);setError('');setNotice('')
-    const response=await apiRequest<{status:string;contentHidden:boolean}>('/api/admin/community-reports/'+encodeURIComponent(report.id),{
+    const response=await apiRequest<{status:string;contentHidden:boolean;contentRestored:boolean}>('/api/admin/community-reports/'+encodeURIComponent(report.id),{
       method:'PATCH',body:JSON.stringify({status,resolutionNote})
     })
     setBusy('')
     if(!response.ok){setError(response.error);return}
-    setReports(current=>status==='under_review'?current.map(item=>item.id===report.id?{...item,status:'under_review'}:item):current.filter(item=>item.id!==report.id))
-    setNotice(status==='substantiated'?'Finding recorded; the reported contribution has been hidden.':status==='dismissed'?'Report dismissed; its audit history remains.':status==='resolved'?'Report marked resolved.':'Report moved under review.')
+    setReports(current=>status==='under_review'||status==='substantiated'?current.map(item=>item.id===report.id?{...item,status}:item):current.filter(item=>item.id!==report.id))
+    setNotice(status==='substantiated'?'Finding recorded; the reported contribution has been hidden.':status==='overturned'?(response.data.contentRestored?'Finding overturned; the contribution has been restored.':'Finding overturned; the original contribution is no longer available to restore.') :status==='dismissed'?'Report dismissed; its audit history remains.':status==='resolved'?'Report marked resolved.':'Report moved under review.')
   }
   return <section className="community-moderation-queue" aria-labelledby="community-moderation-title">
-    <div className="page-title"><SectionKicker>Community safety</SectionKicker><h2 id="community-moderation-title">Reviews and discussion reports.</h2><p>Only authorized administrators and moderators can see reporter details. Substantiating a report hides the reported contribution; dismissal and resolution preserve its audit trail.</p></div>
+    <div className="page-title"><SectionKicker>Community safety</SectionKicker><h2 id="community-moderation-title">Reviews and discussion reports.</h2><p>Only authorized administrators and moderators can see reporter details. Substantiating a report hides the reported contribution. An overturned finding restores it when the original content still exists; all actions remain in the audit trail.</p></div>
     {loading?<p className="status-message">Loading community reports…</p>:<>
       {error&&<p className="status-message error" role="alert">{error}</p>}
       {notice&&<p className="status-message" role="status">{notice}</p>}
       {!error&&!reports.length&&<EmptyState title="No open community reports." copy="New reports about reviews and comments will appear here."/>}
       {!!reports.length&&<div className="report-queue">{reports.map(report=><article className="report-card" key={report.id}>
-        <div className="report-card-head"><div><span className={'report-status report-status-'+report.status}>{report.status==='submitted'?'Submitted':'Under review'}</span><h3>{report.target_type==='review'?'Customer review':'Discussion contribution'}</h3><p>{report.reason.replaceAll('_',' ')} · {new Date(report.created_at).toLocaleDateString('en-IN')}</p></div><span className="mono">{report.target_id}</span></div>
+        <div className="report-card-head"><div><span className={'report-status report-status-'+report.status}>{report.status==='submitted'?'Submitted':report.status==='under_review'?'Under review':'Substantiated · hidden'}</span><h3>{report.target_type==='review'?'Customer review':'Discussion contribution'}</h3><p>{report.reason.replaceAll('_',' ')} · {new Date(report.created_at).toLocaleDateString('en-IN')}</p></div><span className="mono">{report.target_id}</span></div>
         <p><strong>Reported author:</strong> {report.content_author}</p>
         <blockquote className="community-reported-content">{report.reported_content||'The original contribution is no longer available.'}</blockquote>
         <p><strong>Report explanation:</strong> {report.details}</p>
         <p className="muted">Reporter account: {report.reporter_id||'Deleted account'} · Property ID: {report.property_id}</p>
         <div className="report-actions">
-          {report.status==='submitted'&&<button className="btn btn-outline" disabled={busy===report.id} onClick={()=>void moderate(report,'under_review')}>Start review</button>}
-          <button className="btn btn-primary" disabled={busy===report.id} onClick={()=>void moderate(report,'substantiated')}>Substantiate & hide content</button>
-          <button className="btn btn-outline" disabled={busy===report.id} onClick={()=>void moderate(report,'resolved')}>Resolve</button>
-          <button className="btn btn-outline" disabled={busy===report.id} onClick={()=>void moderate(report,'dismissed')}>Dismiss</button>
+          {report.status==='substantiated'
+            ? <button className="btn btn-primary" disabled={busy===report.id} onClick={()=>void moderate(report,'overturned')}>Overturn & restore content</button>
+            : <>
+              {report.status==='submitted'&&<button className="btn btn-outline" disabled={busy===report.id} onClick={()=>void moderate(report,'under_review')}>Start review</button>}
+              <button className="btn btn-primary" disabled={busy===report.id} onClick={()=>void moderate(report,'substantiated')}>Substantiate & hide content</button>
+              <button className="btn btn-outline" disabled={busy===report.id} onClick={()=>void moderate(report,'resolved')}>Resolve</button>
+              <button className="btn btn-outline" disabled={busy===report.id} onClick={()=>void moderate(report,'dismissed')}>Dismiss</button>
+            </>}
         </div>
       </article>)}</div>}
     </>}
