@@ -172,7 +172,7 @@ function CommunityContentReportQueue() {
     {loading?<p className="status-message">Loading community reports…</p>:<>
       {error&&<p className="status-message error" role="alert">{error}</p>}
       {notice&&<p className="status-message" role="status">{notice}</p>}
-      {!error&&!reports.length&&<EmptyState title="No open community reports." copy="New reports about reviews and comments will appear here."/>}
+      {!error&&!reports.length&&<EmptyState title="No outstanding community reports." copy="New reports and substantiated findings awaiting reconsideration will appear here."/>}
       {!!reports.length&&<div className="report-queue">{reports.map(report=><article className="report-card" key={report.id}>
         <div className="report-card-head"><div><span className={'report-status report-status-'+report.status}>{report.status==='submitted'?'Submitted':report.status==='under_review'?'Under review':'Substantiated · hidden'}</span><h3>{report.target_type==='review'?'Customer review':'Discussion contribution'}</h3><p>{report.reason.replaceAll('_',' ')} · {new Date(report.created_at).toLocaleDateString('en-IN')}</p></div><span className="mono">{report.target_id}</span></div>
         <p><strong>Reported author:</strong> {report.content_author}</p>
