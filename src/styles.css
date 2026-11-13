@@ -1159,3 +1159,5 @@ img { max-width: 100%; display: block; }
   .community-moderation-queue .report-card-head { flex-direction:column; }
   .community-moderation-queue .report-actions { flex-wrap:wrap; }
 }
+
+.report-status-substantiated { color:#8b4c00; background:#fff4df; border-color:#e3b45f; }
