@@ -509,7 +509,7 @@ async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:stri
   return {
     reviews:reviews.results.map(row=>({
       id:String(row.id),reviewerName:String(row.reviewer_name||'ZameenHub member'),
-      rating:Number(row.rating),body:String(row.body),interactionType:String(row.interaction_type),reviewerRole:String(row.reviewer_role||'user'),
+      rating:Number(row.rating),body:String(row.body),interactionType:String(row.interaction_type),reviewerRole:String(row.reviewer_role||'former_member'),
       createdAt:String(row.created_at),updatedAt:String(row.updated_at),
       isMine:!!viewerId&&row.reviewer_id===viewerId,
       response:row.owner_response?{body:String(row.owner_response),createdAt:String(row.response_created_at||'')}:null
@@ -517,7 +517,7 @@ async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:stri
     comments:comments.results.map(row=>({
       id:String(row.id),parentCommentId:row.parent_comment_id?String(row.parent_comment_id):null,
       authorName:String(row.author_name||'ZameenHub member'),
-      authorRole:String(row.author_role||'user'),body:String(row.body),
+      authorRole:String(row.author_role||'former_member'),body:String(row.body),
       createdAt:String(row.created_at),updatedAt:String(row.updated_at),
       isMine:!!viewerId&&row.author_id===viewerId,
       isOwner:!!ownerId&&row.author_id===ownerId
