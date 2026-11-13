@@ -167,6 +167,11 @@ def main() -> int:
         (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
         VALUES('admin-reply','rollout-property','rollout-admin','buyer-root','A staff reply should not count.','published',?,?)""",
         (rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_reviews
+        (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,'published',?,?)""",
+        ("community-admin-review", "rollout-property", "rollout-admin", 5,
+         "Staff-authored review must not count toward community rating.", "viewing", rollout_iso, rollout_iso))
     admin_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
         JOIN users reviewer ON reviewer.id=r.reviewer_id
         WHERE r.property_id='rollout-property' AND r.status='published' AND reviewer.role='admin'""").fetchone()[0]
