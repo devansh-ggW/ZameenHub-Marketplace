@@ -103,7 +103,7 @@ export function EditListingPage() {
     const hasPublicDocument = submittedDocuments.length > 0 || evidenceFiles.length > 0
     if (evidenceFiles.some(item => item.description.trim().length < 3)) { setSaving(false); setError('Give every new evidence file a clear description of at least 3 characters.'); return }
     const hasNewOrChangedEvidenceLink = documents.some(item => !item.id || property?.documents?.find(existing => existing.id === item.id)?.url !== item.url)
-    if ((documents.length > 0 || evidenceFiles.length > 0) && !privacyAcknowledged) { setSaving(false); setError('Confirm that new evidence does not expose personal IDs or private information.'); return }
+    if ((documents.length > 0 || evidenceFiles.length > 0) && !privacyAcknowledged) { setSaving(false); setError('Confirm that you own or are authorized to share the evidence publicly, and that it is properly redacted.'); return }
     const result = await apiRequest<{ id: string; status: 'published' | 'draft'; verified: false; message: string }>('/api/my/properties/' + encodeURIComponent(id), {
       method: 'PATCH',
       body: JSON.stringify({
@@ -292,7 +292,7 @@ export function EditListingPage() {
             <button className="btn btn-outline media-remove" type="button" onClick={() => setEvidenceFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}>Remove file</button>
           </div>)}
           {documents.length + evidenceFiles.length < 10 && <button className="btn btn-outline" type="button" onClick={() => setDocuments(current => current.length + evidenceFiles.length < 10 ? [...current, {documentType:'pdf',description:'',url:'',category:ownershipType==='inherited'?'inheritance':'ownership',sourceDate:'',issuingAuthority:'',jurisdiction:''}] : current)}>Add existing HTTPS evidence link</button>}
-          <label className="evidence-privacy-ack"><input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} /> <span>I confirm new evidence files and links do not expose personal ID numbers or private information.</span></label>
+          <label className="evidence-privacy-ack"><input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} /> <span>I confirm that I own or am authorized to share these files and links publicly, and that the material is accurate and redacted to remove unnecessary personal or confidential information.</span></label>
           {uploadStatus && <p className="status-message" role="status">{uploadStatus}{saving ? ' · ' + uploadProgress + '%' : ''}</p>}
         </section>
       </div>
