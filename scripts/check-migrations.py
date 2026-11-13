@@ -167,6 +167,7 @@ def main() -> int:
         ("deleted-root", None, None, "Contribution with deleted author."),
         ("seller-reply", "rollout-owner", "buyer-root", "Seller reply does not count."),
         ("buyer-reply", "rollout-reviewer", "owner-root", "Customer reply counts."),
+        ("buyer-self-reply", "rollout-reviewer", "buyer-root", "A self-reply must not create independent engagement."),
         ("deleted-reply", None, "buyer-root", "Deleted account reply does not count."),
     ]
     for comment_id, author_id, parent_id, body in community_comments:
@@ -178,9 +179,11 @@ def main() -> int:
     counted_roots = db.execute("""SELECT COUNT(*) FROM property_comments
         WHERE property_id='rollout-property' AND status='published' AND parent_comment_id IS NULL
           AND author_id IS NOT NULL AND author_id<>?""", (owner_id,)).fetchone()[0]
-    counted_replies = db.execute("""SELECT COUNT(*) FROM property_comments
-        WHERE property_id='rollout-property' AND status='published' AND parent_comment_id IS NOT NULL
-          AND author_id IS NOT NULL AND author_id<>?""", (owner_id,)).fetchone()[0]
+    counted_replies = db.execute("""SELECT COUNT(*) FROM property_comments c
+        JOIN property_comments parent ON parent.id=c.parent_comment_id
+        WHERE c.property_id='rollout-property' AND c.status='published' AND parent.status='published'
+          AND c.author_id IS NOT NULL AND c.author_id<>? AND c.author_id<>parent.author_id""",
+        (owner_id,)).fetchone()[0]
     expect(counted_roots == 1 and counted_replies == 1,
            "Only identifiable non-owner comments and replies may count toward GREEN")
 
