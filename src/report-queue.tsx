@@ -105,18 +105,21 @@ export function ReportQueuePage() {
       {!error && reports.length === 0 && <EmptyState title="No open reports." copy="New reports will appear here for authorized moderators and administrators." />}
       {!error && reports.length > 0 && <div className="report-queue">{reports.map(report => <article className="report-card" key={report.id}>
         <div className="report-card-head"><div><span className={'report-status report-status-' + report.status}>{report.status === 'submitted' ? 'Submitted' : 'Under review'}</span><h2>{report.property_title}</h2><p>{report.property_city} · {reasonLabel[report.reason] ?? report.reason}</p></div><span className="mono">{new Date(report.created_at).toLocaleDateString('en-IN')}</span></div>
-        <p className="report-evidence">{report.details}</p>\n        <p className="muted">Eligible for the public indicator: {report.threshold_eligible ? 'Yes' : 'No'}</p>\n        {report.evidence_url && <p><a href={report.evidence_url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Open reporter evidence link ↗</a></p>}
+        <p className="report-evidence">{report.details}</p>
+        <p className="muted">Eligible for the public indicator: {report.threshold_eligible ? 'Yes' : 'No'}</p>
+        {report.evidence_url && <p><a href={report.evidence_url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">Open reporter evidence link ↗</a></p>}
         <p className="muted">Reported listing: {report.property_status === 'published' ? <Link to={'/properties/' + report.property_slug} target="_blank" rel="noreferrer">Open property</Link> : <span>Not publicly available · {report.property_status}</span>}</p>
         <p className="muted">Review the seller-provided property details and evidence independently before taking moderation action.</p>
         <div className="report-actions">
           {report.status === 'submitted' && <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void updateReport(report, 'under_review')}>Start review</button>}
           {report.property_status === 'published' && <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void archiveReportedListing(report)}>{busyId === report.id ? 'Archiving…' : 'Archive listing'}</button>}
-          <button className="btn btn-primary" disabled={busyId === report.id} onClick={() => void updateReport(report, 'substantiated')}>Substantiate</button>\n          <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void updateReport(report, 'resolved')}>Resolve</button>
+          <button className="btn btn-primary" disabled={busyId === report.id} onClick={() => void updateReport(report, 'substantiated')}>Substantiate</button>
+          <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void updateReport(report, 'resolved')}>Resolve</button>
           <button className="btn btn-outline" disabled={busyId === report.id} onClick={() => void updateReport(report, 'dismissed')}>Dismiss</button>
         </div>
       </article>)}</div>}
     </>}
-    <CommunityContentReportQueue />
+    {user && ['admin','moderator'].includes(user.role) && <CommunityContentReportQueue />}
   </div></main>
 }
 
