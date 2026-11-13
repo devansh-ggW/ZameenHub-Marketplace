@@ -39,13 +39,13 @@ def main() -> int:
             db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                        ("rollout-resolved", "rollout-resolved@example.test", "Rollout Resolved", "user", "test-hash"))
             db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
-                       ("rollout-admin", "rollout-admin@example.test", "Rollout Admin", "admin", "test-hash"))
+                       ("rollout-moderator", "rollout-moderator@example.test", "Rollout Moderator", "moderator", "test-hash"))
             legacy_reports = [
                 ("legacy-report-1", "rollout-reporter", "open"),
                 ("legacy-report-3", "rollout-reviewer", "reviewing"),
                 ("legacy-report-dismissed", "rollout-dismissed", "dismissed"),
                 ("legacy-report-resolved", "rollout-resolved", "resolved"),
-                ("legacy-report-admin", "rollout-admin", "open"),
+                ("legacy-report-admin", "rollout-moderator", "open"),
             ]
             for report_id, reporter_id, status in legacy_reports:
                 db.execute("""INSERT INTO property_reports
@@ -181,16 +181,16 @@ def main() -> int:
             (comment_id, "rollout-property", author_id, parent_id, body, rollout_iso, rollout_iso))
     db.execute("""INSERT INTO property_comments
         (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
-        VALUES('admin-root','rollout-property','rollout-admin',NULL,'A staff comment should not count.','published',?,?)""",
+        VALUES('admin-root','rollout-property','rollout-moderator',NULL,'A staff comment should not count.','published',?,?)""",
         (rollout_iso, rollout_iso))
     db.execute("""INSERT INTO property_comments
         (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
-        VALUES('admin-reply','rollout-property','rollout-admin','buyer-root','A staff reply should not count.','published',?,?)""",
+        VALUES('admin-reply','rollout-property','rollout-moderator','buyer-root','A staff reply should not count.','published',?,?)""",
         (rollout_iso, rollout_iso))
     db.execute("""INSERT INTO property_reviews
         (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
         VALUES(?,?,?,?,?,?,'published',?,?)""",
-        ("community-admin-review", "rollout-property", "rollout-admin", 5,
+        ("community-admin-review", "rollout-property", "rollout-moderator", 5,
          "Staff-authored review must not count toward community rating.", "viewing", rollout_iso, rollout_iso))
     member_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
         JOIN users reviewer ON reviewer.id=r.reviewer_id
