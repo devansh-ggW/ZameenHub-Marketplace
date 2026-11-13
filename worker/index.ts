@@ -1059,7 +1059,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         LEFT JOIN property_comments cm ON r.target_type='comment' AND cm.id=r.target_id AND cm.property_id=r.property_id
         LEFT JOIN users ru ON ru.id=rv.reviewer_id
         LEFT JOIN users cu ON cu.id=cm.author_id
-        WHERE r.status IN ('submitted','under_review')
+        WHERE r.status IN ('submitted','under_review','substantiated')
         ORDER BY r.created_at ASC LIMIT 100`).all<Record<string,unknown>>()
       return ok(result.results)
     }
@@ -1070,21 +1070,26 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'community-moderation',20)||!await limited(db,'community-moderation-user:'+user.id,30,60))return fail('Too many moderation actions. Please wait before retrying.',429)
       const input=await body(request);if(!input)return fail('Invalid moderation update.')
       const reportId=decodeURIComponent(communityReportMatch[1]),status=clean(input.status,20),note=clean(input.resolutionNote,1200)
-      if(!['under_review','substantiated','dismissed','resolved'].includes(status))return fail('Unsupported moderation status.')
+      if(!['under_review','substantiated','dismissed','resolved','overturned'].includes(status))return fail('Unsupported moderation status.')
       if(status!=='under_review'&&note.trim().length<8)return fail('Add an evidence-based moderation note of at least 8 characters.')
-      const report=await db.prepare("SELECT * FROM community_content_reports WHERE id=? AND status IN ('submitted','under_review')").bind(reportId).first<Record<string,unknown>>()
+      const report=await db.prepare("SELECT * FROM community_content_reports WHERE id=? AND status IN ('submitted','under_review','substantiated')").bind(reportId).first<Record<string,unknown>>()
       if(!report)return fail('Community report was already handled or could not be found.',404)
       const timestamp=nowIso(),previousStatus=String(report.status)
-      const action=status==='substantiated'?'content_hidden':status==='dismissed'?'report_dismissed':status==='resolved'?'report_resolved':'review_started'
+      if(status==='overturned'&&previousStatus!=='substantiated')return fail('Only a substantiated community report can be overturned.',409)
+      if(status!=='overturned'&&!['submitted','under_review'].includes(previousStatus))return fail('This report has already been handled. Refresh the queue.',409)
+      const action=status==='substantiated'?'content_hidden':status==='overturned'?'finding_overturned_content_restored':status==='dismissed'?'report_dismissed':status==='resolved'?'report_resolved':'review_started'
       const statements:D1PreparedStatement[]=[
-        db.prepare("UPDATE community_content_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review') AND status=? AND status<>?").bind(status,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId,previousStatus,status),
+        db.prepare("UPDATE community_content_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status=? AND status<>?").bind(status,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId,previousStatus,status),
         db.prepare("INSERT INTO community_moderation_events(id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),reportId,String(report.property_id),String(report.target_type),String(report.target_id),user.id,action,previousStatus,status,note,timestamp)
       ]
       if(status==='substantiated'&&report.target_type==='review')statements.push(db.prepare("UPDATE property_reviews SET status='hidden',updated_at=? WHERE id=? AND property_id=? AND status='published'").bind(timestamp,String(report.target_id),String(report.property_id)))
       if(status==='substantiated'&&report.target_type==='comment')statements.push(db.prepare("UPDATE property_comments SET status='hidden',updated_at=? WHERE id=? AND property_id=? AND status='published'").bind(timestamp,String(report.target_id),String(report.property_id)))
+      if(status==='overturned'&&report.target_type==='review')statements.push(db.prepare("UPDATE property_reviews SET status='published',updated_at=? WHERE id=? AND property_id=? AND status='hidden'").bind(timestamp,String(report.target_id),String(report.property_id)))
+      if(status==='overturned'&&report.target_type==='comment')statements.push(db.prepare("UPDATE property_comments SET status='published',updated_at=? WHERE id=? AND property_id=? AND status='hidden'").bind(timestamp,String(report.target_id),String(report.property_id)))
       const results=await db.batch(statements)
       if(!results[0]?.meta?.changes)return fail('The report changed during moderation. Refresh the queue and retry.',409)
-      return ok({id:reportId,status,contentHidden:status==='substantiated'})
+      const contentChanged=status==='substantiated'||status==='overturned'?Number(results[2]?.meta?.changes||0)>0:false
+      return ok({id:reportId,status,contentHidden:status==='substantiated'&&contentChanged,contentRestored:status==='overturned'&&contentChanged})
     }
     const publicProfileMatch=path.match(/^\/api\/public-profiles\/([^/]+)$/)
     if(publicProfileMatch&&method==='GET') {
