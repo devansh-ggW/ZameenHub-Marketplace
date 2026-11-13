@@ -41,6 +41,7 @@ type Review = {
   createdAt: string
   updatedAt: string
   isMine: boolean
+  reviewerRole: string
   response: { body: string; createdAt: string } | null
 }
 type Comment = {
@@ -207,7 +208,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
     <div className="community-content-section">
       <div className="community-section-head"><div><h3>Community reviews</h3><p className="muted">Reviews describe self-reported interactions, not verified purchases or transactions. Only distinct non-owner member accounts count toward the indicator; administrator and moderator activity is excluded, and seller responses are shown separately.</p></div></div>
       {data.reviews.length?data.reviews.map(review=><article className="community-review" key={review.id}>
-        <div className="community-review-head"><div><strong>{review.reviewerName}</strong><span>{interactionLabel(review.interactionType)} · {dateLabel(review.createdAt)}</span></div><span className="community-stars" aria-label={review.rating+' out of 5 stars'}>{'★'.repeat(review.rating)}{'☆'.repeat(5-review.rating)}</span></div>
+        <div className="community-review-head"><div><strong>{review.reviewerName}{review.reviewerRole==='admin'?' · Admin':review.reviewerRole==='moderator'?' · Moderator':''}</strong><span>{interactionLabel(review.interactionType)} · {dateLabel(review.createdAt)}</span></div><span className="community-stars" aria-label={review.rating+' out of 5 stars'}>{'★'.repeat(review.rating)}{'☆'.repeat(5-review.rating)}</span></div>
         {editReviewId===review.id?<form className="community-inline-form" onSubmit={saveReviewEdit}>
           <select className="form-control" value={editRating} onChange={e=>setEditRating(e.target.value)}>{[5,4,3,2,1].map(n=><option key={n} value={n}>{n} stars</option>)}</select>
           <select className="form-control" value={editInteraction} onChange={e=>setEditInteraction(e.target.value)}><option value="inquiry">Inquiry</option><option value="viewing">Viewing</option><option value="transaction">Transaction</option><option value="other">Other</option></select>
