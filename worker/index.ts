@@ -456,7 +456,10 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
     (SELECT AVG(r.rating) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS average_rating,
     (SELECT COUNT(*) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL AND r.rating>=4) AS positive_reviews,
     (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NULL AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id) AS comment_count,
-    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NOT NULL AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id) AS reply_count
+    (SELECT COUNT(*) FROM property_comments c
+      JOIN property_comments parent ON parent.id=c.parent_comment_id
+      WHERE c.property_id=p.id AND c.status='published' AND parent.status='published'
+        AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id AND c.author_id<>parent.author_id) AS reply_count
     FROM properties p WHERE p.id=?`).bind(propertyId).first<Record<string,number|null>>()
   if(!stats) return null
   const distribution=await db.prepare("SELECT rating,COUNT(*) AS count FROM property_reviews WHERE property_id=? AND status='published' AND reviewer_id IS NOT NULL GROUP BY rating").bind(propertyId).all<{rating:number;count:number}>()
