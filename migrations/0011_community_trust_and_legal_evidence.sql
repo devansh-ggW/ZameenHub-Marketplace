@@ -166,6 +166,7 @@ CREATE INDEX idx_community_content_reports_queue ON community_content_reports(st
 
 CREATE TABLE community_moderation_events (
   id TEXT PRIMARY KEY,
+  report_id TEXT NOT NULL,
   property_id TEXT NOT NULL,
   target_type TEXT NOT NULL,
   target_id TEXT NOT NULL,
@@ -176,6 +177,7 @@ CREATE TABLE community_moderation_events (
   note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
+CREATE INDEX idx_community_moderation_events_report ON community_moderation_events(report_id,created_at);
 CREATE TRIGGER community_moderation_events_no_update
 BEFORE UPDATE ON community_moderation_events
 BEGIN SELECT RAISE(ABORT,'community moderation audit events are append-only'); END;
