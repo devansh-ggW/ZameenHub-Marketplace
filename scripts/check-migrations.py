@@ -207,7 +207,7 @@ def main() -> int:
         (id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at)
         VALUES('community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
                'spam','A sufficiently detailed report explanation.','submitted',?)""", (rollout_iso,))
-    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status<>'under_review' AND status<>'under_review'")
+    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status<>'under_review'")
     db.execute("""INSERT INTO community_moderation_events
         (id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
         SELECT 'community-cas-event-1','rollout-property','comment','buyer-root','rollout-owner',
