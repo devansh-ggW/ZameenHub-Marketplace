@@ -57,12 +57,12 @@ type Comment = {
 type CommunityPayload = { summary: TrustSummary; reviews: Review[]; comments: Comment[] }
 
 const indicatorCopy = {
-  RED: { title: 'HIGH CAUTION', text: 'Missing evidence or a high number of eligible reports.' },
+  RED: { title: 'HIGH CAUTION', text: 'Missing qualifying ownership/legal evidence or a high number of eligible reports.' },
   YELLOW: { title: 'LIMITED COMMUNITY EVIDENCE', text: 'There is not yet enough positive, varied community feedback.' },
   GREEN: { title: 'POSITIVE COMMUNITY ACTIVITY', text: 'Submitted evidence and community feedback meet the published thresholds.' },
 }
 const reasonCopy: Record<string,string> = {
-  no_ownership_evidence: 'No seller-submitted property documents are currently attached.',
+  no_ownership_evidence: 'No seller-authorized ownership, inheritance or legal-status evidence is currently attached.',
   report_red_threshold: 'Five or more eligible reports have been submitted. Reports are allegations unless substantiated.',
   report_yellow_threshold: 'Three or four eligible reports have been submitted. Reports are allegations unless substantiated.',
   insufficient_reviews: 'At least three reviews from three distinct accounts are required.',
@@ -178,7 +178,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
       <span className={'community-indicator community-indicator-'+trust.color.toLowerCase()}><strong>{trust.color}</strong><small>{indicator.title}</small></span>
     </div>
     <p className="community-indicator-summary">{indicator.text} {reasonCopy[trust.reason]||''}</p>
-    <p className="community-green-warning"><strong>GREEN DOES NOT MEAN VERIFIED.</strong> It means the listing has submitted documentation and accumulated sufficiently positive community engagement under the published rules. It does not establish authenticity, ownership, clear title, absence of disputes, possession, condition or transaction safety.</p>
+    <p className="community-green-warning"><strong>GREEN DOES NOT MEAN VERIFIED.</strong> It means the listing has seller-authorized evidence in a qualifying ownership, inheritance or legal-status category and has accumulated sufficiently positive customer engagement under the published rules. It does not establish authenticity, ownership, clear title, absence of disputes, possession, condition or transaction safety.</p>
     <div className="community-stat-grid">
       <div><strong>{trust.documentationSubmitted}</strong><span>Evidence items submitted</span></div>
       <div><strong>{trust.eligibleReviewCount}</strong><span>Eligible reviews</span></div>
@@ -244,7 +244,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
     {error&&<p className="status-message error" role="alert">{error}</p>}
     {notice&&<p className="status-message" role="status">{notice}</p>}
     <p className="muted community-disclaimer">Community feedback reflects submitted user experiences and is not a legal determination. Do independent ownership, title, dispute, seller-identity and physical-condition checks before any payment or agreement.</p>
-    <p className="muted community-policy-footnote">The published policy requires {trust.policy.minimumEligibleReviews} reviews from {trust.policy.minimumDistinctReviewers} distinct accounts, an average of {trust.policy.minimumAverageRating}/5, at least {Math.round(trust.policy.minimumPositiveReviewShare*100)}% positive ratings, public comments and replies, and fewer than 3 eligible reports for GREEN.</p>
+    <p className="muted community-policy-footnote">The published policy requires at least one qualifying ownership, inheritance or legal-status evidence item, then {trust.policy.minimumEligibleReviews} reviews from {trust.policy.minimumDistinctReviewers} distinct accounts, an average of {trust.policy.minimumAverageRating}/5, at least {Math.round(trust.policy.minimumPositiveReviewShare*100)}% positive ratings, public comments and replies, and fewer than 3 eligible reports for GREEN.</p>
     <p><Link to="/terms">Community rules and terms</Link> · <Link to="/privacy">Privacy information</Link></p>
   </section>
 }
