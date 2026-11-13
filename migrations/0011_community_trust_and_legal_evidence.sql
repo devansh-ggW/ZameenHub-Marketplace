@@ -153,7 +153,7 @@ CREATE TABLE community_content_reports (
   reason TEXT NOT NULL CHECK (reason IN ('abuse','spam','fake_or_misleading','privacy','other')),
   details TEXT NOT NULL CHECK (length(trim(details)) BETWEEN 10 AND 1200),
   status TEXT NOT NULL DEFAULT 'submitted'
-    CHECK (status IN ('submitted','under_review','substantiated','dismissed','resolved')),
+    CHECK (status IN ('submitted','under_review','substantiated','dismissed','resolved','overturned')),
   resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   resolved_at TEXT,
   resolution_note TEXT NOT NULL DEFAULT '',
