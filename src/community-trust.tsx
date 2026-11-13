@@ -192,7 +192,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
       <div className="community-breakdown-grid">
         <p><strong>Why this colour?</strong><span>{reasonCopy[trust.reason]||'The policy thresholds are applied in a fixed priority order.'}</span></p>
         <p><strong>Qualifying ownership/legal evidence</strong><span>{trust.eligibleDocumentationSubmitted} submitted items in ownership, inheritance or legal-status categories</span></p>
-        <p><strong>Distinct reviewers</strong><span>{trust.distinctReviewers} customer accounts</span></p>
+        <p><strong>Distinct reviewers</strong><span>{trust.distinctReviewers} distinct community accounts</span></p>
         <div className="community-rating-distribution"><strong>Rating distribution</strong>{trust.ratingDistribution.map(item=><div className="community-rating-row" key={item.rating}><span>{item.rating}★</span><div className="community-rating-track"><span style={{width:(trust.eligibleReviewCount?item.count/trust.eligibleReviewCount*100:0)+'%'}}/></div><span>{item.count}</span></div>)}</div>
         <p><strong>Positive reviews</strong><span>{trust.positiveReviewCount} of {trust.eligibleReviewCount} ({Math.round(trust.positiveReviewShare*100)}%)</span></p>
         <p><strong>Eligible reports</strong><span>{trust.totalReports} total · {trust.openReports} submitted/under review</span></p>
@@ -205,7 +205,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
     </details>
 
     <div className="community-content-section">
-      <div className="community-section-head"><div><h3>Customer reviews</h3><p className="muted">Only eligible customer accounts count toward the indicator. Seller replies are shown separately.</p></div></div>
+      <div className="community-section-head"><div><h3>Community reviews</h3><p className="muted">Reviews describe self-reported interactions, not verified purchases or transactions. Only distinct non-owner accounts count toward the indicator; seller responses are shown separately.</p></div></div>
       {data.reviews.length?data.reviews.map(review=><article className="community-review" key={review.id}>
         <div className="community-review-head"><div><strong>{review.reviewerName}</strong><span>{interactionLabel(review.interactionType)} · {dateLabel(review.createdAt)}</span></div><span className="community-stars" aria-label={review.rating+' out of 5 stars'}>{'★'.repeat(review.rating)}{'☆'.repeat(5-review.rating)}</span></div>
         {editReviewId===review.id?<form className="community-inline-form" onSubmit={saveReviewEdit}>
@@ -221,7 +221,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
         <button className="community-report-link" onClick={()=>void report('review',review.id)}>Report review</button>
       </article>):<p className="gallery-empty">No customer reviews have been submitted yet.</p>}
       {!data.reviews.some(review=>review.isMine)&&<form className="community-form" onSubmit={submitReview}>
-        <h4>Share an experience</h4><p className="muted">Choose the interaction type honestly. This is not a “verified buyer” badge.</p>
+        <h4>Share an experience</h4><p className="muted">Choose the interaction type honestly. This is not a verified-buyer badge; ZameenHub does not independently verify the interaction.</p>
         <div className="community-form-row"><div className="form-field"><label>Rating</label><select className="form-control" value={rating} onChange={e=>setRating(e.target.value)}>{[5,4,3,2,1].map(n=><option key={n} value={n}>{n} stars</option>)}</select></div><div className="form-field"><label>Experience</label><select className="form-control" value={interactionType} onChange={e=>setInteractionType(e.target.value)}><option value="inquiry">Inquiry</option><option value="viewing">Viewing</option><option value="transaction">Transaction</option><option value="other">Other interaction</option></select></div></div>
         <div className="form-field"><label>Review</label><textarea className="form-control" minLength={20} maxLength={2000} required value={reviewBody} onChange={e=>setReviewBody(e.target.value)} placeholder="Describe the actual interaction with this property or listing."/><small>One review per account per property. Do not include private contact or identity information.</small></div>
         <button className="btn btn-primary" disabled={busy}>Submit review</button>
