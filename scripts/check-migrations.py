@@ -38,11 +38,14 @@ def main() -> int:
                        ("rollout-dismissed", "rollout-dismissed@example.test", "Rollout Dismissed", "user", "test-hash"))
             db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
                        ("rollout-resolved", "rollout-resolved@example.test", "Rollout Resolved", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-admin", "rollout-admin@example.test", "Rollout Admin", "admin", "test-hash"))
             legacy_reports = [
                 ("legacy-report-1", "rollout-reporter", "open"),
                 ("legacy-report-3", "rollout-reviewer", "reviewing"),
                 ("legacy-report-dismissed", "rollout-dismissed", "dismissed"),
                 ("legacy-report-resolved", "rollout-resolved", "resolved"),
+                ("legacy-report-admin", "rollout-admin", "open"),
             ]
             for report_id, reporter_id, status in legacy_reports:
                 db.execute("""INSERT INTO property_reports
@@ -102,12 +105,13 @@ def main() -> int:
     expect(legacy_doc is not None and legacy_doc["category"] == "other" and legacy_doc["seller_authorized"] == 1 and legacy_doc["status"] == "active",
            "Legacy seller evidence must remain active and receive safe metadata defaults")
     legacy = {row["id"]: row for row in db.execute("SELECT id,status,threshold_eligible FROM property_reports WHERE id LIKE 'legacy-report-%'")}
-    expect(len(legacy) == 4, "The community migration must preserve every existing property report")
+    expect(len(legacy) == 5, "The community migration must preserve every existing property report")
     expect(legacy["legacy-report-1"]["status"] == "submitted" and legacy["legacy-report-3"]["status"] == "under_review",
            "Legacy open/reviewing reports must map to submitted/under_review")
     expect(legacy["legacy-report-dismissed"]["status"] == "dismissed" and legacy["legacy-report-dismissed"]["threshold_eligible"] == 0,
            "Dismissed legacy reports must remain auditable but not count toward the indicator")
     expect(legacy["legacy-report-resolved"]["status"] == "resolved", "Resolved reports must retain their status")
+    expect(legacy["legacy-report-admin"]["threshold_eligible"] == 0, "Staff reports must not count as community threshold contributions")
     expect(legacy["legacy-report-1"]["threshold_eligible"] == 1,
            "An eligible legacy report must remain eligible after migration")
     expect(db.execute("SELECT COUNT(*) FROM property_report_contributions").fetchone()[0] == 3,
@@ -155,6 +159,19 @@ def main() -> int:
         raise AssertionError("Duplicate account/property report contribution must be rejected")
     except sqlite3.IntegrityError:
         pass
+    db.execute("""INSERT INTO property_comments
+        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+        VALUES('admin-root','rollout-property','rollout-admin',NULL,'A staff comment should not count.','published',?,?)""",
+        (rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_comments
+        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+        VALUES('admin-reply','rollout-property','rollout-admin','buyer-root','A staff reply should not count.','published',?,?)""",
+        (rollout_iso, rollout_iso))
+    admin_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
+        JOIN users reviewer ON reviewer.id=r.reviewer_id
+        WHERE r.property_id='rollout-property' AND r.status='published' AND reviewer.role='admin'""").fetchone()[0]
+    expect(admin_review_count == 0, "Staff review aggregates must use ordinary member roles only")
+
     policy_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_policy_acceptances)")}
     expect({"user_id", "policy_key", "policy_version", "accepted_at"} <= policy_columns,
            "Versioned policy acceptance fields are incomplete")
@@ -176,13 +193,15 @@ def main() -> int:
             VALUES(?,?,?,? ,?,'published',?,?)""",
             (comment_id, "rollout-property", author_id, parent_id, body, rollout_iso, rollout_iso))
     owner_id = db.execute("SELECT owner_id FROM properties WHERE id='rollout-property'").fetchone()[0]
-    counted_roots = db.execute("""SELECT COUNT(*) FROM property_comments
-        WHERE property_id='rollout-property' AND status='published' AND parent_comment_id IS NULL
-          AND author_id IS NOT NULL AND author_id<>?""", (owner_id,)).fetchone()[0]
+    counted_roots = db.execute("""SELECT COUNT(*) FROM property_comments c JOIN users author ON author.id=c.author_id
+        WHERE c.property_id='rollout-property' AND c.status='published' AND c.parent_comment_id IS NULL
+          AND c.author_id<>? AND author.role='user'""", (owner_id,)).fetchone()[0]
     counted_replies = db.execute("""SELECT COUNT(*) FROM property_comments c
         JOIN property_comments parent ON parent.id=c.parent_comment_id
+        JOIN users author ON author.id=c.author_id
+        JOIN users parent_author ON parent_author.id=parent.author_id
         WHERE c.property_id='rollout-property' AND c.status='published' AND parent.status='published'
-          AND c.author_id IS NOT NULL AND c.author_id<>? AND c.author_id<>parent.author_id""",
+          AND author.role='user' AND parent_author.role='user' AND c.author_id<>? AND c.author_id<>parent.author_id""",
         (owner_id,)).fetchone()[0]
     expect(counted_roots == 1 and counted_replies == 1,
            "Only identifiable non-owner comments and replies may count toward GREEN")
