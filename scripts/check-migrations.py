@@ -159,24 +159,6 @@ def main() -> int:
         raise AssertionError("Duplicate account/property report contribution must be rejected")
     except sqlite3.IntegrityError:
         pass
-    db.execute("""INSERT INTO property_comments
-        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
-        VALUES('admin-root','rollout-property','rollout-admin',NULL,'A staff comment should not count.','published',?,?)""",
-        (rollout_iso, rollout_iso))
-    db.execute("""INSERT INTO property_comments
-        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
-        VALUES('admin-reply','rollout-property','rollout-admin','buyer-root','A staff reply should not count.','published',?,?)""",
-        (rollout_iso, rollout_iso))
-    db.execute("""INSERT INTO property_reviews
-        (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,'published',?,?)""",
-        ("community-admin-review", "rollout-property", "rollout-admin", 5,
-         "Staff-authored review must not count toward community rating.", "viewing", rollout_iso, rollout_iso))
-    member_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
-        JOIN users reviewer ON reviewer.id=r.reviewer_id
-        WHERE r.property_id='rollout-property' AND r.status='published' AND reviewer.role='user'""").fetchone()[0]
-    expect(member_review_count == 1, "Staff-authored reviews must be excluded from the aggregate rating and reviewer count")
-
     policy_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_policy_acceptances)")}
     expect({"user_id", "policy_key", "policy_version", "accepted_at"} <= policy_columns,
            "Versioned policy acceptance fields are incomplete")
@@ -197,6 +179,24 @@ def main() -> int:
             (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
             VALUES(?,?,?,? ,?,'published',?,?)""",
             (comment_id, "rollout-property", author_id, parent_id, body, rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_comments
+        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+        VALUES('admin-root','rollout-property','rollout-admin',NULL,'A staff comment should not count.','published',?,?)""",
+        (rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_comments
+        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+        VALUES('admin-reply','rollout-property','rollout-admin','buyer-root','A staff reply should not count.','published',?,?)""",
+        (rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_reviews
+        (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,'published',?,?)""",
+        ("community-admin-review", "rollout-property", "rollout-admin", 5,
+         "Staff-authored review must not count toward community rating.", "viewing", rollout_iso, rollout_iso))
+    member_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
+        JOIN users reviewer ON reviewer.id=r.reviewer_id
+        WHERE r.property_id='rollout-property' AND r.status='published' AND reviewer.role='user'""").fetchone()[0]
+    expect(member_review_count == 1, "Staff-authored reviews must be excluded from the aggregate rating and reviewer count")
+
     owner_id = db.execute("SELECT owner_id FROM properties WHERE id='rollout-property'").fetchone()[0]
     counted_roots = db.execute("""SELECT COUNT(*) FROM property_comments c JOIN users author ON author.id=c.author_id
         WHERE c.property_id='rollout-property' AND c.status='published' AND c.parent_comment_id IS NULL
