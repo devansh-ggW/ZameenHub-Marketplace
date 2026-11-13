@@ -194,7 +194,7 @@ def main() -> int:
                'submitted','under_review',1,'CAS event',?
         WHERE changes()=1""", (rollout_iso,))
     property_event_count = db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id='legacy-report-1'").fetchone()[0]
-    db.execute("UPDATE property_reports SET status='under_review' WHERE id='legacy-report-1' AND status='submitted'")
+    db.execute("UPDATE property_reports SET status='under_review' WHERE id='legacy-report-1' AND status IN ('submitted','under_review') AND status<>'under_review'")
     db.execute("""INSERT INTO property_report_events
         (id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at)
         SELECT 'property-cas-event-2','legacy-report-1','rollout-property','rollout-reviewer',
@@ -207,14 +207,14 @@ def main() -> int:
         (id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at)
         VALUES('community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
                'spam','A sufficiently detailed report explanation.','submitted',?)""", (rollout_iso,))
-    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status<>'under_review'")
+    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status<>'under_review' AND status<>'under_review'")
     db.execute("""INSERT INTO community_moderation_events
         (id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
         SELECT 'community-cas-event-1','rollout-property','comment','buyer-root','rollout-owner',
                'review_started','submitted','under_review','CAS event',?
         WHERE changes()=1""", (rollout_iso,))
     community_event_count = db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0]
-    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review')")
+    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status<>'under_review'")
     db.execute("""INSERT INTO community_moderation_events
         (id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
         SELECT 'community-cas-event-2','rollout-property','comment','buyer-root','rollout-owner',
