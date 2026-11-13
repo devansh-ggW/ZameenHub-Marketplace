@@ -21,6 +21,7 @@
 | ZH-012 | Medium | Community trust integrity | Deleted-account seller comments could have been treated as member activity because author_id becomes NULL on account deletion. | Exclude missing authors, seller self-replies and staff activity from GREEN aggregates. | Source and migration regression checks added; latest CI pending. |
 | ZH-013 | Medium | Moderation audit concurrency | Concurrent moderation requests could append an event after a stale or already-transitioned report state. | Require exact previous status and a genuine status transition; append the audit event only if the conditional update changed one row. | Migration regression for stale transitions added; latest CI pending. |
 | ZH-014 | Medium | Trust score independence | Staff reviews, comments, replies or reports could otherwise influence public trust scoring. | Count only ordinary member accounts; label staff/former-member content and keep seller responses out of the score. | Worker aggregation and migration tests added; latest CI pending. |
+| ZH-015 | Medium | Policy version transition | Versioned Terms/Privacy acceptances are recorded for new registrations and account activations, but existing verified accounts are not yet prompted to accept the 13 Nov 2026 revision. | Decide with counsel whether re-acceptance is required; if so, add a version gate and accessible re-acceptance flow without fabricating historic consent. | Open; current code records new-account acceptance only. |
 
 ## Status convention
 
