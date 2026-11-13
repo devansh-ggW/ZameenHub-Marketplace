@@ -158,6 +158,70 @@ def main() -> int:
     policy_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_policy_acceptances)")}
     expect({"user_id", "policy_key", "policy_version", "accepted_at"} <= policy_columns,
            "Versioned policy acceptance fields are incomplete")
+    # Only comments from a non-owner account with a retained author identity
+    # can qualify as public community engagement. Deleted-account seller posts
+    # must not become customer engagement after ON DELETE SET NULL.
+    community_comments = [
+        ("owner-root", "rollout-owner", None, "Owner's own listing comment."),
+        ("buyer-root", "rollout-reviewer", None, "Customer's top-level contribution."),
+        ("deleted-root", None, None, "Contribution with deleted author."),
+        ("seller-reply", "rollout-owner", "buyer-root", "Seller reply does not count."),
+        ("buyer-reply", "rollout-reviewer", "owner-root", "Customer reply counts."),
+        ("deleted-reply", None, "buyer-root", "Deleted account reply does not count."),
+    ]
+    for comment_id, author_id, parent_id, body in community_comments:
+        db.execute("""INSERT INTO property_comments
+            (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+            VALUES(?,?,?,? ,?,'published',?,?)""",
+            (comment_id, "rollout-property", author_id, parent_id, body, rollout_iso, rollout_iso))
+    owner_id = db.execute("SELECT owner_id FROM properties WHERE id='rollout-property'").fetchone()[0]
+    counted_roots = db.execute("""SELECT COUNT(*) FROM property_comments
+        WHERE property_id='rollout-property' AND status='published' AND parent_comment_id IS NULL
+          AND author_id IS NOT NULL AND author_id<>?""", (owner_id,)).fetchone()[0]
+    counted_replies = db.execute("""SELECT COUNT(*) FROM property_comments
+        WHERE property_id='rollout-property' AND status='published' AND parent_comment_id IS NOT NULL
+          AND author_id IS NOT NULL AND author_id<>?""", (owner_id,)).fetchone()[0]
+    expect(counted_roots == 1 and counted_replies == 1,
+           "Only identifiable non-owner comments and replies may count toward GREEN")
+
+    # Audit events are appended only when the preceding compare-and-swap UPDATE
+    # actually changes a report. A stale concurrent moderation request must not
+    # create a false duplicate history event.
+    db.execute("UPDATE property_reports SET status='under_review' WHERE id='legacy-report-1' AND status='submitted'")
+    db.execute("""INSERT INTO property_report_events
+        (id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at)
+        SELECT 'property-cas-event-1','legacy-report-1','rollout-property','rollout-reviewer',
+               'submitted','under_review',1,'CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    property_event_count = db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id='legacy-report-1'").fetchone()[0]
+    db.execute("UPDATE property_reports SET status='under_review' WHERE id='legacy-report-1' AND status='submitted'")
+    db.execute("""INSERT INTO property_report_events
+        (id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at)
+        SELECT 'property-cas-event-2','legacy-report-1','rollout-property','rollout-reviewer',
+               'submitted','under_review',1,'Stale CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    expect(property_event_count == 2 and db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id='legacy-report-1'").fetchone()[0] == 2,
+           "Stale property-report moderation must not append a false audit event")
+
+    db.execute("""INSERT INTO community_content_reports
+        (id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at)
+        VALUES('community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
+               'spam','A sufficiently detailed report explanation.','submitted',?)""", (rollout_iso,))
+    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review')")
+    db.execute("""INSERT INTO community_moderation_events
+        (id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-cas-event-1','rollout-property','comment','buyer-root','rollout-owner',
+               'review_started','submitted','under_review','CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    community_event_count = db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0]
+    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review')")
+    db.execute("""INSERT INTO community_moderation_events
+        (id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-cas-event-2','rollout-property','comment','buyer-root','rollout-owner',
+               'review_started','submitted','under_review','Stale CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    expect(community_event_count == 1 and db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0] == 1,
+           "Stale community moderation must not append a false audit event")
 
     document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
     expect("updated_at" in document_columns, "Property documents must track their latest metadata update")
