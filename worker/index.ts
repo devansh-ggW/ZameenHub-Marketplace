@@ -1,5 +1,6 @@
 import { base32Encode, matchedTotpCounter } from './totp'
 import { calculateCommunityTrustIndicator } from './community-trust'
+const CURRENT_POLICY_VERSION = '2026-11-13'
 export type Env = {
   DB?: D1Database
   IMAGEKIT_PRIVATE_KEY?: string
@@ -614,8 +615,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const id=uuid(),acceptedAt=nowIso()
       await db.batch([
         db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,acceptedAt),
-        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms','2026-11-11',?)").bind(uuid(),id,acceptedAt),
-        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy','2026-11-11',?)").bind(uuid(),id,acceptedAt)
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms',?,?)").bind(uuid(),id,CURRENT_POLICY_VERSION,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy',?,?)").bind(uuid(),id,CURRENT_POLICY_VERSION,acceptedAt)
       ])
       const token=await issueToken(db,id,'verify',30)
       const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
@@ -644,8 +645,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const acceptedAt=nowIso()
       await db.batch([
         db.prepare('UPDATE users SET password_hash=?,email_verified=1,email_verified_at=?,terms_accepted_at=?,updated_at=? WHERE id=? AND password_hash IS NULL').bind(hash,acceptedAt,acceptedAt,acceptedAt,record.user_id),
-        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms','2026-11-11',?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,acceptedAt),
-        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy','2026-11-11',?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms',?,?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,CURRENT_POLICY_VERSION,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy',?,?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,CURRENT_POLICY_VERSION,acceptedAt),
         db.prepare("DELETE FROM email_verification_tokens WHERE user_id=? AND purpose='activate'").bind(record.user_id)
       ])
       return ok({message:'Your account is activated. Sign in to continue.'})
