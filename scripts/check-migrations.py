@@ -252,6 +252,23 @@ def main() -> int:
     expect(community_event_count == 1 and db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0] == 1,
            "Stale community moderation must not append a false audit event")
 
+    db.execute("""INSERT INTO community_content_reports
+        (id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at)
+        VALUES('community-report-appeal','rollout-property','comment','buyer-root','rollout-owner',
+               'fake_or_misleading','An appeal is under consideration for this hidden comment.','substantiated',?)""", (rollout_iso,))
+    db.execute("UPDATE property_comments SET status='hidden' WHERE id='buyer-root' AND status='published'")
+    db.execute("UPDATE community_content_reports SET status='overturned' WHERE id='community-report-appeal' AND status='substantiated' AND status<>'overturned'")
+    db.execute("""INSERT INTO community_moderation_events
+        (id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-appeal-event','community-report-appeal','rollout-property','comment','buyer-root','rollout-moderator',
+               'finding_overturned_content_restored','substantiated','overturned','Appeal accepted and content restored',?
+        WHERE changes()=1""", (rollout_iso,))
+    db.execute("UPDATE property_comments SET status='published',updated_at=? WHERE id='buyer-root' AND status='hidden'", (rollout_iso,))
+    expect(db.execute("SELECT status FROM community_content_reports WHERE id='community-report-appeal'").fetchone()[0] == 'overturned'
+           and db.execute("SELECT status FROM property_comments WHERE id='buyer-root'").fetchone()[0] == 'published'
+           and db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE report_id='community-report-appeal'").fetchone()[0] == 1,
+           "An overturned community finding must restore still-hidden content and preserve its linked audit event")
+
     document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
     expect("updated_at" in document_columns, "Property documents must track their latest metadata update")
     expect({"imagekit_file_id", "file_path", "uploader_id", "status"} <= document_columns,
