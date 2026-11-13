@@ -178,7 +178,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
       <span className={'community-indicator community-indicator-'+trust.color.toLowerCase()}><strong>{trust.color}</strong><small>{indicator.title}</small></span>
     </div>
     <p className="community-indicator-summary">{indicator.text} {reasonCopy[trust.reason]||''}</p>
-    <p className="community-green-warning"><strong>GREEN DOES NOT MEAN VERIFIED.</strong> It means the listing has seller-authorized evidence in a qualifying ownership, inheritance or legal-status category and has accumulated sufficiently positive customer engagement under the published rules. It does not establish authenticity, ownership, clear title, absence of disputes, possession, condition or transaction safety.</p>
+    <p className="community-green-warning"><strong>GREEN DOES NOT MEAN VERIFIED.</strong> It means the listing has seller-authorized evidence in a qualifying ownership, inheritance or legal-status category and has accumulated sufficiently positive engagement from ordinary member accounts under the published rules. It does not establish authenticity, ownership, clear title, absence of disputes, possession, condition or transaction safety.</p>
     <div className="community-stat-grid">
       <div><strong>{trust.documentationSubmitted}</strong><span>Evidence items submitted</span></div>
       <div><strong>{trust.eligibleReviewCount}</strong><span>Eligible reviews</span></div>
@@ -192,7 +192,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
       <div className="community-breakdown-grid">
         <p><strong>Why this colour?</strong><span>{reasonCopy[trust.reason]||'The policy thresholds are applied in a fixed priority order.'}</span></p>
         <p><strong>Qualifying ownership/legal evidence</strong><span>{trust.eligibleDocumentationSubmitted} submitted items in ownership, inheritance or legal-status categories</span></p>
-        <p><strong>Distinct reviewers</strong><span>{trust.distinctReviewers} distinct community accounts</span></p>
+        <p><strong>Distinct reviewers</strong><span>{trust.distinctReviewers} distinct member accounts</span></p>
         <div className="community-rating-distribution"><strong>Rating distribution</strong>{trust.ratingDistribution.map(item=><div className="community-rating-row" key={item.rating}><span>{item.rating}★</span><div className="community-rating-track"><span style={{width:(trust.eligibleReviewCount?item.count/trust.eligibleReviewCount*100:0)+'%'}}/></div><span>{item.count}</span></div>)}</div>
         <p><strong>Positive reviews</strong><span>{trust.positiveReviewCount} of {trust.eligibleReviewCount} ({Math.round(trust.positiveReviewShare*100)}%)</span></p>
         <p><strong>Eligible reports</strong><span>{trust.totalReports} total · {trust.openReports} submitted/under review</span></p>
@@ -205,7 +205,7 @@ export function CommunityTrustSection({ propertyId, ownerId }: { propertyId: str
     </details>
 
     <div className="community-content-section">
-      <div className="community-section-head"><div><h3>Community reviews</h3><p className="muted">Reviews describe self-reported interactions, not verified purchases or transactions. Only distinct non-owner accounts count toward the indicator; seller responses are shown separately.</p></div></div>
+      <div className="community-section-head"><div><h3>Community reviews</h3><p className="muted">Reviews describe self-reported interactions, not verified purchases or transactions. Only distinct non-owner member accounts count toward the indicator; administrator and moderator activity is excluded, and seller responses are shown separately.</p></div></div>
       {data.reviews.length?data.reviews.map(review=><article className="community-review" key={review.id}>
         <div className="community-review-head"><div><strong>{review.reviewerName}</strong><span>{interactionLabel(review.interactionType)} · {dateLabel(review.createdAt)}</span></div><span className="community-stars" aria-label={review.rating+' out of 5 stars'}>{'★'.repeat(review.rating)}{'☆'.repeat(5-review.rating)}</span></div>
         {editReviewId===review.id?<form className="community-inline-form" onSubmit={saveReviewEdit}>
