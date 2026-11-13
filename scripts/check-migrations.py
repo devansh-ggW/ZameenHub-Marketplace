@@ -116,7 +116,7 @@ def main() -> int:
            "An eligible legacy report must remain eligible after migration")
     expect(db.execute("SELECT COUNT(*) FROM property_report_contributions").fetchone()[0] == 3,
            "Legacy distinct reporter/property contributions must be backfilled")
-    expect(db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id LIKE 'legacy-report-%'").fetchone()[0] == 4,
+    expect(db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id LIKE 'legacy-report-%'").fetchone()[0] == 5,
            "Every migrated report must receive an audit-history event")
     for operation, sql in (
         ("update", "UPDATE property_report_events SET note='tampered' WHERE report_id='legacy-report-1'"),
