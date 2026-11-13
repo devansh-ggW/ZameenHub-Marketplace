@@ -28,6 +28,32 @@ def main() -> int:
     for migration in MIGRATIONS:
         # Seed a realistic pre-upgrade installation immediately before the
         # additive session/history migration so its backfills are exercised.
+        if migration.name == "0011_community_trust_and_legal_evidence.sql":
+            # Exercise the legacy report status and deduplication backfill.
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-reporter", "rollout-reporter@example.test", "Rollout Reporter", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-reviewer", "rollout-reviewer@example.test", "Rollout Reviewer", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-dismissed", "rollout-dismissed@example.test", "Rollout Dismissed", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-resolved", "rollout-resolved@example.test", "Rollout Resolved", "user", "test-hash"))
+            db.execute("INSERT INTO users(id,email,name,role,password_hash,email_verified) VALUES(?,?,?,?,?,1)",
+                       ("rollout-moderator", "rollout-moderator@example.test", "Rollout Moderator", "moderator", "test-hash"))
+            legacy_reports = [
+                ("legacy-report-1", "rollout-reporter", "open"),
+                ("legacy-report-3", "rollout-reviewer", "reviewing"),
+                ("legacy-report-dismissed", "rollout-dismissed", "dismissed"),
+                ("legacy-report-resolved", "rollout-resolved", "resolved"),
+                ("legacy-report-admin", "rollout-moderator", "open"),
+            ]
+            for report_id, reporter_id, status in legacy_reports:
+                db.execute("""INSERT INTO property_reports
+                    (id,property_id,reporter_id,reason,details,status,created_at)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    (report_id, "rollout-property", reporter_id, "other",
+                     "Legacy report retained during community migration.", status, rollout_iso))
+            db.commit()
         if migration.name == "0009_listing_history_persistent_sessions.sql":
             db.execute("INSERT INTO users(id,email,name) VALUES(?,?,?)",
                        ("rollout-owner", "rollout-owner@example.test", "Rollout Owner"))
@@ -56,6 +82,8 @@ def main() -> int:
         "email_verification_tokens", "password_reset_tokens", "auth_rate_limits",
         "auth_mfa_challenges", "mfa_recovery_codes", "property_reports",
         "property_moderation_events", "property_media", "property_documents", "property_conversations", "property_messages", "property_message_hidden", "imagekit_cleanup_queue", "property_listing_history",
+        "property_report_contributions", "property_report_events", "property_reviews", "property_comments",
+        "property_review_responses", "community_content_reports", "community_moderation_events", "user_policy_acceptances",
     }
     tables = {row["name"] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     expect(required <= tables, f"Missing tables: {sorted(required - tables)}")
@@ -66,6 +94,181 @@ def main() -> int:
     session_columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
     expect({"last_seen_at", "absolute_expires_at"} <= session_columns,
            "Persistent sessions must include rolling activity and absolute-expiry columns")
+    # Community trust / legal evidence schema and legacy report backfill.
+    ownership_columns = {row["name"] for row in db.execute("PRAGMA table_info(properties)")}
+    expect({"ownership_type", "ownership_declaration", "known_disputes", "dispute_disclosure", "authority_to_list_confirmed"} <= ownership_columns,
+           "Property ownership and seller-declaration columns are incomplete")
+    evidence_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
+    expect({"category", "source_date", "issuing_authority", "jurisdiction", "seller_authorized"} <= evidence_columns,
+           "Classified property evidence metadata columns are incomplete")
+    legacy_doc = db.execute("SELECT category,seller_authorized,status FROM property_documents WHERE id='rollout-document'").fetchone()
+    expect(legacy_doc is not None and legacy_doc["category"] == "other" and legacy_doc["seller_authorized"] == 1 and legacy_doc["status"] == "active",
+           "Legacy seller evidence must remain active and receive safe metadata defaults")
+    legacy = {row["id"]: row for row in db.execute("SELECT id,status,threshold_eligible FROM property_reports WHERE id LIKE 'legacy-report-%'")}
+    expect(len(legacy) == 5, "The community migration must preserve every existing property report")
+    expect(legacy["legacy-report-1"]["status"] == "submitted" and legacy["legacy-report-3"]["status"] == "under_review",
+           "Legacy open/reviewing reports must map to submitted/under_review")
+    expect(legacy["legacy-report-dismissed"]["status"] == "dismissed" and legacy["legacy-report-dismissed"]["threshold_eligible"] == 0,
+           "Dismissed legacy reports must remain auditable but not count toward the indicator")
+    expect(legacy["legacy-report-resolved"]["status"] == "resolved", "Resolved reports must retain their status")
+    expect(legacy["legacy-report-admin"]["threshold_eligible"] == 0, "Staff reports must not count as community threshold contributions")
+    expect(legacy["legacy-report-1"]["threshold_eligible"] == 1,
+           "An eligible legacy report must remain eligible after migration")
+    expect(db.execute("SELECT COUNT(*) FROM property_report_contributions").fetchone()[0] == 3,
+           "Legacy distinct reporter/property contributions must be backfilled")
+    expect(db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id LIKE 'legacy-report-%'").fetchone()[0] == 5,
+           "Every migrated report must receive an audit-history event")
+    for operation, sql in (
+        ("update", "UPDATE property_report_events SET note='tampered' WHERE report_id='legacy-report-1'"),
+        ("delete", "DELETE FROM property_report_events WHERE report_id='legacy-report-1'"),
+    ):
+        try:
+            db.execute(sql)
+            raise AssertionError(f"Property report audit history must reject {operation}")
+        except sqlite3.IntegrityError:
+            pass
+    review_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_reviews)")}
+    expect({"rating", "interaction_type", "reviewer_id", "status", "created_at", "updated_at"} <= review_columns,
+           "Community review fields are incomplete")
+    comment_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_comments)")}
+    expect({"author_id", "parent_comment_id", "body", "status"} <= comment_columns,
+           "Property discussion fields are incomplete")
+    db.execute("""INSERT INTO property_reviews
+        (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,'published',?,?)""",
+        ("community-review-1", "rollout-property", "rollout-reviewer", 5,
+         "A detailed customer experience review with enough characters.", "viewing", rollout_iso, rollout_iso))
+    try:
+        db.execute("""INSERT INTO property_reviews
+            (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,'published',?,?)""",
+            ("community-review-2", "rollout-property", "rollout-reviewer", 4,
+             "Another detailed customer experience review with enough characters.", "inquiry", rollout_iso, rollout_iso))
+        raise AssertionError("A user must not have multiple active property reviews")
+    except sqlite3.IntegrityError:
+        pass
+    db.execute("""INSERT INTO property_reports
+        (id,property_id,reporter_id,reason,details,status,threshold_eligible,created_at)
+        VALUES(?,?,?,?,?,'submitted',1,?)""",
+        ("community-report-duplicate", "rollout-property", "rollout-reporter", "other",
+         "Second report from same account in the upgraded schema.", rollout_iso))
+    try:
+        db.execute("""INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at)
+            VALUES(?,?,?,?)""",
+            ("rollout-property", "rollout-reporter", "community-report-duplicate", rollout_iso))
+        raise AssertionError("Duplicate account/property report contribution must be rejected")
+    except sqlite3.IntegrityError:
+        pass
+    moderation_event_columns = {row["name"] for row in db.execute("PRAGMA table_info(community_moderation_events)")}
+    expect("report_id" in moderation_event_columns, "Community moderation audit events must retain their originating report ID")
+    policy_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_policy_acceptances)")}
+    expect({"user_id", "policy_key", "policy_version", "accepted_at"} <= policy_columns,
+           "Versioned policy acceptance fields are incomplete")
+    # Only comments from a non-owner account with a retained author identity
+    # can qualify as public community engagement. Deleted-account seller posts
+    # must not become customer engagement after ON DELETE SET NULL.
+    community_comments = [
+        ("owner-root", "rollout-owner", None, "Owner's own listing comment."),
+        ("buyer-root", "rollout-reviewer", None, "Customer's top-level contribution."),
+        ("deleted-root", None, None, "Contribution with deleted author."),
+        ("seller-reply", "rollout-owner", "buyer-root", "Seller reply does not count."),
+        ("buyer-reply", "rollout-reviewer", "owner-root", "Customer reply counts."),
+        ("buyer-self-reply", "rollout-reviewer", "buyer-root", "A self-reply must not create independent engagement."),
+        ("deleted-reply", None, "buyer-root", "Deleted account reply does not count."),
+    ]
+    for comment_id, author_id, parent_id, body in community_comments:
+        db.execute("""INSERT INTO property_comments
+            (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+            VALUES(?,?,?,? ,?,'published',?,?)""",
+            (comment_id, "rollout-property", author_id, parent_id, body, rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_comments
+        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+        VALUES('admin-root','rollout-property','rollout-moderator',NULL,'A staff comment should not count.','published',?,?)""",
+        (rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_comments
+        (id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at)
+        VALUES('admin-reply','rollout-property','rollout-moderator','buyer-root','A staff reply should not count.','published',?,?)""",
+        (rollout_iso, rollout_iso))
+    db.execute("""INSERT INTO property_reviews
+        (id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,'published',?,?)""",
+        ("community-admin-review", "rollout-property", "rollout-moderator", 5,
+         "Staff-authored review must not count toward community rating.", "viewing", rollout_iso, rollout_iso))
+    member_review_count = db.execute("""SELECT COUNT(*) FROM property_reviews r
+        JOIN users reviewer ON reviewer.id=r.reviewer_id
+        WHERE r.property_id='rollout-property' AND r.status='published' AND reviewer.role='user'""").fetchone()[0]
+    expect(member_review_count == 1, "Staff-authored reviews must be excluded from the aggregate rating and reviewer count")
+
+    owner_id = db.execute("SELECT owner_id FROM properties WHERE id='rollout-property'").fetchone()[0]
+    counted_roots = db.execute("""SELECT COUNT(*) FROM property_comments c JOIN users author ON author.id=c.author_id
+        WHERE c.property_id='rollout-property' AND c.status='published' AND c.parent_comment_id IS NULL
+          AND c.author_id<>? AND author.role='user'""", (owner_id,)).fetchone()[0]
+    counted_replies = db.execute("""SELECT COUNT(*) FROM property_comments c
+        JOIN property_comments parent ON parent.id=c.parent_comment_id
+        JOIN users author ON author.id=c.author_id
+        JOIN users parent_author ON parent_author.id=parent.author_id
+        WHERE c.property_id='rollout-property' AND c.status='published' AND parent.status='published'
+          AND author.role='user' AND parent_author.role='user' AND c.author_id<>? AND c.author_id<>parent.author_id""",
+        (owner_id,)).fetchone()[0]
+    expect(counted_roots == 1 and counted_replies == 1,
+           "Only identifiable non-owner comments and replies may count toward GREEN")
+
+    # Audit events are appended only when the preceding compare-and-swap UPDATE
+    # actually changes a report. A stale concurrent moderation request must not
+    # create a false duplicate history event.
+    db.execute("UPDATE property_reports SET status='under_review' WHERE id='legacy-report-1' AND status IN ('submitted','under_review') AND status='submitted' AND status<>'under_review'")
+    db.execute("""INSERT INTO property_report_events
+        (id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at)
+        SELECT 'property-cas-event-1','legacy-report-1','rollout-property','rollout-reviewer',
+               'submitted','under_review',1,'CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    property_event_count = db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id='legacy-report-1'").fetchone()[0]
+    db.execute("UPDATE property_reports SET status='resolved' WHERE id='legacy-report-1' AND status IN ('submitted','under_review') AND status='submitted' AND status<>'resolved'")
+    db.execute("""INSERT INTO property_report_events
+        (id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at)
+        SELECT 'property-cas-event-2','legacy-report-1','rollout-property','rollout-reviewer',
+               'submitted','under_review',1,'Stale CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    expect(property_event_count == 2 and db.execute("SELECT COUNT(*) FROM property_report_events WHERE report_id='legacy-report-1'").fetchone()[0] == 2,
+           "Stale property-report moderation must not append a false audit event")
+
+    db.execute("""INSERT INTO community_content_reports
+        (id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at)
+        VALUES('community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
+               'spam','A sufficiently detailed report explanation.','submitted',?)""", (rollout_iso,))
+    db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status='submitted' AND status<>'under_review'")
+    db.execute("""INSERT INTO community_moderation_events
+        (id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-cas-event-1','community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
+               'review_started','submitted','under_review','CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    community_event_count = db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0]
+    db.execute("UPDATE community_content_reports SET status='resolved' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status='submitted' AND status<>'resolved'")
+    db.execute("""INSERT INTO community_moderation_events
+        (id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-cas-event-2','community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
+               'review_started','submitted','under_review','Stale CAS event',?
+        WHERE changes()=1""", (rollout_iso,))
+    expect(community_event_count == 1 and db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0] == 1,
+           "Stale community moderation must not append a false audit event")
+
+    db.execute("""INSERT INTO community_content_reports
+        (id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at)
+        VALUES('community-report-appeal','rollout-property','comment','buyer-root','rollout-owner',
+               'fake_or_misleading','An appeal is under consideration for this hidden comment.','substantiated',?)""", (rollout_iso,))
+    db.execute("UPDATE property_comments SET status='hidden' WHERE id='buyer-root' AND status='published'")
+    db.execute("UPDATE community_content_reports SET status='overturned' WHERE id='community-report-appeal' AND status='substantiated' AND status<>'overturned'")
+    db.execute("""INSERT INTO community_moderation_events
+        (id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-appeal-event','community-report-appeal','rollout-property','comment','buyer-root','rollout-moderator',
+               'finding_overturned_content_restored','substantiated','overturned','Appeal accepted and content restored',?
+        WHERE changes()=1""", (rollout_iso,))
+    db.execute("UPDATE property_comments SET status='published',updated_at=? WHERE id='buyer-root' AND status='hidden'", (rollout_iso,))
+    expect(db.execute("SELECT status FROM community_content_reports WHERE id='community-report-appeal'").fetchone()[0] == 'overturned'
+           and db.execute("SELECT status FROM property_comments WHERE id='buyer-root'").fetchone()[0] == 'published'
+           and db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE report_id='community-report-appeal'").fetchone()[0] == 1,
+           "An overturned community finding must restore still-hidden content and preserve its linked audit event")
+
     document_columns = {row["name"] for row in db.execute("PRAGMA table_info(property_documents)")}
     expect("updated_at" in document_columns, "Property documents must track their latest metadata update")
     expect({"imagekit_file_id", "file_path", "uploader_id", "status"} <= document_columns,
@@ -245,14 +448,18 @@ def main() -> int:
                   VALUES('snapshot-test','other-owner','snapshot-test-home','Snapshot test home','sale','Apartment','North','Nashik',1500000,'A detailed description of the snapshot test property','pending')""")
 
     db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
-                  VALUES('report-1','published','reporter','suspected_fraud','Specific evidence for the report','open',?)""", (now,))
+                  VALUES('report-1','published','reporter','suspected_fraud','Specific evidence for the report','submitted',?)""", (now,))
+    db.execute("""INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at)
+                  VALUES('published','reporter','report-1',?)""", (now,))
+    db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
+                  VALUES('report-duplicate','published','reporter','suspected_fraud','Another report for the same property','submitted',?)""", (now,))
     try:
-        db.execute("""INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at)
-                      VALUES('report-duplicate','published','reporter','suspected_fraud','Another report for the same property','open',?)""", (now,))
+        db.execute("""INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at)
+                      VALUES('published','reporter','report-duplicate',?)""", (now,))
     except sqlite3.IntegrityError:
         pass
     else:
-        raise AssertionError("The unique open-report constraint did not prevent duplicate reports")
+        raise AssertionError("The unique eligible report contribution constraint did not prevent duplicate counting")
 
     # Test the actual owner-inbox query and owner-only status update used by the Worker.
     db.execute("""INSERT INTO inquiries(id,property_id,sender_id,email,message,status,created_at)

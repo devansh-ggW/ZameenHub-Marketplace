@@ -1,7 +1,7 @@
 name: ZameenHub CI
 on:
   push:
-    branches: ["main", "feat/production-auth-upgrade", "feat/security-mfa-ai-hardening", "engineering/**"]
+    branches: ["main", "feat/production-auth-upgrade", "feat/security-mfa-ai-hardening", "engineering/**", "feature/**"]
   pull_request:
     branches: ["main"]
 
@@ -25,6 +25,7 @@ jobs:
       - run: python3 scripts/check-migrations.py
       - run: node --experimental-strip-types scripts/test-totp.mjs
       - run: node --experimental-strip-types scripts/test-emi.mjs
+      - run: node --experimental-strip-types scripts/test-community-trust.mjs
       - run: pnpm build
       - run: pnpm test:smoke
       - run: pnpm dlx wrangler@4.154.0 deploy --dry-run

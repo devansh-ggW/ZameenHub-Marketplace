@@ -6,6 +6,7 @@ import { categories, formatPrice, images, type ListingHistoryEvent, type Propert
 import { getProperties, getProperty, submitInquiry } from './lib/api'
 import { apiRequest, getSession } from './lib/auth'
 import { ReportProperty } from './report-property'
+import { CommunityTrustSection } from './community-trust'
 import { PROPERTY_AMENITIES } from './lib/property-options'
 
 function formatHistoryDate(value: string) {
@@ -293,10 +294,21 @@ export function PropertyDetailPage() {
               <span className="evidence-seller-label">{document.storageProvider === 'imagekit' ? 'Seller-provided · ImageKit-hosted' : 'Seller-provided · External source'} · Not independently authenticated</span>
               <p className="muted">Format: {document.documentType.toUpperCase()} · {document.storageProvider === 'imagekit' ? 'Delivered by ImageKit' : 'Source: ' + document.sourceDomain}</p>
               <p className="muted">Added on {formatHistoryDate(document.createdAt)}{document.updatedAt && document.updatedAt !== document.createdAt ? ' · Updated on ' + formatHistoryDate(document.updatedAt) : ''} </p>
+              <p className="muted">Category: {({ownership:'Ownership',inheritance:'Inheritance',legal_status:'Legal status / dispute',supporting:'Supporting record',other:'Other evidence'} as Record<string,string>)[document.category]||'Other evidence'}{document.sourceDate?' · Document date: '+document.sourceDate:''}</p>
+              {(document.issuingAuthority||document.jurisdiction)&&<p className="muted">{document.issuingAuthority?'Issuing authority: '+document.issuingAuthority:''}{document.issuingAuthority&&document.jurisdiction?' · ':''}{document.jurisdiction?'Jurisdiction: '+document.jurisdiction:''}</p>}
             </div>
             <a href={document.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" aria-label="Open seller-provided evidence in a new tab">{document.storageProvider === 'imagekit' ? 'Open evidence file ↗' : 'Open original source ↗'}</a>
           </article>)}</div> : <p className="gallery-empty">No PDF or image documents have been supplied by the lister.</p>}
         </section>
+        <section className="detail-section ownership-public-disclosure" aria-labelledby="ownership-public-title">
+          <SectionKicker>Seller declarations · not independently authenticated</SectionKicker>
+          <h2 id="ownership-public-title">Ownership & legal disclosures</h2>
+          <p><strong>Arrangement:</strong> {({self_owned:'Self-owned',inherited:'Inherited',jointly_owned:'Jointly owned',authorized_representative:'Listed by an authorized representative',other:'Other legally recognized arrangement'} as Record<string,string>)[property.ownershipType||'self_owned']||'Not specified'}</p>
+          {property.ownershipDeclaration&&<p>{property.ownershipDeclaration}</p>}
+          {property.knownDisputes&&<div className="evidence-privacy-warning"><strong>Known dispute / encumbrance disclosed by seller</strong><p>{property.disputeDisclosure||'The seller has indicated that a known legal matter exists.'}</p></div>}
+          <p className="muted">These are statements made by the listing owner. Uploading inheritance, ownership, revenue or court records does not establish sole ownership, sale authority, clear title or absence of competing claims. Obtain independent legal and official-record checks.</p>
+        </section>
+        <CommunityTrustSection propertyId={property.id} ownerId={property.ownerId} />
         <section className="detail-section listing-history" aria-labelledby="listing-history-title">
           <SectionKicker>Transparent property record</SectionKicker>
           <h2 id="listing-history-title">Listing History</h2>

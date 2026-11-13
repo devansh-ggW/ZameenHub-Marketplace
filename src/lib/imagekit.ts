@@ -94,6 +94,13 @@ export function uploadPropertyImage(
   })
 }
 
+export type PropertyEvidenceMetadata = {
+  category: 'ownership' | 'inheritance' | 'legal_status' | 'supporting' | 'other'
+  sourceDate?: string
+  issuingAuthority?: string
+  jurisdiction?: string
+}
+
 export type UploadedPropertyEvidence = {
   id: string
   documentType: 'pdf' | 'image'
@@ -104,6 +111,10 @@ export type UploadedPropertyEvidence = {
   sortOrder: number
   createdAt: string
   updatedAt: string
+  category: PropertyEvidenceMetadata['category']
+  sourceDate: string
+  issuingAuthority: string
+  jurisdiction: string
 }
 
 async function findPersistedPropertyEvidence(propertyId: string, knownIds: ReadonlySet<string>, description: string): Promise<UploadedPropertyEvidence | null> {
@@ -126,6 +137,7 @@ export function uploadPropertyEvidence(
   description: string,
   onProgress?: (percent: number) => void,
   knownEvidenceIds: readonly string[] = [],
+  metadata: PropertyEvidenceMetadata = { category: 'other' },
 ): Promise<{ ok: true; data: UploadedPropertyEvidence } | { ok: false; error: string }> {
   return new Promise(resolve => {
     const request = new XMLHttpRequest()
@@ -144,6 +156,11 @@ export function uploadPropertyEvidence(
     }
     form.append('propertyId', propertyId)
     form.append('description', description)
+    form.append('category', metadata.category)
+    form.append('sourceDate', metadata.sourceDate || '')
+    form.append('issuingAuthority', metadata.issuingAuthority || '')
+    form.append('jurisdiction', metadata.jurisdiction || '')
+    form.append('sellerAuthorized', 'true')
     form.append('file', file)
     request.open('POST', '/api/media/property-evidence')
     request.withCredentials = true

@@ -1,4 +1,6 @@
 import { base32Encode, matchedTotpCounter } from './totp'
+import { calculateCommunityTrustIndicator } from './community-trust'
+const CURRENT_POLICY_VERSION = '2026-11-13'
 export type Env = {
   DB?: D1Database
   IMAGEKIT_PRIVATE_KEY?: string
@@ -11,7 +13,7 @@ export type Env = {
   ADMIN_EMAILS?: string
 }
 type UserRow = { id:string; email:string; name:string; role:string; password_hash:string|null; email_verified:number; profile_image_url?:string|null; profile_image_file_id?:string|null; mfa_enabled?:number; mfa_secret_ciphertext?:string|null; mfa_pending_secret_ciphertext?:string|null; mfa_pending_expires_at?:string|null; mfa_last_counter?:number }
-type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; owner_role?:string; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string }
+type PropertyRow = { id:string; slug:string; title:string; purpose:'sale'|'rent'; property_type:string; location:string; city:string; price:number; price_period:string|null; bedrooms:number; bathrooms:number; area:number; description:string; amenities_json:string; status:string; created_at:string; updated_at?:string; owner_id:string; owner_name?:string; owner_profile_image_url?:string|null; owner_role?:string; favorite?:number; ai_risk_level?:string; ai_risk_score?:number; ai_risk_reasons_json?:string; ai_screened_at?:string|null; ai_model?:string; verification_status?:string; verification_evidence_type?:string; verification_evidence_url?:string; verification_submitted_at?:string|null; verification_reviewed_at?:string|null; verification_reviewed_by?:string|null; verification_note?:string; ownership_type?:string; ownership_declaration?:string; known_disputes?:number; dispute_disclosure?:string; authority_to_list_confirmed?:number }
 const json = (body:unknown, status=200, extra:HeadersInit={}) => {
   const headers=new Headers(extra)
   headers.set('content-type','application/json; charset=utf-8')
@@ -232,12 +234,12 @@ async function body(request:Request) {
   } catch { return null }
 }
 function slugify(s:string){return s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||uuid().slice(0,8)}
-type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; storageProvider:'imagekit'|'external'; sortOrder:number; createdAt:string; updatedAt:string }
+type PropertyDocumentView = { id:string; documentType:'pdf'|'image'; description:string; url:string; sourceDomain:string; storageProvider:'imagekit'|'external'; sortOrder:number; createdAt:string; updatedAt:string; category:string; sourceDate:string; issuingAuthority:string; jurisdiction:string }
 type PropertyImageView = { id:string; url:string; fileId:string|null; sortOrder:number }
 function propertyView(p:PropertyRow,images:string[]=[],includePrivateVerification=false,imageMedia:PropertyImageView[]=[],documents:PropertyDocumentView[]=[]) {
   const verificationStatus=p.verification_status||'unverified'
   return {
-    id:p.id,ownerId:p.owner_id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,
+    id:p.id,ownerId:p.owner_id,slug:p.slug,title:p.title,location:p.location,city:p.city,purpose:p.purpose,ownershipType:p.ownership_type||'self_owned',ownershipDeclaration:p.ownership_declaration||'',knownDisputes:!!p.known_disputes,disputeDisclosure:p.dispute_disclosure||'',authorityToListConfirmed:!!p.authority_to_list_confirmed,
     propertyType:p.property_type,price:p.price,pricePeriod:p.price_period||undefined,
     bedrooms:p.bedrooms,bathrooms:p.bathrooms,area:p.area,areaUnit:'sq ft',
     image:images[0]||'',gallery:images,description:p.description,
@@ -276,7 +278,8 @@ function normalizeHttpsUrl(value:unknown,max=1500):string|null {
   } catch { return null }
 }
 const allowedDocumentTypes=new Set(['pdf','image'])
-type SanitizedPropertyDocument = { id:string|null; type:'pdf'|'image'; description:string; url:string; sourceDomain:string }
+type SanitizedPropertyDocument = { id:string|null; type:'pdf'|'image'; description:string; url:string; sourceDomain:string; category:string; sourceDate:string; issuingAuthority:string; jurisdiction:string }
+const allowedDocumentCategories=new Set(['ownership','inheritance','legal_status','supporting','other'])
 function sanitizePropertyDocuments(value:unknown):SanitizedPropertyDocument[]|null {
   if(value===undefined||value===null)return []
   if(!Array.isArray(value)||value.length>10)return null
@@ -285,36 +288,35 @@ function sanitizePropertyDocuments(value:unknown):SanitizedPropertyDocument[]|nu
   for(const item of value) {
     if(!item||typeof item!=='object'||Array.isArray(item))return null
     const record=item as Record<string,unknown>
-    const type=clean(record.documentType,12)
-    const description=clean(record.description,180)
-    const url=normalizeHttpsUrl(record.url,2000)
-    const id=clean(record.id,80)||null
-    if(!allowedDocumentTypes.has(type)||description.length<3||!url)return null
+    const type=clean(record.documentType,12),description=clean(record.description,180),url=normalizeHttpsUrl(record.url,2000)
+    const id=clean(record.id,80)||null,category=clean(record.category,24)||'other'
+    const sourceDate=clean(record.sourceDate,10),issuingAuthority=clean(record.issuingAuthority,160),jurisdiction=clean(record.jurisdiction,120)
+    if(!allowedDocumentTypes.has(type)||!allowedDocumentCategories.has(category)||description.length<3||!url)return null
+    if(sourceDate){const parsedDate=new Date(sourceDate+'T00:00:00Z');if(Number.isNaN(parsedDate.getTime())||parsedDate.toISOString().slice(0,10)!==sourceDate)return null}
+    if(record.sellerAuthorized!==true)return null
     if(seenUrls.has(url)||(id&&seenIds.has(id)))return null
     seenUrls.add(url);if(id)seenIds.add(id)
-    const sourceDomain=new URL(url).hostname.toLowerCase()
-    documents.push({id,type:type as 'pdf'|'image',description,url,sourceDomain})
+    documents.push({id,type:type as 'pdf'|'image',description,url,sourceDomain:new URL(url).hostname.toLowerCase(),category,sourceDate,issuingAuthority,jurisdiction})
   }
   return documents
 }
 function propertyDocumentInsertStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[]):D1PreparedStatement[] {
   const timestamp=nowIso()
-  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp))
+  return documents.map((document,index)=>db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,category,source_date,issuing_authority,jurisdiction,seller_authorized) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)').bind(uuid(),propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction))
 }
 async function propertyDocumentReplacementStatements(db:D1Database,propertyId:string,ownerId:string,documents:SanitizedPropertyDocument[],guardUpdatedAt:string):Promise<D1PreparedStatement[]> {
   const current=await db.prepare('SELECT id FROM property_documents WHERE property_id=? AND owner_id=?').bind(propertyId,ownerId).all<{id:string}>()
   const existingIds=new Set(current.results.map(row=>row.id)),retainedIds:string[]=[],statements:D1PreparedStatement[]=[],timestamp=nowIso()
   const propertyGuard=' AND EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)'
   for(let index=0;index<documents.length;index++) {
-    const document=documents[index]
-    const existingId=document.id&&existingIds.has(document.id)?document.id:null
+    const document=documents[index],existingId=document.id&&existingIds.has(document.id)?document.id:null
     if(existingId) {
       retainedIds.push(existingId)
-      statements.push(db.prepare("UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,imagekit_file_id=CASE WHEN url<>? THEN NULL ELSE imagekit_file_id END,file_path=CASE WHEN url<>? THEN '' ELSE file_path END,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?"+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.url,document.url,document.type,document.description,document.url,document.sourceDomain,index,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
+      statements.push(db.prepare("UPDATE property_documents SET document_type=?,description=?,url=?,source_domain=?,sort_order=?,category=?,source_date=?,issuing_authority=?,jurisdiction=?,seller_authorized=1,imagekit_file_id=CASE WHEN url<>? THEN NULL ELSE imagekit_file_id END,file_path=CASE WHEN url<>? THEN '' ELSE file_path END,updated_at=CASE WHEN document_type<>? OR description<>? OR url<>? OR source_domain<>? OR sort_order<>? OR category<>? OR source_date<>? OR issuing_authority<>? OR jurisdiction<>? THEN ? ELSE updated_at END WHERE id=? AND property_id=? AND owner_id=?"+propertyGuard).bind(document.type,document.description,document.url,document.sourceDomain,index,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction,document.url,document.url,document.type,document.description,document.url,document.sourceDomain,index,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction,timestamp,existingId,propertyId,ownerId,propertyId,ownerId,guardUpdatedAt))
     } else {
       const newId=uuid()
       retainedIds.push(newId)
-      statements.push(db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)').bind(newId,propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,propertyId,ownerId,guardUpdatedAt))
+      statements.push(db.prepare('INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,category,source_date,issuing_authority,jurisdiction,seller_authorized) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=? AND updated_at=?)').bind(newId,propertyId,ownerId,document.type,document.description,document.url,document.sourceDomain,index,timestamp,timestamp,document.category,document.sourceDate,document.issuingAuthority,document.jurisdiction,propertyId,ownerId,guardUpdatedAt))
     }
   }
   if(retainedIds.length) {
@@ -431,12 +433,96 @@ async function propertyMedia(db:D1Database,id:string,includeMetadata=false) {
   }
 }
 async function propertyDocuments(db:D1Database,id:string):Promise<PropertyDocumentView[]> {
-  const result=await db.prepare("SELECT id,document_type,description,url,source_domain,imagekit_file_id,sort_order,created_at,updated_at FROM property_documents WHERE property_id=? AND status='active' ORDER BY sort_order ASC").bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;imagekit_file_id:string|null;sort_order:number;created_at:string;updated_at:string}>()
-  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,storageProvider:row.imagekit_file_id?'imagekit':'external',sortOrder:row.sort_order,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at}))
+  const result=await db.prepare("SELECT id,document_type,description,url,source_domain,imagekit_file_id,sort_order,created_at,updated_at,category,source_date,issuing_authority,jurisdiction FROM property_documents WHERE property_id=? AND status='active' AND seller_authorized=1 ORDER BY sort_order ASC").bind(id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;imagekit_file_id:string|null;sort_order:number;created_at:string;updated_at:string;category:string;source_date:string;issuing_authority:string;jurisdiction:string}>()
+  return result.results.map(row=>({id:row.id,documentType:row.document_type as 'pdf'|'image',description:row.description,url:row.url,sourceDomain:row.source_domain,storageProvider:row.imagekit_file_id?'imagekit':'external',sortOrder:row.sort_order,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at,category:row.category||'other',sourceDate:row.source_date||'',issuingAuthority:row.issuing_authority||'',jurisdiction:row.jurisdiction||''}))
 }
 async function withProperty(db:D1Database,p:PropertyRow,includePrivateVerification=false) {
   const [media,documents]=await Promise.all([propertyMedia(db,p.id,includePrivateVerification),propertyDocuments(db,p.id)])
   return propertyView(p,media.images,includePrivateVerification,media.imageMedia,documents)
+}
+
+const publicReviewTypes=new Set(['inquiry','viewing','transaction','other'])
+const communityReportReasons=new Set(['abuse','spam','fake_or_misleading','privacy','other'])
+async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
+  const stats=await db.prepare(`SELECT
+    (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.status='active' AND d.seller_authorized=1) AS document_count,
+    (SELECT COUNT(*) FROM property_documents d WHERE d.property_id=p.id AND d.status='active' AND d.seller_authorized=1 AND d.category IN ('ownership','inheritance','legal_status')) AS eligible_document_count,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1) AS eligible_reports,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status IN ('submitted','under_review')) AS open_reports,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status='substantiated') AS substantiated_reports,
+    (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.status='dismissed') AS dismissed_reports,
+    (SELECT COUNT(*) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user') AS review_count,
+    (SELECT COUNT(DISTINCT r.reviewer_id) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user') AS distinct_reviewers,
+    (SELECT AVG(r.rating) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user') AS average_rating,
+    (SELECT COUNT(*) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user' AND r.rating>=4) AS positive_reviews,
+    (SELECT COUNT(*) FROM property_comments c JOIN users author ON author.id=c.author_id WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NULL AND c.author_id<>p.owner_id AND author.role='user') AS comment_count,
+    (SELECT COUNT(*) FROM property_comments c
+      JOIN property_comments parent ON parent.id=c.parent_comment_id
+      JOIN users author ON author.id=c.author_id
+      JOIN users parent_author ON parent_author.id=parent.author_id
+      WHERE c.property_id=p.id AND c.status='published' AND parent.status='published'
+        AND author.role='user' AND parent_author.role='user'
+        AND c.author_id<>p.owner_id AND c.author_id<>parent.author_id) AS reply_count
+    FROM properties p WHERE p.id=?`).bind(propertyId).first<Record<string,number|null>>()
+  if(!stats) return null
+  const distribution=await db.prepare("SELECT r.rating,COUNT(*) AS count FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=? AND r.status='published' AND reviewer.role='user' GROUP BY r.rating").bind(propertyId).all<{rating:number;count:number}>()
+  const ratingDistribution=[1,2,3,4,5].map(rating=>({rating,count:Number(distribution.results.find(row=>row.rating===rating)?.count||0)}))
+  const calculation=calculateCommunityTrustIndicator({
+    requiredDocumentCount:Number(stats.eligible_document_count||0),
+    eligibleReportCount:Number(stats.eligible_reports||0),
+    eligibleReviewCount:Number(stats.review_count||0),
+    distinctReviewers:Number(stats.distinct_reviewers||0),
+    averageRating:Number(stats.average_rating||0),
+    positiveReviewCount:Number(stats.positive_reviews||0),
+    publicCommentCount:Number(stats.comment_count||0),
+    publicReplyCount:Number(stats.reply_count||0),
+  })
+  return {
+    ...calculation,
+    ratingDistribution,
+    totalReports:Number(stats.eligible_reports||0),
+    openReports:Number(stats.open_reports||0),
+    substantiatedReports:Number(stats.substantiated_reports||0),
+    dismissedReports:Number(stats.dismissed_reports||0),
+    documentationSubmitted:Number(stats.document_count||0),
+    eligibleDocumentationSubmitted:Number(stats.eligible_document_count||0),
+    explanation:'This indicator summarizes seller-submitted evidence and public community activity. Reports are allegations unless separately substantiated. It is not legal verification.',
+  }
+}
+async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:string|null) {
+  const propertyOwner=await db.prepare('SELECT owner_id FROM properties WHERE id=?').bind(propertyId).first<{owner_id:string}>()
+  const ownerId=propertyOwner?.owner_id||''
+  const [reviews,comments]=await Promise.all([
+    db.prepare(`SELECT r.id,r.reviewer_id,r.rating,r.body,r.interaction_type,r.created_at,r.updated_at,
+      u.name AS reviewer_name,u.role AS reviewer_role,rr.body AS owner_response,rr.created_at AS response_created_at
+      FROM property_reviews r
+      LEFT JOIN users u ON u.id=r.reviewer_id
+      LEFT JOIN property_review_responses rr ON rr.review_id=r.id
+      WHERE r.property_id=? AND r.status='published'
+      ORDER BY r.created_at DESC LIMIT 50`).bind(propertyId).all<Record<string,unknown>>(),
+    db.prepare(`SELECT c.id,c.author_id,c.parent_comment_id,c.body,c.created_at,c.updated_at,
+      u.name AS author_name,u.role AS author_role
+      FROM property_comments c LEFT JOIN users u ON u.id=c.author_id
+      WHERE c.property_id=? AND c.status='published'
+      ORDER BY c.created_at ASC LIMIT 100`).bind(propertyId).all<Record<string,unknown>>()
+  ])
+  return {
+    reviews:reviews.results.map(row=>({
+      id:String(row.id),reviewerName:String(row.reviewer_name||'ZameenHub member'),
+      rating:Number(row.rating),body:String(row.body),interactionType:String(row.interaction_type),reviewerRole:String(row.reviewer_role||'former_member'),
+      createdAt:String(row.created_at),updatedAt:String(row.updated_at),
+      isMine:!!viewerId&&row.reviewer_id===viewerId,
+      response:row.owner_response?{body:String(row.owner_response),createdAt:String(row.response_created_at||'')}:null
+    })),
+    comments:comments.results.map(row=>({
+      id:String(row.id),parentCommentId:row.parent_comment_id?String(row.parent_comment_id):null,
+      authorName:String(row.author_name||'ZameenHub member'),
+      authorRole:String(row.author_role||'former_member'),body:String(row.body),
+      createdAt:String(row.created_at),updatedAt:String(row.updated_at),
+      isMine:!!viewerId&&row.author_id===viewerId,
+      isOwner:!!ownerId&&row.author_id===ownerId
+    }))
+  }
 }
 const verificationEvidenceTypes=new Set(['none','official_record','property_tax_record','registry_reference','other_public_record'])
 function sanitizeVerificationEvidence(input:Record<string,unknown>):{type:string;url:string;status:'unverified'|'submitted';submittedAt:string|null}|null {
@@ -532,8 +618,12 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         return ok({message:registrationMessage})
       }
 
-      const id=uuid()
-      await db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,nowIso()).run()
+      const id=uuid(),acceptedAt=nowIso()
+      await db.batch([
+        db.prepare('INSERT INTO users(id,email,name,role,password_hash,email_verified,terms_accepted_at) VALUES(?,?,?,"user",?,0,?)').bind(id,email,name,hash,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms',?,?)").bind(uuid(),id,CURRENT_POLICY_VERSION,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy',?,?)").bind(uuid(),id,CURRENT_POLICY_VERSION,acceptedAt)
+      ])
       const token=await issueToken(db,id,'verify',30)
       const link=`${env.APP_URL||url.origin}/verify-email?token=${encodeURIComponent(token)}${nextPath?'&next='+encodeURIComponent(nextPath):''}`
       await sendEmail(env,email,'Verify your ZameenHub email',emailHtml('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'),emailText('Confirm your email','Use the link below to verify your email address. It expires in 30 minutes.',link,'Verify email'))
@@ -558,8 +648,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const record=await db.prepare("DELETE FROM email_verification_tokens WHERE token_hash=? AND purpose='activate' AND expires_at>? RETURNING user_id").bind(await digest(token),nowIso()).first<{user_id:string}>()
       if(!record)return fail('This activation link is invalid or expired. Request a new one.',400)
       const hash=await passwordHash(password)
+      const acceptedAt=nowIso()
       await db.batch([
-        db.prepare('UPDATE users SET password_hash=?,email_verified=1,email_verified_at=?,terms_accepted_at=?,updated_at=? WHERE id=? AND password_hash IS NULL').bind(hash,nowIso(),nowIso(),nowIso(),record.user_id),
+        db.prepare('UPDATE users SET password_hash=?,email_verified=1,email_verified_at=?,terms_accepted_at=?,updated_at=? WHERE id=? AND password_hash IS NULL').bind(hash,acceptedAt,acceptedAt,acceptedAt,record.user_id),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'terms',?,?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,CURRENT_POLICY_VERSION,acceptedAt),
+        db.prepare("INSERT INTO user_policy_acceptances(id,user_id,policy_key,policy_version,accepted_at) VALUES(?,?,'privacy',?,?) ON CONFLICT(user_id,policy_key,policy_version) DO NOTHING").bind(uuid(),record.user_id,CURRENT_POLICY_VERSION,acceptedAt),
         db.prepare("DELETE FROM email_verification_tokens WHERE user_id=? AND purpose='activate'").bind(record.user_id)
       ])
       return ok({message:'Your account is activated. Sign in to continue.'})
@@ -857,6 +950,147 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!p)return fail('Property not found or no longer available.',404)
       return ok(await withProperty(db,p))
     }
+
+    const communityMatch=path.match(new RegExp('^/api/properties/([^/]+)/community$'))
+    if(communityMatch&&method==='GET') {
+      let propertyId='';try{propertyId=decodeURIComponent(communityMatch[1])}catch{return fail('Property community page not found.',404)}
+      const property=await db.prepare(`SELECT id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string}>()
+      if(!property)return fail('Property community page not found.',404)
+      const viewer=await getUser(request,env)
+      const [summary,feed]=await Promise.all([getCommunityTrustSummary(db,property.id),publicCommunityFeed(db,property.id,viewer?.id||null)])
+      return ok({summary,...feed})
+    }
+    const propertyReviewMatch=path.match(new RegExp('^/api/properties/([^/]+)/reviews$'))
+    if(propertyReviewMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before reviewing a property.',401)
+      if(!await authLimit(request,db,'community-review',8)||!await limited(db,'community-review-user:'+user.id,4,60))return fail('Too many review attempts. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid review request.')
+      let propertyId='';try{propertyId=decodeURIComponent(propertyReviewMatch[1])}catch{return fail('Property not found.',404)}
+      const rating=safeInt(input.rating,1,5),reviewBody=clean(input.body,2000),interactionType=clean(input.interactionType,20)
+      if(rating===null||reviewBody.trim().length<20||!publicReviewTypes.has(interactionType))return fail('Choose a 1–5 star rating, describe the experience in at least 20 characters, and select the interaction type.')
+      const property=await db.prepare(`SELECT id,owner_id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string}>()
+      if(!property)return fail('Property not found or no longer available.',404)
+      if(property.owner_id===user.id)return fail('Listing owners cannot review their own property.',403)
+      const already=await db.prepare("SELECT id FROM property_reviews WHERE property_id=? AND reviewer_id=? AND status IN ('published','hidden')").bind(propertyId,user.id).first<{id:string}>()
+      if(already)return fail('One review per account is allowed for each property. Edit the existing review instead.',409)
+      const id=uuid(),timestamp=nowIso()
+      try{await db.prepare("INSERT INTO property_reviews(id,property_id,reviewer_id,rating,body,interaction_type,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'published',?,?)").bind(id,propertyId,user.id,rating,reviewBody,interactionType,timestamp,timestamp).run()}catch{return fail('A review for this account already exists or could not be saved.',409)}
+      return ok({id,message:'Your review has been published.'},201)
+    }
+    const reviewActionMatch=path.match(new RegExp('^/api/reviews/([^/]+)$'))
+    if(reviewActionMatch&&(method==='PATCH'||method==='DELETE')) {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage your review.',401)
+      const reviewId=decodeURIComponent(reviewActionMatch[1])
+      const review=await db.prepare("SELECT id,reviewer_id FROM property_reviews WHERE id=? AND status IN ('published','hidden')").bind(reviewId).first<{id:string;reviewer_id:string|null}>()
+      if(!review||review.reviewer_id!==user.id)return fail('Review not found in your account.',404)
+      if(method==='DELETE'){await db.prepare("UPDATE property_reviews SET status='deleted',deleted_at=?,updated_at=? WHERE id=? AND reviewer_id=? AND status IN ('published','hidden')").bind(nowIso(),nowIso(),reviewId,user.id).run();return ok({id:reviewId,deleted:true})}
+      if(!await limited(db,'community-review-edit-user:'+user.id,10,60))return fail('Too many review edits. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid review update.')
+      const rating=safeInt(input.rating,1,5),reviewBody=clean(input.body,2000),interactionType=clean(input.interactionType,20)
+      if(rating===null||reviewBody.trim().length<20||!publicReviewTypes.has(interactionType))return fail('Choose a 1–5 star rating, provide at least 20 characters, and select the interaction type.')
+      const result=await db.prepare("UPDATE property_reviews SET rating=?,body=?,interaction_type=?,updated_at=? WHERE id=? AND reviewer_id=? AND status IN ('published','hidden')").bind(rating,reviewBody,interactionType,nowIso(),reviewId,user.id).run()
+      if(!result.meta.changes)return fail('Review could not be updated. Refresh and retry.',409)
+      return ok({id:reviewId,updated:true})
+    }
+    const propertyCommentMatch=path.match(new RegExp('^/api/properties/([^/]+)/comments$'))
+    if(propertyCommentMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before joining the discussion.',401)
+      if(!await authLimit(request,db,'community-comment',10)||!await limited(db,'community-comment-user:'+user.id,8,60))return fail('Too many discussion posts. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid comment request.')
+      let propertyId='';try{propertyId=decodeURIComponent(propertyCommentMatch[1])}catch{return fail('Property not found.',404)}
+      const commentBody=clean(input.body,1200),parentId=clean(input.parentCommentId,80)||null
+      if(commentBody.trim().length<3)return fail('Write at least 3 characters.')
+      const property=await db.prepare(`SELECT id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string}>()
+      if(!property)return fail('Property not found or no longer available.',404)
+      if(parentId){const parent=await db.prepare("SELECT id FROM property_comments WHERE id=? AND property_id=? AND status='published' AND parent_comment_id IS NULL").bind(parentId,propertyId).first<{id:string}>();if(!parent)return fail('Replies must be attached to an existing top-level comment.',409)}
+      const id=uuid(),timestamp=nowIso()
+      await db.prepare("INSERT INTO property_comments(id,property_id,author_id,parent_comment_id,body,status,created_at,updated_at) VALUES(?,?,?,?,?,'published',?,?)").bind(id,propertyId,user.id,parentId,commentBody,timestamp,timestamp).run()
+      return ok({id,message:parentId?'Reply published.':'Comment published.'},201)
+    }
+    const commentActionMatch=path.match(new RegExp('^/api/comments/([^/]+)$'))
+    if(commentActionMatch&&(method==='PATCH'||method==='DELETE')) {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to manage your comment.',401)
+      const commentId=decodeURIComponent(commentActionMatch[1])
+      const comment=await db.prepare("SELECT id,author_id FROM property_comments WHERE id=? AND status IN ('published','hidden')").bind(commentId).first<{id:string;author_id:string|null}>()
+      if(!comment||comment.author_id!==user.id)return fail('Comment not found in your account.',404)
+      if(method==='DELETE'){await db.prepare("UPDATE property_comments SET status='deleted',deleted_at=?,updated_at=? WHERE id=? AND author_id=? AND status IN ('published','hidden')").bind(nowIso(),nowIso(),commentId,user.id).run();return ok({id:commentId,deleted:true})}
+      const input=await body(request);if(!input)return fail('Invalid comment update.')
+      const commentBody=clean(input.body,1200)
+      if(commentBody.trim().length<3)return fail('Write at least 3 characters.')
+      const result=await db.prepare("UPDATE property_comments SET body=?,updated_at=? WHERE id=? AND author_id=? AND status IN ('published','hidden')").bind(commentBody,nowIso(),commentId,user.id).run()
+      if(!result.meta.changes)return fail('Comment could not be updated.',409)
+      return ok({id:commentId,updated:true})
+    }
+    const reviewResponseMatch=path.match(new RegExp('^/api/reviews/([^/]+)/response$'))
+    if(reviewResponseMatch&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in to respond to a review.',401)
+      const reviewId=decodeURIComponent(reviewResponseMatch[1]),input=await body(request);if(!input)return fail('Invalid response.')
+      const responseBody=clean(input.body,1200);if(responseBody.trim().length<3)return fail('Write at least 3 characters.')
+      const review=await db.prepare("SELECT r.id,p.owner_id FROM property_reviews r JOIN properties p ON p.id=r.property_id WHERE r.id=? AND r.status='published'").bind(reviewId).first<{id:string;owner_id:string}>()
+      if(!review||review.owner_id!==user.id)return fail('Only the listing owner can respond to this review.',403)
+      const timestamp=nowIso()
+      await db.prepare("INSERT INTO property_review_responses(id,review_id,owner_id,body,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(review_id) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at").bind(uuid(),reviewId,user.id,responseBody,timestamp,timestamp).run()
+      return ok({reviewId,responded:true})
+    }
+    if(path==='/api/community/reports'&&method==='POST') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in before reporting community content.',401)
+      if(!await authLimit(request,db,'community-content-report',8)||!await limited(db,'community-content-report-user:'+user.id,5,60))return fail('Too many reports. Please wait before trying again.',429)
+      const input=await body(request);if(!input)return fail('Invalid community report.')
+      const propertyId=clean(input.propertyId,80),targetType=clean(input.targetType,12),targetId=clean(input.targetId,80),reason=clean(input.reason,30),details=clean(input.details,1200)
+      if(!propertyId||!['review','comment'].includes(targetType)||!targetId||!communityReportReasons.has(reason)||details.trim().length<10)return fail('Choose a report reason and explain it in at least 10 characters.')
+      const reportableProperty=await db.prepare(`SELECT id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string}>()
+      if(!reportableProperty)return fail('This property is not currently available for community reports.',404)
+      if(targetType==='review'){const target=await db.prepare("SELECT id,reviewer_id FROM property_reviews WHERE id=? AND property_id=? AND status='published'").bind(targetId,propertyId).first<{id:string;reviewer_id:string|null}>();if(!target)return fail('This review is no longer available.',404);if(target.reviewer_id===user.id)return fail('You cannot report your own review.',403)}
+      else{const target=await db.prepare("SELECT id,author_id FROM property_comments WHERE id=? AND property_id=? AND status='published'").bind(targetId,propertyId).first<{id:string;author_id:string|null}>();if(!target)return fail('This comment is no longer available.',404);if(target.author_id===user.id)return fail('You cannot report your own comment.',403)}
+      const duplicate=await db.prepare("SELECT id FROM community_content_reports WHERE target_type=? AND target_id=? AND reporter_id=? AND status IN ('submitted','under_review')").bind(targetType,targetId,user.id).first<{id:string}>()
+      if(duplicate)return fail('You already reported this contribution. The moderation team can review it.',409)
+      const id=uuid(),timestamp=nowIso()
+      await db.prepare("INSERT INTO community_content_reports(id,property_id,target_type,target_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,?,?,'submitted',?)").bind(id,propertyId,targetType,targetId,user.id,reason,details,timestamp).run()
+      return ok({id,status:'submitted',message:'Report submitted privately to the moderation team.'},201)
+    }
+    if(path==='/api/admin/community-reports'&&method==='GET') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to review community reports.',403)
+      const result=await db.prepare(`SELECT r.id,r.property_id,r.target_type,r.target_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,
+        COALESCE(rv.body,cm.body) AS reported_content,
+        COALESCE(ru.name,cu.name,'Former member') AS content_author
+        FROM community_content_reports r
+        LEFT JOIN property_reviews rv ON r.target_type='review' AND rv.id=r.target_id AND rv.property_id=r.property_id
+        LEFT JOIN property_comments cm ON r.target_type='comment' AND cm.id=r.target_id AND cm.property_id=r.property_id
+        LEFT JOIN users ru ON ru.id=rv.reviewer_id
+        LEFT JOIN users cu ON cu.id=cm.author_id
+        WHERE r.status IN ('submitted','under_review','substantiated')
+        ORDER BY r.created_at ASC LIMIT 100`).all<Record<string,unknown>>()
+      return ok(result.results)
+    }
+    const communityReportMatch=path.match(new RegExp('^/api/admin/community-reports/([^/]+)$'))
+    if(communityReportMatch&&method==='PATCH') {
+      const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
+      if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to moderate community content.',403)
+      if(!await authLimit(request,db,'community-moderation',20)||!await limited(db,'community-moderation-user:'+user.id,30,60))return fail('Too many moderation actions. Please wait before retrying.',429)
+      const input=await body(request);if(!input)return fail('Invalid moderation update.')
+      const reportId=decodeURIComponent(communityReportMatch[1]),status=clean(input.status,20),note=clean(input.resolutionNote,1200)
+      if(!['under_review','substantiated','dismissed','resolved','overturned'].includes(status))return fail('Unsupported moderation status.')
+      if(status!=='under_review'&&note.trim().length<8)return fail('Add an evidence-based moderation note of at least 8 characters.')
+      const report=await db.prepare("SELECT * FROM community_content_reports WHERE id=? AND status IN ('submitted','under_review','substantiated')").bind(reportId).first<Record<string,unknown>>()
+      if(!report)return fail('Community report was already handled or could not be found.',404)
+      const timestamp=nowIso(),previousStatus=String(report.status)
+      if(status==='overturned'&&previousStatus!=='substantiated')return fail('Only a substantiated community report can be overturned.',409)
+      if(status!=='overturned'&&!['submitted','under_review'].includes(previousStatus))return fail('This report has already been handled. Refresh the queue.',409)
+      const action=status==='substantiated'?'content_hidden':status==='overturned'?'finding_overturned_content_restored':status==='dismissed'?'report_dismissed':status==='resolved'?'report_resolved':'review_started'
+      const statements:D1PreparedStatement[]=[
+        db.prepare("UPDATE community_content_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status=? AND status<>?").bind(status,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId,previousStatus,status),
+        db.prepare("INSERT INTO community_moderation_events(id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),reportId,String(report.property_id),String(report.target_type),String(report.target_id),user.id,action,previousStatus,status,note,timestamp)
+      ]
+      if(status==='substantiated'&&report.target_type==='review')statements.push(db.prepare("UPDATE property_reviews SET status='hidden',updated_at=? WHERE id=? AND property_id=? AND status='published'").bind(timestamp,String(report.target_id),String(report.property_id)))
+      if(status==='substantiated'&&report.target_type==='comment')statements.push(db.prepare("UPDATE property_comments SET status='hidden',updated_at=? WHERE id=? AND property_id=? AND status='published'").bind(timestamp,String(report.target_id),String(report.property_id)))
+      if(status==='overturned'&&report.target_type==='review')statements.push(db.prepare("UPDATE property_reviews SET status='published',updated_at=? WHERE id=? AND property_id=? AND status='hidden'").bind(timestamp,String(report.target_id),String(report.property_id)))
+      if(status==='overturned'&&report.target_type==='comment')statements.push(db.prepare("UPDATE property_comments SET status='published',updated_at=? WHERE id=? AND property_id=? AND status='hidden'").bind(timestamp,String(report.target_id),String(report.property_id)))
+      const results=await db.batch(statements)
+      if(!results[0]?.meta?.changes)return fail('The report changed during moderation. Refresh the queue and retry.',409)
+      const contentChanged=status==='substantiated'||status==='overturned'?Number(results[2]?.meta?.changes||0)>0:false
+      return ok({id:reportId,status,contentHidden:status==='substantiated'&&contentChanged,contentRestored:status==='overturned'&&contentChanged})
+    }
     const publicProfileMatch=path.match(/^\/api\/public-profiles\/([^/]+)$/)
     if(publicProfileMatch&&method==='GET') {
       let ownerId=''
@@ -938,9 +1172,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!imageKitAuthorization(env)||!env.IMAGEKIT_URL_ENDPOINT)return fail('ImageKit is not configured for property evidence in this environment.',503)
       const parsed=await readLimitedMultipart(request)
       if(parsed.tooLarge)return fail('Property evidence files must be 10 MB or smaller.',413)
-      const file=parsed.formData?.get('file'),propertyId=clean(parsed.formData?.get('propertyId'),80),description=clean(parsed.formData?.get('description'),180)
+      const file=parsed.formData?.get('file'),propertyId=clean(parsed.formData?.get('propertyId'),80),description=clean(parsed.formData?.get('description'),180),category=clean(parsed.formData?.get('category'),24)||'other',sourceDate=clean(parsed.formData?.get('sourceDate'),10),issuingAuthority=clean(parsed.formData?.get('issuingAuthority'),160),jurisdiction=clean(parsed.formData?.get('jurisdiction'),120),sellerAuthorized=clean(parsed.formData?.get('sellerAuthorized'),5)==='true'
       if(!(typeof File!=='undefined'&&file instanceof File)||!propertyId)return fail('Choose a PDF/image evidence file and listing.')
       if(description.length<3)return fail('Add a short description for this property record.')
+      if(!allowedDocumentCategories.has(category)||!sellerAuthorized)return fail('Choose a valid evidence category and confirm that you are authorized to share this redacted material.')
+      if(sourceDate){const parsedDate=new Date(sourceDate+'T00:00:00Z');if(Number.isNaN(parsedDate.getTime())||parsedDate.toISOString().slice(0,10)!==sourceDate)return fail('Enter a valid document date in YYYY-MM-DD format.')}
       const owned=await db.prepare('SELECT id FROM properties WHERE id=? AND owner_id=?').bind(propertyId,user.id).first<{id:string}>()
       if(!owned)return fail('This property is not available in your account.',404)
       const existing=await db.prepare('SELECT sort_order FROM property_documents WHERE property_id=?').bind(propertyId).all<{sort_order:number}>()
@@ -959,7 +1195,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const documentId=uuid(),timestamp=nowIso(),sourceDomain=new URL(uploaded.url).hostname.toLowerCase()
       try {
         const saved=await db.batch([
-          db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,imagekit_file_id,file_path,uploader_id,status) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,'active' WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(documentId,propertyId,user.id,sniffed.documentType,description,uploaded.url,sourceDomain,sortOrder,timestamp,timestamp,uploaded.fileId,uploaded.filePath,user.id,propertyId,user.id),
+          db.prepare("INSERT INTO property_documents(id,property_id,owner_id,document_type,description,url,source_domain,sort_order,created_at,updated_at,imagekit_file_id,file_path,uploader_id,status,category,source_date,issuing_authority,jurisdiction,seller_authorized) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?,1 WHERE EXISTS (SELECT 1 FROM properties WHERE id=? AND owner_id=?)").bind(documentId,propertyId,user.id,sniffed.documentType,description,uploaded.url,sourceDomain,sortOrder,timestamp,timestamp,uploaded.fileId,uploaded.filePath,user.id,category,sourceDate,issuingAuthority,jurisdiction,propertyId,user.id),
           db.prepare("UPDATE properties SET verification_status='unverified',verification_submitted_at=NULL,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',updated_at=? WHERE id=? AND owner_id=?").bind(timestamp,propertyId,user.id),
           listingHistoryStatement(db,propertyId,user.id,'document_added',null,null,{description,sourceDomain,storageProvider:'imagekit'},timestamp,timestamp)
         ])
@@ -969,7 +1205,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
         if(!cleaned)await queueImageKitCleanup(db,uploaded.fileId,uploaded.filePath,'evidence-d1-insert-failed').catch(()=>{})
         return fail('The evidence upload could not be saved to this listing. Please retry.',500)
       }
-      return ok({id:documentId,documentType:sniffed.documentType,description,url:uploaded.url,sourceDomain,storageProvider:'imagekit',sortOrder,createdAt:timestamp,updatedAt:timestamp},201)
+      return ok({id:documentId,documentType:sniffed.documentType,description,url:uploaded.url,sourceDomain,storageProvider:'imagekit',sortOrder,createdAt:timestamp,updatedAt:timestamp,category,sourceDate,issuingAuthority,jurisdiction},201)
     }
     if(path==='/api/properties'&&method==='POST') {
       const user=await requireUser(request,env)
@@ -977,15 +1213,18 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'listing',6)||!await limited(db,'listing-user:'+user.id,4,60))return fail('Too many listing submissions. Please wait before submitting another property.',429)
       const input=await body(request);if(!input)return fail('Invalid listing request.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
+      const ownershipType=clean(input.ownershipType,40)||'self_owned',ownershipDeclaration=clean(input.ownershipDeclaration,1800),knownDisputes=input.knownDisputes===true,disputeDisclosure=clean(input.disputeDisclosure,1800),authorityToListConfirmed=input.authorityToListConfirmed===true
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
       if(!documents)return fail('Property documents must be valid PDF/image HTTPS links with a description. Maximum 10 links.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
+      if(!['self_owned','inherited','jointly_owned','other','authorized_representative'].includes(ownershipType)||ownershipDeclaration.trim().length<10||!authorityToListConfirmed)return fail('Select the ownership arrangement, add a clear declaration, and confirm ownership or legal authority to list.')
+      if(knownDisputes&&disputeDisclosure.trim().length<10)return fail('Disclose known disputes or encumbrances in at least 10 characters.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const id=uuid(),slug=`${slugify(title)}-${id.slice(0,8)}`
       const createdAt=nowIso()
       const statements=[
-        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','draft','unverified',evidence.type,evidence.url,evidence.submittedAt),
+        db.prepare("INSERT INTO properties(id,owner_id,slug,title,purpose,property_type,location,city,price,bedrooms,bathrooms,area,description,amenities_json,ai_risk_level,ai_risk_score,ai_risk_reasons_json,ai_screened_at,ai_model,status,verification_status,verification_evidence_type,verification_evidence_url,verification_submitted_at,ownership_type,ownership_declaration,known_disputes,dispute_disclosure,authority_to_list_confirmed) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,user.id,slug,title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),'not-screened',0,'[]',null,'not-run','draft','unverified',evidence.type,evidence.url,evidence.submittedAt,ownershipType,ownershipDeclaration,knownDisputes?1:0,disputeDisclosure,1),
         ...propertyDocumentInsertStatements(db,id,user.id,documents),
         listingHistoryStatement(db,id,user.id,'listing_created',null,String(price),{title},createdAt),
         ...documents.map(document=>listingHistoryStatement(db,id,user.id,'document_added',null,null,{description:document.description,sourceDomain:document.sourceDomain},createdAt))
@@ -1106,21 +1345,24 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!current)return fail('Listing not found in your account.',404)
       const input=await body(request);if(!input)return fail('Invalid listing update.')
       const title=clean(input.title,120),location=clean(input.location,240),city=clean(input.city,100),purpose=clean(input.purpose,8),propertyType=clean(input.propertyType,40),description=clean(input.description,8000),amenities=sanitizeAmenities(input.amenities)
+      const ownershipType=clean(input.ownershipType,40)||'self_owned',ownershipDeclaration=clean(input.ownershipDeclaration,1800),knownDisputes=input.knownDisputes===true,disputeDisclosure=clean(input.disputeDisclosure,1800),authorityToListConfirmed=input.authorityToListConfirmed===true
       const price=safeInt(input.price,1,1_000_000_000),bedrooms=safeInt(input.bedrooms,0,100),bathrooms=safeInt(input.bathrooms,0,100),area=safeInt(input.area,0,100_000_000)
       const documents=sanitizePropertyDocuments(input.documents),evidence=sanitizeVerificationEvidence(input)
        if(!documents)return fail('Property documents must be PDF/image links using HTTPS, with a description. Maximum 10 links.')
       if(!evidence)return fail('Verification evidence must be a public HTTPS reference. Do not submit private identity documents or private document links.')
+      if(!['self_owned','inherited','jointly_owned','other','authorized_representative'].includes(ownershipType)||ownershipDeclaration.trim().length<10||!authorityToListConfirmed)return fail('Select the ownership arrangement, add a clear declaration, and confirm ownership or legal authority to list.')
+      if(knownDisputes&&disputeDisclosure.trim().length<10)return fail('Disclose known disputes or encumbrances in at least 10 characters.')
       if(title.length<6||!location||!city||!['sale','rent'].includes(purpose)||!['Apartment','House','Villa','Studio','Plot'].includes(propertyType)||price===null||bedrooms===null||bathrooms===null||area===null||description.length<20)return fail('Complete all required fields with valid values. Description must be at least 20 characters.')
       const updateTime=nowIso()
-      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model='not-run',verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=CASE WHEN status='draft' THEN 'draft' ELSE 'published' END,updated_at=? WHERE id=? AND owner_id=? AND updated_at=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id,current.updated_at)
+      const update= db.prepare("UPDATE properties SET title=?,purpose=?,property_type=?,location=?,city=?,price=?,bedrooms=?,bathrooms=?,area=?,description=?,amenities_json=?,ownership_type=?,ownership_declaration=?,known_disputes=?,dispute_disclosure=?,authority_to_list_confirmed=1,ai_risk_level='not-screened',ai_risk_score=0,ai_risk_reasons_json='[]',ai_screened_at=NULL,ai_model='not-run',verification_status='unverified',verification_evidence_type=?,verification_evidence_url=?,verification_submitted_at=?,verification_reviewed_at=NULL,verification_reviewed_by=NULL,verification_note='',status=CASE WHEN status='draft' THEN 'draft' ELSE 'published' END,updated_at=? WHERE id=? AND owner_id=? AND updated_at=?").bind(title,purpose,propertyType,location,city,price,bedrooms,bathrooms,area,description,JSON.stringify(amenities),ownershipType,ownershipDeclaration,knownDisputes?1:0,disputeDisclosure,evidence.type,evidence.url,evidence.submittedAt,updateTime,id,user.id,current.updated_at)
       const currentDocumentsResult=await db.prepare("SELECT id,document_type,description,url,source_domain,imagekit_file_id,file_path FROM property_documents WHERE property_id=? AND owner_id=? AND status='active'").bind(id,user.id).all<{id:string;document_type:string;description:string;url:string;source_domain:string;imagekit_file_id:string|null;file_path:string}>()
       const previousDocuments=new Map(currentDocumentsResult.results.map(document=>[document.id,document]))
       const submittedExistingIds=new Set(documents.map(document=>document.id).filter((documentId):documentId is string=>!!documentId&&previousDocuments.has(documentId)))
       const historyStatements:D1PreparedStatement[]=[]
       if(current.price!==price)historyStatements.push(listingHistoryStatement(db,id,user.id,price>current.price?'price_increased':'price_decreased',String(current.price),String(price),{},updateTime,updateTime))
       if(current.description!==description)historyStatements.push(listingHistoryStatement(db,id,user.id,'description_changed',null,null,{},updateTime,updateTime))
-      const previousDetails={location:current.location,city:current.city,propertyType:current.property_type,purpose:current.purpose,bedrooms:current.bedrooms,bathrooms:current.bathrooms,area:current.area,amenities:current.amenities_json}
-      const nextDetails={location,city,propertyType,purpose,bedrooms,bathrooms,area,amenities:JSON.stringify(amenities)}
+      const previousDetails={location:current.location,city:current.city,propertyType:current.property_type,purpose:current.purpose,bedrooms:current.bedrooms,bathrooms:current.bathrooms,area:current.area,amenities:current.amenities_json,ownershipType:current.ownership_type||'self_owned',ownershipDeclaration:current.ownership_declaration||'',knownDisputes:!!current.known_disputes,disputeDisclosure:current.dispute_disclosure||''}
+      const nextDetails={location,city,propertyType,purpose,bedrooms,bathrooms,area,amenities:JSON.stringify(amenities),ownershipType,ownershipDeclaration,knownDisputes,disputeDisclosure}
       if(JSON.stringify(previousDetails)!==JSON.stringify(nextDetails))historyStatements.push(listingHistoryStatement(db,id,user.id,'property_details_changed',JSON.stringify(previousDetails),JSON.stringify(nextDetails),{},updateTime,updateTime))
       for(const document of documents) {
         const old=document.id?previousDocuments.get(document.id):undefined
@@ -1185,27 +1427,35 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       }
       if(method==='DELETE') {await db.prepare('DELETE FROM favorites WHERE user_id=? AND property_id=?').bind(user.id,id).run();return ok({saved:false})}
     }
+
     if(path==='/api/reports'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in before reporting a property.',401)
       if(!await authLimit(request,db,'property-report',6)||!await limited(db,'property-report-user:'+user.id,5,60))return fail('Too many reports. Please wait before submitting another.',429)
       const input=await body(request);if(!input)return fail('Invalid report request.')
       const propertyId=clean(input.propertyId,80),reason=clean(input.reason,40),details=clean(input.details,1200)
-      const reasons=['suspected_fraud','incorrect_price','duplicate','unavailable','misleading_details','other']
-      if(!propertyId||!reasons.includes(reason)||details.trim().length<10||details.length>1200)return fail('Choose a report reason and provide at least 10 characters of specific detail.')
+      const evidenceUrl=input.evidenceUrl?normalizeHttpsUrl(input.evidenceUrl,2000):''
+      const reasons=['suspected_fraud','ownership_fraud','forged_documents','known_dispute','incorrect_price','incorrect_property_info','misleading_photos','duplicate','unavailable','misleading_details','unauthorized_listing','suspected_scam','other']
+      if(!propertyId||!reasons.includes(reason)||details.trim().length<10||details.length>1200||(input.evidenceUrl&&!evidenceUrl))return fail('Choose a report reason, provide at least 10 characters of specific detail, and use an optional public HTTPS evidence link.')
       const property=await db.prepare(`SELECT p.id,p.owner_id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string;owner_id:string}>()
       if(!property)return fail('This property is not currently available to report.',404)
       if(property.owner_id===user.id)return fail('You cannot report your own listing.',403)
-      const existing=await db.prepare("SELECT id FROM property_reports WHERE property_id=? AND reporter_id=? AND status IN ('open','reviewing')").bind(propertyId,user.id).first<{id:string}>()
-      if(existing)return fail('You already have an open report for this listing. The moderation team can review it.',409)
-      const id=uuid()
-      await db.prepare("INSERT INTO property_reports(id,property_id,reporter_id,reason,details,status,created_at) VALUES(?,?,?,?,?,'open',?)").bind(id,propertyId,user.id,reason,details,nowIso()).run()
-      return ok({id,status:'open',message:'Report received. It will be reviewed by the moderation team.'},201)
+      const existing=await db.prepare('SELECT report_id FROM property_report_contributions WHERE property_id=? AND reporter_id=?').bind(propertyId,user.id).first<{report_id:string}>()
+      if(existing)return fail('This account has already submitted a report contribution for this property. Moderators can review the existing report.',409)
+      const id=uuid(),timestamp=nowIso()
+      const thresholdEligible=user.role==='user'?1:0
+      const results=await db.batch([
+        db.prepare("INSERT INTO property_reports(id,property_id,reporter_id,reason,details,evidence_url,status,threshold_eligible,created_at) VALUES(?,?,?,?,?,?,'submitted',?,?)").bind(id,propertyId,user.id,reason,details,evidenceUrl||'',thresholdEligible,timestamp),
+        db.prepare("INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at) VALUES(?,?,?,?)").bind(propertyId,user.id,id,timestamp),
+        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) VALUES(?,?,?,?,NULL,'submitted',?,'Initial user report submission',?)").bind(uuid(),id,propertyId,user.id,thresholdEligible,timestamp)
+      ])
+      if(!results[0]?.meta?.changes||!results[1]?.meta?.changes)return fail('The report could not be recorded. Refresh and try again.',409)
+      return ok({id,status:'submitted',message:'Report received. It is an allegation, not a finding; the moderation team will review it.'},201)
     }
     if(path==='/api/admin/reports'&&method==='GET') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
       if(!['admin','moderator'].includes(user.role))return fail('You do not have permission to view reports.',403)
       if(!await authLimit(request,db,'report-queue',20))return fail('Too many requests. Please wait before trying again.',429)
-      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('open','reviewing') ORDER BY r.created_at ASC LIMIT 100").all<{id:string;property_id:string;reporter_id:string|null;reason:string;details:string;status:string;created_at:string;resolved_by:string|null;resolved_at:string|null;resolution_note:string;property_title:string;property_slug:string;property_city:string;property_status:string}>()
+      const result=await db.prepare("SELECT r.id,r.property_id,r.reporter_id,r.reason,r.details,r.evidence_url,r.threshold_eligible,r.status,r.created_at,r.resolved_by,r.resolved_at,r.resolution_note,p.title AS property_title,p.slug AS property_slug,p.city AS property_city,p.status AS property_status FROM property_reports r JOIN properties p ON p.id=r.property_id WHERE r.status IN ('submitted','under_review') ORDER BY r.created_at ASC LIMIT 100").all<Record<string,unknown>>()
       return ok(result.results)
     }
     const reportMatch=path.match(/^\/api\/admin\/reports\/([^/]+)$/)
@@ -1215,13 +1465,17 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!await authLimit(request,db,'report-review',30)||!await limited(db,'report-review-user:'+user.id,60,60))return fail('Too many moderation actions. Please wait before trying again.',429)
       const input=await body(request);if(!input)return fail('Invalid report update.')
       const status=clean(input.status,20),note=clean(input.resolutionNote,1200),reportId=decodeURIComponent(reportMatch[1])
-      if(!['reviewing','resolved','dismissed'].includes(status))return fail('Unsupported report status.')
-      if(['resolved','dismissed'].includes(status)&&note.trim().length<8)return fail('Add a resolution note of at least 8 characters before closing a report.')
-      const old=await db.prepare("SELECT id FROM property_reports WHERE id=? AND status IN ('open','reviewing')").bind(reportId).first<{id:string}>()
+      if(!['under_review','substantiated','resolved','dismissed'].includes(status))return fail('Unsupported report status.')
+      if(status!=='under_review'&&note.trim().length<8)return fail('Add a resolution note of at least 8 characters before closing a report.')
+      const old=await db.prepare("SELECT id,property_id,status,threshold_eligible FROM property_reports WHERE id=? AND status IN ('submitted','under_review')").bind(reportId).first<{id:string;property_id:string;status:string;threshold_eligible:number}>()
       if(!old)return fail('Report was already handled or could not be found.',404)
-      const result=await db.prepare("UPDATE property_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('open','reviewing')").bind(status,status==='reviewing'?null:user.id,status==='reviewing'?null:nowIso(),note,reportId).run()
-      if(!result.meta.changes)return fail('Report was already handled or could not be found.',409)
-      return ok({id:reportId,status})
+      const timestamp=nowIso(),eligible=status==='dismissed'?0:Number(old.threshold_eligible)
+      const results=await db.batch([
+        db.prepare("UPDATE property_reports SET status=?,threshold_eligible=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review') AND status=? AND status<>?").bind(status,eligible,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId,old.status,status),
+        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),reportId,old.property_id,user.id,old.status,status,eligible,note,timestamp)
+      ])
+      if(!results[0]?.meta?.changes)return fail('Report was already handled or could not be found.',409)
+      return ok({id:reportId,status,thresholdEligible:eligible===1})
     }
     if(path==='/api/admin/imagekit-cleanup'&&method==='POST') {
       const user=await requireUser(request,env);if(!user)return fail('Sign in required.',401)
