@@ -1071,7 +1071,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const timestamp=nowIso(),previousStatus=String(report.status)
       const action=status==='substantiated'?'content_hidden':status==='dismissed'?'report_dismissed':status==='resolved'?'report_resolved':'review_started'
       const statements:D1PreparedStatement[]=[
-        db.prepare("UPDATE community_content_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review')").bind(status,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId),
+        db.prepare("UPDATE community_content_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review') AND status<>?").bind(status,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId,status),
         db.prepare("INSERT INTO community_moderation_events(id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),String(report.property_id),String(report.target_type),String(report.target_id),user.id,action,previousStatus,status,note,timestamp)
       ]
       if(status==='substantiated'&&report.target_type==='review')statements.push(db.prepare("UPDATE property_reviews SET status='hidden',updated_at=? WHERE id=? AND property_id=? AND status='published'").bind(timestamp,String(report.target_id),String(report.property_id)))
@@ -1459,7 +1459,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       if(!old)return fail('Report was already handled or could not be found.',404)
       const timestamp=nowIso(),eligible=status==='dismissed'?0:Number(old.threshold_eligible)
       const results=await db.batch([
-        db.prepare("UPDATE property_reports SET status=?,threshold_eligible=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review')").bind(status,eligible,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId),
+        db.prepare("UPDATE property_reports SET status=?,threshold_eligible=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review') AND status<>?").bind(status,eligible,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId,status),
         db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),reportId,old.property_id,user.id,old.status,status,eligible,note,timestamp)
       ])
       if(!results[0]?.meta?.changes)return fail('Report was already handled or could not be found.',409)
