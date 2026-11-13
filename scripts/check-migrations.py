@@ -159,6 +159,8 @@ def main() -> int:
         raise AssertionError("Duplicate account/property report contribution must be rejected")
     except sqlite3.IntegrityError:
         pass
+    moderation_event_columns = {row["name"] for row in db.execute("PRAGMA table_info(community_moderation_events)")}
+    expect("report_id" in moderation_event_columns, "Community moderation audit events must retain their originating report ID")
     policy_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_policy_acceptances)")}
     expect({"user_id", "policy_key", "policy_version", "accepted_at"} <= policy_columns,
            "Versioned policy acceptance fields are incomplete")
@@ -236,15 +238,15 @@ def main() -> int:
                'spam','A sufficiently detailed report explanation.','submitted',?)""", (rollout_iso,))
     db.execute("UPDATE community_content_reports SET status='under_review' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status='submitted' AND status<>'under_review'")
     db.execute("""INSERT INTO community_moderation_events
-        (id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
-        SELECT 'community-cas-event-1','rollout-property','comment','buyer-root','rollout-owner',
+        (id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-cas-event-1','community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
                'review_started','submitted','under_review','CAS event',?
         WHERE changes()=1""", (rollout_iso,))
     community_event_count = db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0]
     db.execute("UPDATE community_content_reports SET status='resolved' WHERE id='community-report-cas' AND status IN ('submitted','under_review') AND status='submitted' AND status<>'resolved'")
     db.execute("""INSERT INTO community_moderation_events
-        (id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
-        SELECT 'community-cas-event-2','rollout-property','comment','buyer-root','rollout-owner',
+        (id,report_id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at)
+        SELECT 'community-cas-event-2','community-report-cas','rollout-property','comment','buyer-root','rollout-owner',
                'review_started','submitted','under_review','Stale CAS event',?
         WHERE changes()=1""", (rollout_iso,))
     expect(community_event_count == 1 and db.execute("SELECT COUNT(*) FROM community_moderation_events WHERE target_id='buyer-root'").fetchone()[0] == 1,
