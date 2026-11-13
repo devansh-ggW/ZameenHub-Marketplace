@@ -47,7 +47,9 @@ SELECT
   id,property_id,reporter_id,reason,details,'',
   CASE status WHEN 'open' THEN 'submitted' WHEN 'reviewing' THEN 'under_review'
        WHEN 'dismissed' THEN 'dismissed' ELSE 'resolved' END,
-  CASE WHEN status='dismissed' THEN 0 ELSE 1 END,
+  CASE WHEN status='dismissed' OR reporter_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM users report_author WHERE report_author.id=property_reports_legacy_0010.reporter_id AND report_author.role='user'
+  ) THEN 0 ELSE 1 END,
   resolved_by,resolved_at,COALESCE(resolution_note,''),created_at
 FROM property_reports_legacy_0010;
 DROP TABLE property_reports_legacy_0010;
