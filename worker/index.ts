@@ -451,18 +451,21 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
     (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status IN ('submitted','under_review')) AS open_reports,
     (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.threshold_eligible=1 AND r.status='substantiated') AS substantiated_reports,
     (SELECT COUNT(*) FROM property_reports r WHERE r.property_id=p.id AND r.status='dismissed') AS dismissed_reports,
-    (SELECT COUNT(*) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS review_count,
-    (SELECT COUNT(DISTINCT r.reviewer_id) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS distinct_reviewers,
-    (SELECT AVG(r.rating) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS average_rating,
-    (SELECT COUNT(*) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL AND r.rating>=4) AS positive_reviews,
-    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NULL AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id) AS comment_count,
+    (SELECT COUNT(*) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user') AS review_count,
+    (SELECT COUNT(DISTINCT r.reviewer_id) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user') AS distinct_reviewers,
+    (SELECT AVG(r.rating) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user') AS average_rating,
+    (SELECT COUNT(*) FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=p.id AND r.status='published' AND reviewer.role='user' AND r.rating>=4) AS positive_reviews,
+    (SELECT COUNT(*) FROM property_comments c JOIN users author ON author.id=c.author_id WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NULL AND c.author_id<>p.owner_id AND author.role='user') AS comment_count,
     (SELECT COUNT(*) FROM property_comments c
       JOIN property_comments parent ON parent.id=c.parent_comment_id
+      JOIN users author ON author.id=c.author_id
+      JOIN users parent_author ON parent_author.id=parent.author_id
       WHERE c.property_id=p.id AND c.status='published' AND parent.status='published'
-        AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id AND c.author_id<>parent.author_id) AS reply_count
+        AND author.role='user' AND parent_author.role='user'
+        AND c.author_id<>p.owner_id AND c.author_id<>parent.author_id) AS reply_count
     FROM properties p WHERE p.id=?`).bind(propertyId).first<Record<string,number|null>>()
   if(!stats) return null
-  const distribution=await db.prepare("SELECT rating,COUNT(*) AS count FROM property_reviews WHERE property_id=? AND status='published' AND reviewer_id IS NOT NULL GROUP BY rating").bind(propertyId).all<{rating:number;count:number}>()
+  const distribution=await db.prepare("SELECT r.rating,COUNT(*) AS count FROM property_reviews r JOIN users reviewer ON reviewer.id=r.reviewer_id WHERE r.property_id=? AND r.status='published' AND reviewer.role='user' GROUP BY r.rating").bind(propertyId).all<{rating:number;count:number}>()
   const ratingDistribution=[1,2,3,4,5].map(rating=>({rating,count:Number(distribution.results.find(row=>row.rating===rating)?.count||0)}))
   const calculation=calculateCommunityTrustIndicator({
     requiredDocumentCount:Number(stats.eligible_document_count||0),
@@ -491,7 +494,7 @@ async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:stri
   const ownerId=propertyOwner?.owner_id||''
   const [reviews,comments]=await Promise.all([
     db.prepare(`SELECT r.id,r.reviewer_id,r.rating,r.body,r.interaction_type,r.created_at,r.updated_at,
-      u.name AS reviewer_name,rr.body AS owner_response,rr.created_at AS response_created_at
+      u.name AS reviewer_name,u.role AS reviewer_role,rr.body AS owner_response,rr.created_at AS response_created_at
       FROM property_reviews r
       LEFT JOIN users u ON u.id=r.reviewer_id
       LEFT JOIN property_review_responses rr ON rr.review_id=r.id
@@ -506,7 +509,7 @@ async function publicCommunityFeed(db:D1Database,propertyId:string,viewerId:stri
   return {
     reviews:reviews.results.map(row=>({
       id:String(row.id),reviewerName:String(row.reviewer_name||'ZameenHub member'),
-      rating:Number(row.rating),body:String(row.body),interactionType:String(row.interaction_type),
+      rating:Number(row.rating),body:String(row.body),interactionType:String(row.interaction_type),reviewerRole:String(row.reviewer_role||'user'),
       createdAt:String(row.created_at),updatedAt:String(row.updated_at),
       isMine:!!viewerId&&row.reviewer_id===viewerId,
       response:row.owner_response?{body:String(row.owner_response),createdAt:String(row.response_created_at||'')}:null
@@ -1434,10 +1437,11 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const existing=await db.prepare('SELECT report_id FROM property_report_contributions WHERE property_id=? AND reporter_id=?').bind(propertyId,user.id).first<{report_id:string}>()
       if(existing)return fail('This account has already submitted a report contribution for this property. Moderators can review the existing report.',409)
       const id=uuid(),timestamp=nowIso()
+      const thresholdEligible=user.role==='user'?1:0
       const results=await db.batch([
-        db.prepare("INSERT INTO property_reports(id,property_id,reporter_id,reason,details,evidence_url,status,threshold_eligible,created_at) VALUES(?,?,?,?,?,?,'submitted',1,?)").bind(id,propertyId,user.id,reason,details,evidenceUrl||'',timestamp),
+        db.prepare("INSERT INTO property_reports(id,property_id,reporter_id,reason,details,evidence_url,status,threshold_eligible,created_at) VALUES(?,?,?,?,?,?,'submitted',?,?)").bind(id,propertyId,user.id,reason,details,evidenceUrl||'',thresholdEligible,timestamp),
         db.prepare("INSERT INTO property_report_contributions(property_id,reporter_id,report_id,created_at) VALUES(?,?,?,?)").bind(propertyId,user.id,id,timestamp),
-        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) VALUES(?,?,?,?,NULL,'submitted',1,'Initial user report submission',?)").bind(uuid(),id,propertyId,user.id,timestamp)
+        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) VALUES(?,?,?,?,NULL,'submitted',?,'Initial user report submission',?)").bind(uuid(),id,propertyId,user.id,thresholdEligible,timestamp)
       ])
       if(!results[0]?.meta?.changes||!results[1]?.meta?.changes)return fail('The report could not be recorded. Refresh and try again.',409)
       return ok({id,status:'submitted',message:'Report received. It is an allegation, not a finding; the moderation team will review it.'},201)
