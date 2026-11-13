@@ -454,7 +454,7 @@ async function getCommunityTrustSummary(db:D1Database,propertyId:string) {
     (SELECT COUNT(DISTINCT r.reviewer_id) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS distinct_reviewers,
     (SELECT AVG(r.rating) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL) AS average_rating,
     (SELECT COUNT(*) FROM property_reviews r WHERE r.property_id=p.id AND r.status='published' AND r.reviewer_id IS NOT NULL AND r.rating>=4) AS positive_reviews,
-    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NULL AND (c.author_id IS NULL OR c.author_id<>p.owner_id)) AS comment_count,
+    (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NULL AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id) AS comment_count,
     (SELECT COUNT(*) FROM property_comments c WHERE c.property_id=p.id AND c.status='published' AND c.parent_comment_id IS NOT NULL AND c.author_id IS NOT NULL AND c.author_id<>p.owner_id) AS reply_count
     FROM properties p WHERE p.id=?`).bind(propertyId).first<Record<string,number|null>>()
   if(!stats) return null
@@ -1031,6 +1031,8 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const input=await body(request);if(!input)return fail('Invalid community report.')
       const propertyId=clean(input.propertyId,80),targetType=clean(input.targetType,12),targetId=clean(input.targetId,80),reason=clean(input.reason,30),details=clean(input.details,1200)
       if(!propertyId||!['review','comment'].includes(targetType)||!targetId||!communityReportReasons.has(reason)||details.trim().length<10)return fail('Choose a report reason and explain it in at least 10 characters.')
+      const reportableProperty=await db.prepare(`SELECT id FROM properties p WHERE p.id=? AND p.status='published' AND ${publicListingRequirements}`).bind(propertyId).first<{id:string}>()
+      if(!reportableProperty)return fail('This property is not currently available for community reports.',404)
       if(targetType==='review'){const target=await db.prepare("SELECT id,reviewer_id FROM property_reviews WHERE id=? AND property_id=? AND status='published'").bind(targetId,propertyId).first<{id:string;reviewer_id:string|null}>();if(!target)return fail('This review is no longer available.',404);if(target.reviewer_id===user.id)return fail('You cannot report your own review.',403)}
       else{const target=await db.prepare("SELECT id,author_id FROM property_comments WHERE id=? AND property_id=? AND status='published'").bind(targetId,propertyId).first<{id:string;author_id:string|null}>();if(!target)return fail('This comment is no longer available.',404);if(target.author_id===user.id)return fail('You cannot report your own comment.',403)}
       const duplicate=await db.prepare("SELECT id FROM community_content_reports WHERE target_type=? AND target_id=? AND reporter_id=? AND status IN ('submitted','under_review')").bind(targetType,targetId,user.id).first<{id:string}>()
@@ -1069,7 +1071,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const action=status==='substantiated'?'content_hidden':status==='dismissed'?'report_dismissed':status==='resolved'?'report_resolved':'review_started'
       const statements:D1PreparedStatement[]=[
         db.prepare("UPDATE community_content_reports SET status=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review')").bind(status,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId),
-        db.prepare("INSERT INTO community_moderation_events(id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(uuid(),String(report.property_id),String(report.target_type),String(report.target_id),user.id,action,previousStatus,status,note,timestamp)
+        db.prepare("INSERT INTO community_moderation_events(id,property_id,target_type,target_id,actor_id,action,previous_status,new_status,note,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),String(report.property_id),String(report.target_type),String(report.target_id),user.id,action,previousStatus,status,note,timestamp)
       ]
       if(status==='substantiated'&&report.target_type==='review')statements.push(db.prepare("UPDATE property_reviews SET status='hidden',updated_at=? WHERE id=? AND property_id=? AND status='published'").bind(timestamp,String(report.target_id),String(report.property_id)))
       if(status==='substantiated'&&report.target_type==='comment')statements.push(db.prepare("UPDATE property_comments SET status='hidden',updated_at=? WHERE id=? AND property_id=? AND status='published'").bind(timestamp,String(report.target_id),String(report.property_id)))
@@ -1457,7 +1459,7 @@ export default { async fetch(request:Request,env:Env):Promise<Response> {
       const timestamp=nowIso(),eligible=status==='dismissed'?0:Number(old.threshold_eligible)
       const results=await db.batch([
         db.prepare("UPDATE property_reports SET status=?,threshold_eligible=?,resolved_by=?,resolved_at=?,resolution_note=? WHERE id=? AND status IN ('submitted','under_review')").bind(status,eligible,status==='under_review'?null:user.id,status==='under_review'?null:timestamp,note,reportId),
-        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid(),reportId,old.property_id,user.id,old.status,status,eligible,note,timestamp)
+        db.prepare("INSERT INTO property_report_events(id,report_id,property_id,actor_id,previous_status,new_status,threshold_eligible,note,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(uuid(),reportId,old.property_id,user.id,old.status,status,eligible,note,timestamp)
       ])
       if(!results[0]?.meta?.changes)return fail('Report was already handled or could not be found.',409)
       return ok({id:reportId,status,thresholdEligible:eligible===1})
