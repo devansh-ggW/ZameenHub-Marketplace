@@ -50,7 +50,7 @@
 9. Review inherited-property disclosures, Maharashtra land/revenue records, co-heir/consent statements and the precise public/private evidence design.
 10. Review limitation, defamation, user-generated-content moderation, evidence preservation, intermediary and consumer-law provisions to ensure the Terms are fair and do not attempt to contract out of non-excludable liability.
 
-## Official source URLs (accessed 11 November 2026)
+## Official source URLs (accessed 13 November 2026)
 
 - DPDP Act commencement notification, G.S.R. 843(E): https://egazette.gov.in/WriteReadData/2025/267647.pdf
 - DPDP Rules, 2025, Gazette G.S.R. 846(E): https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf
